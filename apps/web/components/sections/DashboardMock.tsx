@@ -1,4 +1,5 @@
 import BrowserBar from "../dashboard/BrowserBar";
+import Sidebar from "../dashboard/Sidebar";
 import Card from "../ui/Card";
 
 export default function DashboardMock() {
@@ -11,32 +12,7 @@ export default function DashboardMock() {
       <div className="grid grid-cols-[180px_1fr]">
 
         {/* Sidebar */}
-
-        <aside className="border-r border-slate-800 p-6">
-
-          <div className="text-white font-semibold mb-8">
-            Voltessa
-          </div>
-
-          <div className="space-y-4 text-slate-400 text-sm">
-
-            <div className="text-blue-400">
-              Overview
-            </div>
-
-            <div>Plants</div>
-
-            <div>BESS</div>
-
-            <div>Market</div>
-
-            <div>Automation</div>
-
-            <div>Reports</div>
-
-          </div>
-
-        </aside>
+        <Sidebar />
 
         {/* Content */}
 
