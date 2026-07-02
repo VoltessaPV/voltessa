@@ -1,13 +1,21 @@
 export const dashboard = {
-  totalPower: 82.4,
-  yieldToday: 514,
-  batterySoc: 74,
-  spotPrice: -31,
-  revenueToday: 42580,
-  weather: "Sunny 24°C",
-  alerts: [
-    "Zero Export active",
-    "BESS charging",
-    "Low irradiance",
-  ],
+  power: {
+    value: "132.4 KW",
+    change: "+2.4%",
+  },
+
+  yield: {
+    value: "917 KWh",
+    change: "+5.1%",
+  },
+
+  battery: {
+    value: "74%",
+    change: "Charging",
+  },
+
+  market: {
+    value: "7 €/MWh",
+    change: "Low price",
+  },
 };

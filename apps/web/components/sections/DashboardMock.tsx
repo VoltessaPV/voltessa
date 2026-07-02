@@ -1,6 +1,10 @@
+import ChartCard from "../dashboard/ChartCard";
 import BrowserBar from "../dashboard/BrowserBar";
 import Sidebar from "../dashboard/Sidebar";
 import Card from "../ui/Card";
+import KPICard from "../dashboard/KPICard";
+import { dashboard } from "../../lib/mock-data";
+
 
 export default function DashboardMock() {
   return (
@@ -20,16 +24,33 @@ export default function DashboardMock() {
 
           <div className="grid grid-cols-4 gap-4">
 
-            {[1,2,3,4].map((i)=>(
-              <Card
-                key={i}
-                className="h-24"
-              />
-            ))}
+          <KPICard
+            title="PV Power"
+            value={dashboard.power.value}
+            change={dashboard.power.change}
+          />
+
+          <KPICard
+            title="Today's Yield"
+            value={dashboard.yield.value}
+            change={dashboard.yield.change}
+          />
+
+          <KPICard
+            title="Battery SOC"
+            value={dashboard.battery.value}
+            change={dashboard.battery.change}
+          />
+
+          <KPICard
+            title="Spot Price"
+            value={dashboard.market.value}
+            change={dashboard.market.change}
+          />
 
           </div>
 
-          <Card className="mt-6 h-64" />
+          <ChartCard />
 
           <div className="grid grid-cols-3 gap-4 mt-6">
 

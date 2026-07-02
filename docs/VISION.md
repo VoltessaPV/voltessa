@@ -1,99 +1,310 @@
 # Voltessa Vision
 
-## Mission
-
-Voltessa е независима платформа за интелигентно управление на фотоволтаични централи и батерийни системи.
-
-Целта е да автоматизира решенията на операторите, като използва пазарни данни, прогнози и информация от централите, за да максимизира приходите и да намали риска.
+> Build the operating system for renewable energy operations.
 
 ---
 
-## Long-term Vision
+# What is Voltessa?
 
-Voltessa трябва да може да управлява хиляди енергийни активи от различни производители чрез единна платформа.
+Voltessa is an AI-powered renewable operations platform.
 
-Поддържани активи:
+We do not build software for plant owners to operate their own assets.
 
-- Solar PV
-- Battery Energy Storage Systems (BESS)
-- Hybrid Systems
+We operate renewable assets on behalf of their owners through AI, automation and human expertise.
 
-Поддържани производители:
+Our software is the operational backbone that enables our team to monitor, optimize and manage renewable assets at scale.
+
+Owners receive transparency, performance and confidence.
+
+Operators receive the tools they need to make better decisions.
+
+AI continuously analyzes data, recommends actions and gradually automates routine operations.
+
+---
+
+# Mission
+
+Maximize the performance and profitability of renewable energy assets through intelligent operations.
+
+---
+
+# Vision
+
+Become the operating system for renewable energy operations.
+
+Not another monitoring platform.
+
+Not another inverter portal.
+
+The operational layer above every renewable asset.
+
+---
+
+# The Problem
+
+Renewable assets generate enormous amounts of data.
+
+Owners receive dashboards.
+
+Manufacturers provide monitoring.
+
+But nobody is continuously operating those assets to maximize their financial performance.
+
+As renewable portfolios grow, manual operation becomes increasingly difficult.
+
+Negative electricity prices, battery optimization, curtailment, weather uncertainty and market participation require continuous decision making.
+
+That is where Voltessa creates value.
+
+---
+
+# Our Solution
+
+Voltessa combines:
+
+- Human expertise
+- Artificial Intelligence
+- Automation
+- Multi-vendor integration
+
+into one operational platform.
+
+Our goal is simple:
+
+Operate every renewable asset as efficiently as possible.
+
+---
+
+# Core Principles
+
+## Operations over Monitoring
+
+Monitoring is a feature.
+
+Operations is the product.
+
+---
+
+## Revenue over Data
+
+Customers do not buy dashboards.
+
+They buy better financial results.
+
+Every feature should contribute to increased profitability, reduced downtime or lower operational costs.
+
+---
+
+## AI First
+
+Artificial Intelligence is not a feature.
+
+It is a core capability.
+
+AI should:
+
+- analyze
+- recommend
+- explain
+- automate
+
+Every recommendation must include reasoning.
+
+Every automated action must be traceable.
+
+---
+
+## Human Always in Control
+
+AI assists operators.
+
+AI automates repetitive tasks.
+
+Critical actions always remain explainable.
+
+Trust is built through transparency.
+
+---
+
+## Multi-vendor by Design
+
+Voltessa is independent of hardware manufacturers.
+
+Supported vendors will include:
 
 - Huawei
 - KACO
-- SMA
 - Sungrow
-- KSTAR
-- други
+- SMA
+- Fronius
+- SolarEdge
+- Modbus devices
+- Future integrations
+
+Hardware should never define the platform.
 
 ---
 
-## Core Principles
+## Cloud First
 
-- Vendor independent
-- Cloud first
-- API first
-- Secure by design
-- Fully automated
-- Scalable
-- Observable
-- Extensible
+Voltessa should work remotely whenever possible.
+
+On-site hardware should only be required when absolutely necessary.
 
 ---
 
-## Main Objectives
+## Built for Scale
 
-### Energy Trading
+From one rooftop installation...
 
-Автоматично управление на експорта според:
+to thousands of utility-scale assets.
 
-- Day Ahead prices
-- Intraday prices
-- Negative prices
-- Dynamic thresholds
-
-### Battery Optimization
-
-Оптимално:
-
-- зареждане
-- разреждане
-- арбитраж
-- peak shaving
-
-### Monitoring
-
-- Real-time status
-- Alerts
-- Event history
-- Diagnostics
-
-### Remote Control
-
-Без локален хардуер, когато производителят позволява cloud управление.
+The architecture must support growth from day one.
 
 ---
 
-## Target Customers
+# User Roles
 
-- Собственици на PV централи
-- Инвеститори
-- EPC компании
-- O&M компании
-- Aggregators
-- Energy Traders
+## Asset Owner
+
+The owner wants answers.
+
+They need:
+
+- production
+- profitability
+- reports
+- transparency
+- confidence
+
+They should not need to operate the plant themselves.
 
 ---
 
-## Long-term Goal
+## Voltessa Operator
 
-Voltessa да бъде универсална cloud платформа за управление на възобновяеми енергийни активи, която позволява автоматизация на решенията независимо от производителя на оборудването.
+The operator manages the portfolio.
 
-## Design Goal
+They need:
 
-Добавянето на нов производител не трябва да изисква промяна в бизнес логиката.
+- live monitoring
+- AI recommendations
+- fleet overview
+- remote control
+- automation
+- market intelligence
 
-AutomationService и DecisionService трябва да работят само с абстрактни интерфейси.
+The operator is the primary user of Voltessa.
 
-Всеки нов производител се добавя чрез нов Driver.
+---
+
+## Artificial Intelligence
+
+AI continuously evaluates:
+
+- market prices
+- weather
+- production
+- batteries
+- forecasts
+- operational constraints
+
+Its purpose is to maximize asset performance.
+
+---
+
+# Product Components
+
+Voltessa consists of several major systems.
+
+- Marketing Website
+- Operator Center
+- Owner Portal
+- AI Engine
+- Automation Engine
+- Reporting
+- Market Intelligence
+- Asset Management
+- Public API
+
+---
+
+# MVP
+
+The first public version should include:
+
+- Multi-vendor monitoring
+- Fleet overview
+- Live plant status
+- Revenue dashboard
+- Electricity market prices
+- AI recommendations
+- Remote inverter control
+- Automated reporting
+
+---
+
+# Long-term Vision
+
+Voltessa should eventually become capable of:
+
+- autonomous optimization
+- battery arbitrage
+- predictive maintenance
+- production forecasting
+- market participation
+- portfolio optimization
+- financial optimization
+- AI-assisted operations
+
+---
+
+# Engineering Principles
+
+- English is the development language.
+- Localization is built-in from day one.
+- Multi-tenancy is mandatory.
+- Every UI component must be reusable.
+- Providers are abstracted behind a common interface.
+- Business logic never lives inside UI components.
+- Explainability is more important than complexity.
+- Simplicity beats cleverness.
+- Every feature must solve a real operational problem.
+
+---
+
+# Success Metric
+
+The success of Voltessa will not be measured by:
+
+- number of dashboards
+- number of charts
+- number of features
+
+It will be measured by:
+
+- increased profitability
+- reduced downtime
+- faster operational decisions
+- higher automation rate
+- customer trust
+
+---
+
+# One Guiding Question
+
+Before implementing any feature, ask:
+
+"Does this help Voltessa operate renewable assets more efficiently?"
+
+If the answer is no, it is probably not a priority.
+
+---
+
+# Our Belief
+
+Renewable energy does not need another dashboard.
+
+It needs an intelligent operating system.
+
+That is what Voltessa is building.
