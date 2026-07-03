@@ -9,28 +9,28 @@ export default function Hero() {
     <>
       <Navbar />
       
-      <section className="min-h-screen bg-[#050816] text-white flex items-center">
-        <div className="mx-auto max-w-7xl px-8 grid lg:grid-cols-2 gap-16 items-center">
+      <section className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
+        <div className="mx-auto w-full max-w-[1600px] px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
 
           <div>
             <Badge>
-              Intelligent renewable operations
+              AI-powered Renewable Operations
             </Badge>
 
-            <h1 className="mt-8 text-6xl font-bold leading-tight">
-              AI Platform for
+            <h1 className="mt-8 text-5xl xl:text-6xl font-bold leading-tight">
+              AI Platform
               <br />
               <span className="text-blue-500">
-                Profitable Solar
+                for Solar & Battery
               </span>
               <br />
-              & Battery Operations
+              Operations
             </h1>
 
-            <p className="mt-8 max-w-xl text-xl text-slate-400 leading-8">
-              Monitor, optimize and automate renewable energy assets
-              from one intelligent platform — turning operational
-              data into increased profitability.
+            <p className="mt-8 max-w-xl text-lg text-slate-400 leading-8">
+              Voltessa continuously monitors solar plants, battery systems,
+              weather forecasts and electricity markets
+              to automate operations and maximize revenue.
             </p>
 
             <div className="mt-10 flex gap-4">
@@ -44,7 +44,7 @@ export default function Hero() {
             </div>
 
             <div className="mt-10 tracking-[0.35em] text-sm uppercase text-slate-500">
-              Energy Flow • Data Intelligence
+              SOLAR • BESS • MARKET • AI AUTOMATION
             </div>
           </div>
 

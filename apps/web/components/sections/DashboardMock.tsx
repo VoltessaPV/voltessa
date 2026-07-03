@@ -4,11 +4,14 @@ import Sidebar from "../dashboard/Sidebar";
 import Card from "../ui/Card";
 import KPICard from "../dashboard/KPICard";
 import { dashboard } from "../../lib/mock-data";
+import AIRecommendationCard from "../dashboard/AIRecommendationCard";
+import FleetStatusCard from "../dashboard/FleetStatusCard";
+import MarketOverviewCard from "../dashboard/MarketOverviewCard";
 
 
 export default function DashboardMock() {
   return (
-    <div className="w-full max-w-[640px] rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl overflow-hidden">
+    <div className="w-full max-w-[980px] rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl overflow-hidden">
 
       {/* Browser bar */}
       <BrowserBar />
@@ -20,46 +23,55 @@ export default function DashboardMock() {
 
         {/* Content */}
 
-        <main className="p-6">
+        <main className="p-2">
 
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
 
           <KPICard
             title="PV Power"
-            value={dashboard.power.value}
-            change={dashboard.power.change}
+            value="272"
+            unit="KW"
+            change="+2.4%"
           />
 
           <KPICard
-            title="Today's Yield"
-            value={dashboard.yield.value}
-            change={dashboard.yield.change}
+            title="Energy Today"
+            value="1743"
+            unit="KWh"
+            change="+4.1%"
           />
 
           <KPICard
-            title="Battery SOC"
-            value={dashboard.battery.value}
-            change={dashboard.battery.change}
+            title="Battery"
+            value="84"
+            unit="%"
+            change="Healthy"
           />
 
           <KPICard
             title="Spot Price"
-            value={dashboard.market.value}
-            change={dashboard.market.change}
+            value="112"
+            unit="€/MWh"
+            change="+14.8%"
           />
 
           </div>
 
           <ChartCard />
 
-          <div className="grid grid-cols-3 gap-4 mt-6">
+          <div className="mt-3 grid grid-cols-12 gap-3">
 
-            {[1,2,3].map((i)=>(
-              <Card
-                key={i}
-                className="h-28"
-              />
-            ))}
+          <div className="col-span-12 xl:col-span-6">
+            <AIRecommendationCard />
+          </div>
+
+          <div className="col-span-6 xl:col-span-3">
+            <FleetStatusCard />
+          </div>
+
+          <div className="col-span-6 xl:col-span-3">
+            <MarketOverviewCard />
+          </div>
 
           </div>
 
