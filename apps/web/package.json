@@ -34,6 +34,9 @@
     "dev": "next dev --port 3000",
     "lint": "eslint --max-warnings 0",
     "start": "next start",
+
+    "postinstall": "prisma generate",
+    
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },
