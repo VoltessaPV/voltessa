@@ -1,8 +1,19 @@
+import { auth } from "@/auth";
+import { redirect } from "next/navigation";
+
 import AppHeader from "@/components/platform/layout/AppHeader";
 import AppShell from "@/components/platform/layout/AppShell";
 import AppSidebar from "@/components/platform/layout/AppSidebar";
 
-export default function DashboardPage() {
+import { signOut } from "@/auth";
+
+export default async function DashboardPage() {
+  const session = await auth();
+
+  if (!session) {
+    redirect("/login");
+  }
+
   return (
     <AppShell
       sidebar={<AppSidebar />}
@@ -20,5 +31,6 @@ export default function DashboardPage() {
   </p>
 </div>
     </AppShell>
+    
   );
 }

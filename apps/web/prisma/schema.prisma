@@ -15,38 +15,85 @@ enum UserRole {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  role      UserRole @default(VIEWER)
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  role UserRole @default(VIEWER)
 
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  accounts Account[]
+  sessions Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-model Organization {
-  id        String   @id @default(cuid())
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
 
-  name      String
+  refresh_token String? @db.Text
+  access_token  String? @db.Text
+  expires_at    Int?
+  token_type    String?
+  scope         String?
+  id_token      String? @db.Text
+  session_state String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users  User[]
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model Organization {
+  id String @id @default(cuid())
+
+  name String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[]
   plants Plant[]
 }
 
 model Plant {
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
 
-  name      String
+  name String
 
   vendor String @default("Huawei")
 
-  timezone  String   @default("Europe/Sofia")
+  timezone String @default("Europe/Sofia")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
