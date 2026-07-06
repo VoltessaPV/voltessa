@@ -44,7 +44,7 @@ model Plant {
 
   name      String
 
-  vendor    String
+  vendor String @default("Huawei")
 
   timezone  String   @default("Europe/Sofia")
 
