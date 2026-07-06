@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/constants";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
   description:
     "AI platform for solar parks, battery storage and renewable energy operations.",
 
-  applicationName: "Voltessa",
+  applicationName: APP_NAME,
 
   keywords: [
     "Solar",
@@ -43,7 +44,7 @@ export const metadata: Metadata = {
     },
   ],
 
-  creator: "Voltessa",
+  creator: APP_NAME,
 
   openGraph: {
     title: "Voltessa",

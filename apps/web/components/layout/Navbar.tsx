@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Button from "../ui/Button";
+import { routes } from "@/lib/routes";
 
 export default function Navbar() {
   return (
@@ -25,19 +26,19 @@ export default function Navbar() {
         {/* Navigation */}
 
         <nav className="hidden items-center gap-10 text-sm text-slate-300 md:flex">
-          <a href="#" className="transition hover:text-white">
+          <a href={routes.home} className="transition hover:text-white">
             Platform
           </a>
 
-          <a href="#" className="transition hover:text-white">
+          <a href={routes.home} className="transition hover:text-white">
             Solutions
           </a>
 
-          <a href="#" className="transition hover:text-white">
+          <a href={routes.home} className="transition hover:text-white">
             About
           </a>
 
-          <a href="#" className="transition hover:text-white">
+          <a href={routes.home} className="transition hover:text-white">
             Contact
           </a>
         </nav>

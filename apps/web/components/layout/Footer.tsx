@@ -1,3 +1,6 @@
+import { SUPPORT_EMAIL } from "@/lib/constants";
+import { routes } from "@/lib/routes";
+
 export default function Footer() {
   return (
     <footer className="border-t border-slate-900 bg-[#050816]">
@@ -10,21 +13,21 @@ export default function Footer() {
         <div className="flex items-center gap-6">
 
           <a
-            href="/privacy"
+            href={routes.privacy}
             className="transition hover:text-white"
           >
             Privacy
           </a>
 
           <a
-            href="/terms"
+            href={routes.terms}
             className="transition hover:text-white"
           >
             Terms
           </a>
 
           <a
-            href="mailto:contact@voltessa.ai"
+            href={`mailto:${SUPPORT_EMAIL}`}
             className="transition hover:text-white"
           >
             Contact
