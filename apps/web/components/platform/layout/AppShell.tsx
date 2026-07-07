@@ -1,35 +1,36 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
+
+import { AppHeader } from "./AppHeader";
+import { AppSidebar } from "./AppSidebar";
 
 type AppShellProps = {
-  sidebar: ReactNode;
-  header: ReactNode;
   children: ReactNode;
+  user: {
+    name: string | null;
+    email: string | null;
+    role: string;
+  };
+  organization: {
+    name: string;
+  };
 };
 
-export default function AppShell({
-  sidebar,
-  header,
+export function AppShell({
   children,
+  user,
+  organization,
 }: AppShellProps) {
   return (
-    <div className="flex min-h-screen bg-[#050816] text-white">
+    <div className="min-h-screen bg-[#050816] text-white">
+      <AppSidebar organizationName={organization.name} />
 
-      <aside className="w-64 border-r border-slate-800">
-        {sidebar}
-      </aside>
+      <div className="min-h-screen pl-64">
+        <AppHeader user={user} />
 
-      <div className="flex flex-1 flex-col">
-
-        <header className="h-16 border-b border-slate-800">
-          {header}
-        </header>
-
-        <main className="flex-1 p-8">
+        <main className="p-6">
           {children}
         </main>
-
       </div>
-
     </div>
   );
 }

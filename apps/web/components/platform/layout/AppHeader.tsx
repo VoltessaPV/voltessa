@@ -1,17 +1,31 @@
-export default function AppHeader() {
+type AppHeaderProps = {
+  user: {
+    name: string | null;
+    email: string | null;
+    role: string;
+  };
+};
+
+export function AppHeader({
+  user,
+}: AppHeaderProps) {
   return (
-    <header className="flex h-full items-center justify-between bg-[#050816] px-8">
-
+    <header className="flex h-16 items-center justify-between border-b border-white/10 px-6">
       <div>
-        <h1 className="text-2xl font-bold">
-          Dashboard
-        </h1>
-
-        <p className="mt-1 text-sm text-slate-400">
-          AI-powered renewable operations
+        <p className="text-sm text-white/50">
+          Voltessa Platform
         </p>
       </div>
 
+      <div className="text-right">
+        <p className="text-sm font-medium">
+          {user.name ?? user.email ?? "User"}
+        </p>
+
+        <p className="text-xs text-white/50">
+          {user.role}
+        </p>
+      </div>
     </header>
   );
 }

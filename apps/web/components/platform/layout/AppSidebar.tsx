@@ -1,54 +1,64 @@
 import Link from "next/link";
 
-const items = [
-  "Overview",
-  "Plants",
-  "BESS",
-  "Market",
-  "Automation",
-  "Reports",
+type AppSidebarProps = {
+  organizationName: string;
+};
+
+const navigation = [
+  {
+    label: "Dashboard",
+    href: "/dashboard",
+  },
+  {
+    label: "Plants",
+    href: "/plants",
+  },
+  {
+    label: "Market",
+    href: "/market",
+  },
+  {
+    label: "Automations",
+    href: "/automations",
+  },
+  {
+    label: "Alerts",
+    href: "/alerts",
+  },
+  {
+    label: "Settings",
+    href: "/settings",
+  },
 ];
 
-export default function AppSidebar() {
+export function AppSidebar({
+  organizationName,
+}: AppSidebarProps) {
   return (
-    <aside className="flex h-full flex-col border-r border-slate-800 bg-[#0B1020]">
-
-      <div className="border-b border-slate-800 p-6">
-        <h2 className="text-2xl font-bold text-white">
+    <aside className="fixed inset-y-0 left-0 w-64 border-r border-white/10 bg-[#070B18]">
+      <div className="flex h-16 items-center border-b border-white/10 px-6">
+        <span className="text-lg font-semibold">
           Voltessa
-        </h2>
+        </span>
       </div>
 
-      <nav className="flex-1 px-4 py-6">
+      <div className="px-4 py-5">
+        <p className="truncate px-2 text-xs uppercase tracking-wider text-white/40">
+          {organizationName}
+        </p>
 
-        <ul className="space-y-2">
-
-          {items.map((item) => (
-            <li key={item}>
-
-              <Link
-                href="#"
-                className="
-                  block
-                  rounded-lg
-                  px-4
-                  py-3
-                  text-slate-300
-                  transition
-                  hover:bg-slate-800
-                  hover:text-white
-                "
-              >
-                {item}
-              </Link>
-
-            </li>
+        <nav className="mt-5 space-y-1">
+          {navigation.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="block rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+            >
+              {item.label}
+            </Link>
           ))}
-
-        </ul>
-
-      </nav>
-
+        </nav>
+      </div>
     </aside>
   );
 }

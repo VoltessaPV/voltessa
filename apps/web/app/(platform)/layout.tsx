@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { AppShell } from "@/components/platform/layout/AppShell";
 import { prisma } from "@/lib/prisma";
 
 type Props = {
@@ -22,8 +23,12 @@ export default async function PlatformLayout({
       email: session.user.email,
     },
     select: {
+      name: true,
+      email: true,
+      role: true,
       organization: {
         select: {
+          name: true,
           onboardingCompletedAt: true,
         },
       },
@@ -35,8 +40,17 @@ export default async function PlatformLayout({
   }
 
   return (
-    <main className="min-h-screen bg-[#050816] text-white">
+    <AppShell
+      user={{
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      }}
+      organization={{
+        name: user.organization.name,
+      }}
+    >
       {children}
-    </main>
+    </AppShell>
   );
 }
