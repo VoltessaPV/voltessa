@@ -66,14 +66,14 @@ export default async function SettingsPage({
         </p>
     </div>
 
-    <div className="flex shrink-0">
-        <Link
-        href="/api/auth/fusionsolar/connect"
-        className="rounded-xl bg-blue-600 px-5 py-2 font-medium text-white transition hover:bg-blue-500"
+        <div className="flex shrink-0">
+        <a
+            href="/api/auth/fusionsolar/connect"
+            className="rounded-xl bg-blue-600 px-5 py-2 font-medium text-white transition hover:bg-blue-500"
         >
-        {connection ? "Reconnect" : "Connect"}
-        </Link>
-    </div>
+            {connection ? "Reconnect" : "Connect"}
+        </a>
+        </div>
     </div>
 
 
