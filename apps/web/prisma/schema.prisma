@@ -85,6 +85,7 @@ model Organization {
 
   users User[]
   plants Plant[]
+  fusionSolarConnections FusionSolarConnection[]
 }
 
 model Plant {
@@ -96,10 +97,47 @@ model Plant {
 
   timezone String @default("Europe/Sofia")
 
+  stationCode String?
+  plantCode   String?
+
+  capacityKw Decimal? @db.Decimal(10,2)
+
+  latitude  Decimal? @db.Decimal(9,6)
+  longitude Decimal? @db.Decimal(9,6)
+
+  country String?
+  city    String?
+  address String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organizationId String
 
-  organization Organization @relation(fields: [organizationId], references: [id])
+ organization Organization @relation(fields: [organizationId], references: [id])
+
+@@unique([organizationId, stationCode])
+}
+
+model FusionSolarConnection {
+  id String @id @default(cuid())
+
+  organizationId String
+
+  provider String @default("HuaweiFusionSolar")
+
+  accessToken  String @db.Text
+  refreshToken String? @db.Text
+
+  tokenType String?
+  scope     String?
+
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, provider])
 }
