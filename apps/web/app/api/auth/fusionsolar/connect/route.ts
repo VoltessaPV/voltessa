@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const FUSIONSOLAR_AUTHORIZE_URL =
-  "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/login-page";
+  "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/authorize";
 
 export async function GET() {
   const session = await auth();
@@ -50,10 +50,15 @@ export async function GET() {
 
   const authorizationUrl = new URL(FUSIONSOLAR_AUTHORIZE_URL);
 
-  authorizationUrl.searchParams.set("client_id", clientId);
-  authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-  authorizationUrl.searchParams.set("response_type", "code");
-  authorizationUrl.searchParams.set("state", state);
+authorizationUrl.searchParams.set("response_type", "code");
+authorizationUrl.searchParams.set("client_id", clientId);
+authorizationUrl.searchParams.set("redirect_uri", redirectUri);
+authorizationUrl.searchParams.set(
+  "scope",
+  "pvms.openapi.basic pvms.openapi.control",
+);
+authorizationUrl.searchParams.set("locale", "bg-BG");
+authorizationUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(authorizationUrl);
 }
