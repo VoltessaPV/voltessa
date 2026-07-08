@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { createFusionSolarOAuthState } from "@/lib/fusionsolar/oauth-state";
+//import { createFusionSolarOAuthState } from "@/lib/fusionsolar/oauth-state";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -43,10 +43,10 @@ export async function GET() {
     );
   }
 
-  const state = createFusionSolarOAuthState({
-    organizationId: user.organizationId,
-    userId: user.id,
-  });
+//  const state = createFusionSolarOAuthState({
+//    organizationId: user.organizationId,
+//    userId: user.id,
+//  });
 
   const authorizationUrl = new URL(FUSIONSOLAR_AUTHORIZE_URL);
 
