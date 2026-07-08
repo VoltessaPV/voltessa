@@ -1,8 +1,5 @@
 import { prisma } from "@/lib/prisma";
 
-export const FUSIONSOLAR_TOKEN_URL =
-  "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/token";
-
 type FusionSolarTokenResponse = {
   access_token?: string;
   refresh_token?: string;
@@ -53,7 +50,9 @@ function sleep(milliseconds: number) {
   });
 }
 
-function getFetchErrorCause(error: unknown): FetchErrorCause | undefined {
+function getFetchErrorCause(
+  error: unknown,
+): FetchErrorCause | undefined {
   if (!(error instanceof Error)) {
     return undefined;
   }
@@ -70,17 +69,47 @@ function isRetryableNetworkError(error: unknown) {
   );
 }
 
+function getFusionSolarGatewayConfiguration() {
+  const gatewayUrl = process.env.FUSIONSOLAR_GATEWAY_URL;
+  const gatewaySecret =
+    process.env.FUSIONSOLAR_GATEWAY_SECRET;
+
+  if (!gatewayUrl || !gatewaySecret) {
+    throw new Error(
+      "FusionSolar gateway environment variables are not configured",
+    );
+  }
+
+  return {
+    tokenUrl: new URL(
+      "/v1/fusionsolar/token",
+      gatewayUrl,
+    ).toString(),
+    gatewaySecret,
+  };
+}
+
 async function fetchFusionSolarToken(
   body: URLSearchParams,
 ): Promise<Response> {
-  const maximumAttempts = NETWORK_RETRY_DELAYS_MS.length + 1;
+  const { tokenUrl, gatewaySecret } =
+    getFusionSolarGatewayConfiguration();
 
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+  const maximumAttempts =
+    NETWORK_RETRY_DELAYS_MS.length + 1;
+
+  for (
+    let attempt = 1;
+    attempt <= maximumAttempts;
+    attempt += 1
+  ) {
     try {
-      return await fetch(FUSIONSOLAR_TOKEN_URL, {
+      return await fetch(tokenUrl, {
         method: "POST",
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+          "x-gateway-secret": gatewaySecret,
         },
         body: body.toString(),
         cache: "no-store",
@@ -88,25 +117,33 @@ async function fetchFusionSolarToken(
     } catch (error) {
       const cause = getFetchErrorCause(error);
       const retryable = isRetryableNetworkError(error);
-      const hasAnotherAttempt = attempt < maximumAttempts;
+      const hasAnotherAttempt =
+        attempt < maximumAttempts;
 
-      console.error("[FusionSolar Token Refresh] Fetch failed", {
-        attempt,
-        maximumAttempts,
-        retryable,
-        errorName:
-          error instanceof Error ? error.name : "UnknownError",
-        errorMessage:
-          error instanceof Error ? error.message : String(error),
-        causeCode: cause?.code,
-        causeHostname: cause?.hostname,
-        causeMessage: cause?.message,
-      });
+      console.error(
+        "[FusionSolar Gateway Token Request] Fetch failed",
+        {
+          attempt,
+          maximumAttempts,
+          retryable,
+          errorName:
+            error instanceof Error
+              ? error.name
+              : "UnknownError",
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : String(error),
+          causeCode: cause?.code,
+          causeHostname: cause?.hostname,
+          causeMessage: cause?.message,
+        },
+      );
 
       if (!retryable || !hasAnotherAttempt) {
         throw new Error(
           [
-            "FusionSolar refresh fetch failed",
+            "FusionSolar gateway token request failed",
             cause?.code,
             cause?.hostname,
             cause?.message,
@@ -116,20 +153,22 @@ async function fetchFusionSolarToken(
         );
       }
 
-    const retryDelay =
-    NETWORK_RETRY_DELAYS_MS[attempt - 1];
+      const retryDelay =
+        NETWORK_RETRY_DELAYS_MS[attempt - 1];
 
-    if (retryDelay === undefined) {
-    throw new Error(
-        "FusionSolar retry delay configuration is invalid",
-    );
-    }
+      if (retryDelay === undefined) {
+        throw new Error(
+          "FusionSolar retry delay configuration is invalid",
+        );
+      }
 
-    await sleep(retryDelay);
+      await sleep(retryDelay);
     }
   }
 
-  throw new Error("FusionSolar refresh fetch failed unexpectedly");
+  throw new Error(
+    "FusionSolar gateway token request failed unexpectedly",
+  );
 }
 
 export async function getValidFusionSolarAccessToken(
@@ -139,7 +178,8 @@ export async function getValidFusionSolarAccessToken(
 
   const tokenIsStillValid =
     typeof expiresAt === "number" &&
-    expiresAt > Date.now() + TOKEN_EXPIRY_BUFFER_MS;
+    expiresAt >
+      Date.now() + TOKEN_EXPIRY_BUFFER_MS;
 
   if (tokenIsStillValid) {
     return {
@@ -149,11 +189,14 @@ export async function getValidFusionSolarAccessToken(
   }
 
   if (!connection.refreshToken) {
-    throw new Error("FusionSolar refresh token is missing");
+    throw new Error(
+      "FusionSolar refresh token is missing",
+    );
   }
 
   const clientId = process.env.FUSIONSOLAR_CLIENT_ID;
-  const clientSecret = process.env.FUSIONSOLAR_CLIENT_SECRET;
+  const clientSecret =
+    process.env.FUSIONSOLAR_CLIENT_SECRET;
 
   if (!clientId || !clientSecret) {
     throw new Error(
@@ -164,25 +207,34 @@ export async function getValidFusionSolarAccessToken(
   const body = new URLSearchParams();
 
   body.set("grant_type", "refresh_token");
-  body.set("refresh_token", connection.refreshToken);
+  body.set(
+    "refresh_token",
+    connection.refreshToken,
+  );
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
 
-  const tokenResponse = await fetchFusionSolarToken(body);
+  const tokenResponse =
+    await fetchFusionSolarToken(body);
 
   const responseText = await tokenResponse.text();
 
   let tokenData: FusionSolarTokenResponse;
 
   try {
-    tokenData = JSON.parse(responseText) as FusionSolarTokenResponse;
+    tokenData = JSON.parse(
+      responseText,
+    ) as FusionSolarTokenResponse;
   } catch {
     throw new Error(
       `FusionSolar refresh returned invalid JSON: HTTP ${tokenResponse.status}`,
     );
   }
 
-  if (!tokenResponse.ok || !tokenData.access_token) {
+  if (
+    !tokenResponse.ok ||
+    !tokenData.access_token
+  ) {
     throw new Error(
       tokenData.error_description ??
         tokenData.error ??
@@ -191,11 +243,15 @@ export async function getValidFusionSolarAccessToken(
   }
 
   const refreshToken =
-    tokenData.refresh_token ?? connection.refreshToken;
+    tokenData.refresh_token ??
+    connection.refreshToken;
 
   const expiresAtUpdated =
     typeof tokenData.expires_in === "number"
-      ? new Date(Date.now() + tokenData.expires_in * 1000)
+      ? new Date(
+          Date.now() +
+            tokenData.expires_in * 1000,
+        )
       : null;
 
   await prisma.fusionSolarConnection.update({
@@ -205,8 +261,12 @@ export async function getValidFusionSolarAccessToken(
     data: {
       accessToken: tokenData.access_token,
       refreshToken,
-      tokenType: tokenData.token_type ?? connection.tokenType,
-      scope: tokenData.scope ?? connection.scope,
+      tokenType:
+        tokenData.token_type ??
+        connection.tokenType,
+      scope:
+        tokenData.scope ??
+        connection.scope,
       expiresAt: expiresAtUpdated,
     },
   });
