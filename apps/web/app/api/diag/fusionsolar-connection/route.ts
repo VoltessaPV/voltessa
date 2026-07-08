@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { getValidFusionSolarAccessToken } from "@/lib/fusionsolar/get-valid-access-token";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -26,7 +27,6 @@ export async function GET() {
       email: session.user.email,
     },
     select: {
-      id: true,
       organizationId: true,
     },
   });
@@ -52,14 +52,11 @@ export async function GET() {
     },
     select: {
       id: true,
-      provider: true,
       accessToken: true,
       refreshToken: true,
       tokenType: true,
       scope: true,
       expiresAt: true,
-      createdAt: true,
-      updatedAt: true,
     },
   });
 
@@ -75,31 +72,61 @@ export async function GET() {
     );
   }
 
-  const now = new Date();
+  try {
+    const tokenResult =
+      await getValidFusionSolarAccessToken(connection);
 
-  const accessTokenExpired =
-    connection.expiresAt !== null && connection.expiresAt <= now;
+    const updatedConnection =
+      await prisma.fusionSolarConnection.findUnique({
+        where: {
+          id: connection.id,
+        },
+        select: {
+          tokenType: true,
+          scope: true,
+          expiresAt: true,
+          updatedAt: true,
+        },
+      });
 
-  return NextResponse.json({
-    ok: true,
-    connection: {
-      id: connection.id,
-      provider: connection.provider,
+    return NextResponse.json({
+      ok: true,
+      token: {
+        validAccessTokenAvailable:
+          tokenResult.accessToken.length > 0,
+        refreshed: tokenResult.refreshed,
+      },
+      connection: {
+        tokenType: updatedConnection?.tokenType ?? null,
+        scope: updatedConnection?.scope ?? null,
+        expiresAt: updatedConnection?.expiresAt ?? null,
+        updatedAt: updatedConnection?.updatedAt ?? null,
+      },
+    });
+  } catch (error) {
+    console.error("[FusionSolar Token Diagnostic] Failed", {
+      organizationId: user.organizationId,
+      error:
+        error instanceof Error
+          ? {
+              name: error.name,
+              message: error.message,
+            }
+          : String(error),
+    });
 
-      accessTokenStored: connection.accessToken.length > 0,
-      accessTokenLength: connection.accessToken.length,
-
-      refreshTokenStored: Boolean(connection.refreshToken),
-      refreshTokenLength: connection.refreshToken?.length ?? 0,
-
-      tokenType: connection.tokenType,
-      scope: connection.scope,
-
-      expiresAt: connection.expiresAt,
-      accessTokenExpired,
-
-      createdAt: connection.createdAt,
-      updatedAt: connection.updatedAt,
-    },
-  });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "fusionsolar_token_validation_failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "unknown_error",
+      },
+      {
+        status: 502,
+      },
+    );
+  }
 }
