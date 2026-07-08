@@ -1,20 +1,67 @@
-import { createPlant } from "../actions";
+import { notFound, redirect } from "next/navigation";
+
+import { auth } from "@/auth";
+import { prisma } from "@/lib/prisma";
+
+import { updatePlant } from "../../actions";
 
 const inputClassName =
   "mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-blue-500";
 
-export default function NewPlantPage() {
+type EditPlantPageProps = {
+  params: Promise<{
+    id: string;
+  }>;
+};
+
+export default async function EditPlantPage({
+  params,
+}: EditPlantPageProps) {
+  const session = await auth();
+
+  if (!session?.user?.email) {
+    redirect("/login");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      email: session.user.email,
+    },
+    select: {
+      organizationId: true,
+    },
+  });
+
+  if (!user?.organizationId) {
+    redirect("/onboarding");
+  }
+
+  const { id } = await params;
+
+  const plant = await prisma.plant.findFirst({
+    where: {
+      id,
+      organizationId: user.organizationId,
+    },
+  });
+
+  if (!plant) {
+    notFound();
+  }
+
+  const updatePlantAction = updatePlant.bind(null, plant.id);
+
   return (
     <div className="max-w-4xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold">Add Plant</h1>
+        <h1 className="text-3xl font-semibold">Edit Plant</h1>
 
         <p className="mt-2 text-white/60">
-          Add a photovoltaic plant to your organization.
+          Update plant information.
         </p>
       </div>
 
-      <form action={createPlant} className="space-y-8">
+      <form action={updatePlantAction} className="space-y-8">
         <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
           <h2 className="text-lg font-medium">General</h2>
 
@@ -24,8 +71,8 @@ export default function NewPlantPage() {
               <input
                 name="name"
                 required
+                defaultValue={plant.name}
                 className={inputClassName}
-                placeholder="Solar Park Sofia"
               />
             </label>
 
@@ -33,7 +80,7 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Vendor</span>
               <input
                 name="vendor"
-                defaultValue="Huawei"
+                defaultValue={plant.vendor}
                 className={inputClassName}
               />
             </label>
@@ -42,7 +89,7 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Timezone</span>
               <input
                 name="timezone"
-                defaultValue="Europe/Sofia"
+                defaultValue={plant.timezone}
                 className={inputClassName}
               />
             </label>
@@ -54,8 +101,8 @@ export default function NewPlantPage() {
                 type="number"
                 min="0"
                 step="0.01"
+                defaultValue={plant.capacityKw?.toString() ?? ""}
                 className={inputClassName}
-                placeholder="1000"
               />
             </label>
           </div>
@@ -69,8 +116,8 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Station Code</span>
               <input
                 name="stationCode"
+                defaultValue={plant.stationCode ?? ""}
                 className={inputClassName}
-                placeholder="Huawei station code"
               />
             </label>
 
@@ -78,8 +125,8 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Plant Code</span>
               <input
                 name="plantCode"
+                defaultValue={plant.plantCode ?? ""}
                 className={inputClassName}
-                placeholder="Internal or vendor plant code"
               />
             </label>
           </div>
@@ -93,8 +140,8 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Country</span>
               <input
                 name="country"
+                defaultValue={plant.country ?? ""}
                 className={inputClassName}
-                placeholder="Bulgaria"
               />
             </label>
 
@@ -102,8 +149,8 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">City</span>
               <input
                 name="city"
+                defaultValue={plant.city ?? ""}
                 className={inputClassName}
-                placeholder="Sofia"
               />
             </label>
 
@@ -111,8 +158,8 @@ export default function NewPlantPage() {
               <span className="text-sm text-white/60">Address</span>
               <input
                 name="address"
+                defaultValue={plant.address ?? ""}
                 className={inputClassName}
-                placeholder="Plant address"
               />
             </label>
 
@@ -122,8 +169,8 @@ export default function NewPlantPage() {
                 name="latitude"
                 type="number"
                 step="0.000001"
+                defaultValue={plant.latitude?.toString() ?? ""}
                 className={inputClassName}
-                placeholder="42.697708"
               />
             </label>
 
@@ -133,8 +180,8 @@ export default function NewPlantPage() {
                 name="longitude"
                 type="number"
                 step="0.000001"
+                defaultValue={plant.longitude?.toString() ?? ""}
                 className={inputClassName}
-                placeholder="23.321868"
               />
             </label>
           </div>
@@ -144,7 +191,7 @@ export default function NewPlantPage() {
           type="submit"
           className="rounded-xl bg-blue-600 px-5 py-3 font-medium transition hover:bg-blue-500"
         >
-          Create Plant
+          Save Changes
         </button>
       </form>
     </div>

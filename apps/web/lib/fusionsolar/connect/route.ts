@@ -50,22 +50,10 @@ export async function GET() {
 
   const authorizationUrl = new URL(FUSIONSOLAR_AUTHORIZE_URL);
 
-authorizationUrl.searchParams.set("response_type", "code");
-authorizationUrl.searchParams.set("client_id", clientId);
-authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-authorizationUrl.searchParams.set(
-  "scope",
-  "pvms.openapi.basic pvms.openapi.control",
-);
-
-authorizationUrl.searchParams.set("state", state);
-
-authorizationUrl.searchParams.set("locale", "bg-BG");
-
-console.log(
-  "[FusionSolar OAuth] Authorization URL:",
-  authorizationUrl.toString(),
-);
+  authorizationUrl.searchParams.set("client_id", clientId);
+  authorizationUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizationUrl.searchParams.set("response_type", "code");
+  authorizationUrl.searchParams.set("state", state);
 
   return NextResponse.redirect(authorizationUrl);
 }

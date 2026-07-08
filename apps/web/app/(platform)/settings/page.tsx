@@ -65,13 +65,14 @@ export default async function SettingsPage({
             </p>
           </div>
 
-<a
-  href="/api/auth/fusionsolar/connect"
-  className="rounded-xl bg-blue-600 px-4 py-2 font-medium transition hover:bg-blue-500"
->
-  Connect FusionSolar
-</a>
 
+
+<div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+  <p className="text-sm text-white/70">
+    To connect FusionSolar, authorize Voltessa from your FusionSolar account.
+    After authorization, FusionSolar will redirect you back to Voltessa.
+  </p>
+</div>
 
 
         </div>

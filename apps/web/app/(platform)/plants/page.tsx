@@ -35,10 +35,19 @@ export default async function PlantsPage() {
 
   return (
     <div>
-      <div>
-        <h1>Plants</h1>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-semibold">Plants</h1>
 
-        <Link href="/plants/new">
+          <p className="mt-2 text-white/60">
+            Manage photovoltaic plants connected to your organization.
+          </p>
+        </div>
+
+        <Link
+          href="/plants/new"
+          className="rounded-xl bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500"
+        >
           Add Plant
         </Link>
       </div>
@@ -49,7 +58,10 @@ export default async function PlantsPage() {
         <ul>
           {plants.map((plant) => (
             <li key={plant.id}>
-              <Link href={`/plants/${plant.id}`}>
+              <Link
+                href={`/plants/${plant.id}`}
+                className="font-medium text-blue-400 hover:text-blue-300"
+              >
                 {plant.name}
               </Link>
 
