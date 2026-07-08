@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { verifyFusionSolarOAuthState } from "@/lib/fusionsolar/oauth-state";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -16,29 +15,21 @@ export async function GET(request: NextRequest) {
   }
 
   const code = request.nextUrl.searchParams.get("code");
-  const state = request.nextUrl.searchParams.get("state");
   const error = request.nextUrl.searchParams.get("error");
 
   if (error) {
     const url = new URL("/settings", process.env.AUTH_URL);
+
     url.searchParams.set("fusionsolar", "error");
     url.searchParams.set("reason", error);
 
     return NextResponse.redirect(url);
   }
 
-  if (!code || !state) {
+  if (!code) {
     const url = new URL("/settings", process.env.AUTH_URL);
-    url.searchParams.set("fusionsolar", "invalid_callback");
 
-    return NextResponse.redirect(url);
-  }
-
-  const statePayload = verifyFusionSolarOAuthState(state);
-
-  if (!statePayload) {
-    const url = new URL("/settings", process.env.AUTH_URL);
-    url.searchParams.set("fusionsolar", "invalid_state");
+    url.searchParams.set("fusionsolar", "missing_code");
 
     return NextResponse.redirect(url);
   }
@@ -53,18 +44,21 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  if (
-    !user?.organizationId ||
-    user.id !== statePayload.userId ||
-    user.organizationId !== statePayload.organizationId
-  ) {
-    const url = new URL("/settings", process.env.AUTH_URL);
-    url.searchParams.set("fusionsolar", "state_mismatch");
-
-    return NextResponse.redirect(url);
+  if (!user?.organizationId) {
+    return NextResponse.redirect(
+      new URL("/onboarding", process.env.AUTH_URL),
+    );
   }
 
+  console.log("[FusionSolar OAuth Callback]", {
+    userId: user.id,
+    organizationId: user.organizationId,
+    codeReceived: true,
+    codeLength: code.length,
+  });
+
   const url = new URL("/settings", process.env.AUTH_URL);
+
   url.searchParams.set("fusionsolar", "callback_ok");
 
   return NextResponse.redirect(url);
