@@ -48,23 +48,17 @@ export async function GET() {
     userId: user.id,
   });
 
-console.log({
-  clientId,
-  clientIdLength: clientId.length,
-  redirectUri,
-});
-
   const authorizationUrl = new URL(FUSIONSOLAR_AUTHORIZE_URL);
 
-authorizationUrl.searchParams.set("response_type", "code");
-authorizationUrl.searchParams.set("client_id", clientId);
-authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-
-authorizationUrl.searchParams.set("state", state);
-
-console.log("CONNECT ROUTE VERSION 3");
-console.log(FUSIONSOLAR_AUTHORIZE_URL);
-console.log(authorizationUrl.toString());
+  authorizationUrl.searchParams.set("response_type", "code");
+  authorizationUrl.searchParams.set("client_id", clientId);
+  authorizationUrl.searchParams.set("redirect_uri", redirectUri);
+  authorizationUrl.searchParams.set(
+    "scope",
+    "pvms.openapi.basic pvms.openapi.control",
+  );
+  authorizationUrl.searchParams.set("state", state);
+  authorizationUrl.searchParams.set("locale", "bg-BG");
 
   return NextResponse.redirect(authorizationUrl);
 }
