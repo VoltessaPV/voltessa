@@ -116,10 +116,16 @@ async function fetchFusionSolarToken(
         );
       }
 
-      const retryDelay =
-        NETWORK_RETRY_DELAYS_MS[attempt - 1];
+    const retryDelay =
+    NETWORK_RETRY_DELAYS_MS[attempt - 1];
 
-      await sleep(retryDelay);
+    if (retryDelay === undefined) {
+    throw new Error(
+        "FusionSolar retry delay configuration is invalid",
+    );
+    }
+
+    await sleep(retryDelay);
     }
   }
 
