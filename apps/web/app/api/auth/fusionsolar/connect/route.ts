@@ -56,8 +56,6 @@ authorizationUrl.searchParams.set("redirect_uri", redirectUri);
 
 authorizationUrl.searchParams.set("state", state);
 
-authorizationUrl.searchParams.set("locale", "bg-BG");
-
 console.log(
   "[FusionSolar OAuth] Authorization URL:",
   authorizationUrl.toString(),
