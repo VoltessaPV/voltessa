@@ -35,6 +35,97 @@ type FetchErrorCause = {
 
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
+const NETWORK_RETRY_DELAYS_MS = [250, 500];
+
+const RETRYABLE_NETWORK_ERROR_CODES = new Set([
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "EBUSY",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+
+function sleep(milliseconds: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, milliseconds);
+  });
+}
+
+function getFetchErrorCause(error: unknown): FetchErrorCause | undefined {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+
+  return error.cause as FetchErrorCause | undefined;
+}
+
+function isRetryableNetworkError(error: unknown) {
+  const cause = getFetchErrorCause(error);
+
+  return Boolean(
+    cause?.code &&
+      RETRYABLE_NETWORK_ERROR_CODES.has(cause.code),
+  );
+}
+
+async function fetchFusionSolarToken(
+  body: URLSearchParams,
+): Promise<Response> {
+  const maximumAttempts = NETWORK_RETRY_DELAYS_MS.length + 1;
+
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      return await fetch(FUSIONSOLAR_TOKEN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: body.toString(),
+        cache: "no-store",
+      });
+    } catch (error) {
+      const cause = getFetchErrorCause(error);
+      const retryable = isRetryableNetworkError(error);
+      const hasAnotherAttempt = attempt < maximumAttempts;
+
+      console.error("[FusionSolar Token Refresh] Fetch failed", {
+        attempt,
+        maximumAttempts,
+        retryable,
+        errorName:
+          error instanceof Error ? error.name : "UnknownError",
+        errorMessage:
+          error instanceof Error ? error.message : String(error),
+        causeCode: cause?.code,
+        causeHostname: cause?.hostname,
+        causeMessage: cause?.message,
+      });
+
+      if (!retryable || !hasAnotherAttempt) {
+        throw new Error(
+          [
+            "FusionSolar refresh fetch failed",
+            cause?.code,
+            cause?.hostname,
+            cause?.message,
+          ]
+            .filter(Boolean)
+            .join(": "),
+        );
+      }
+
+      const retryDelay =
+        NETWORK_RETRY_DELAYS_MS[attempt - 1];
+
+      await sleep(retryDelay);
+    }
+  }
+
+  throw new Error("FusionSolar refresh fetch failed unexpectedly");
+}
+
 export async function getValidFusionSolarAccessToken(
   connection: FusionSolarConnection,
 ): Promise<GetValidAccessTokenResult> {
@@ -71,44 +162,7 @@ export async function getValidFusionSolarAccessToken(
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
 
-  let tokenResponse: Response;
-
-  try {
-    tokenResponse = await fetch(FUSIONSOLAR_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-      cache: "no-store",
-    });
-  } catch (error) {
-    const cause =
-      error instanceof Error
-        ? (error.cause as FetchErrorCause | undefined)
-        : undefined;
-
-    console.error("[FusionSolar Token Refresh] Fetch failed", {
-      errorName:
-        error instanceof Error ? error.name : "UnknownError",
-      errorMessage:
-        error instanceof Error ? error.message : String(error),
-      causeCode: cause?.code,
-      causeHostname: cause?.hostname,
-      causeMessage: cause?.message,
-    });
-
-    throw new Error(
-      [
-        "FusionSolar refresh fetch failed",
-        cause?.code,
-        cause?.hostname,
-        cause?.message,
-      ]
-        .filter(Boolean)
-        .join(": "),
-    );
-  }
+  const tokenResponse = await fetchFusionSolarToken(body);
 
   const responseText = await tokenResponse.text();
 
