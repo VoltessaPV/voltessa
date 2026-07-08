@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "apps/web/app/api/auth/fusionsolar/callback/route.ts": {
+      "regions": ["fra1"]
+    },
+    "apps/web/app/api/diag/fusionsolar-dns/route.ts": {
+      "regions": ["fra1"]
+    }
+  }
+}
