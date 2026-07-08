@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
@@ -66,12 +65,15 @@ export default async function SettingsPage({
             </p>
           </div>
 
-          <Link
-            href="/api/auth/fusionsolar/connect" prefetch={false}
-            className="rounded-xl bg-blue-600 px-4 py-2 font-medium transition hover:bg-blue-500"
-          >
-            {connection ? "Reconnect" : "Connect FusionSolar"}
-          </Link>
+<a
+  href="/api/auth/fusionsolar/connect"
+  className="rounded-xl bg-blue-600 px-4 py-2 font-medium transition hover:bg-blue-500"
+>
+  Connect FusionSolar
+</a>
+
+
+
         </div>
 
         {params.fusionsolar === "callback_ok" && (
