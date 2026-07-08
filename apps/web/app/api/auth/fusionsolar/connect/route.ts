@@ -62,10 +62,9 @@ authorizationUrl.searchParams.set("redirect_uri", redirectUri);
 
 authorizationUrl.searchParams.set("state", state);
 
-console.log(
-  "[FusionSolar OAuth] Authorization URL:",
-  authorizationUrl.toString(),
-);
+console.log("CONNECT ROUTE VERSION 3");
+console.log(FUSIONSOLAR_AUTHORIZE_URL);
+console.log(authorizationUrl.toString());
 
   return NextResponse.redirect(authorizationUrl);
 }
