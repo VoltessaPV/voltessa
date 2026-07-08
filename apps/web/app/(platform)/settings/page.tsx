@@ -67,7 +67,7 @@ export default async function SettingsPage({
           </div>
 
           <Link
-            href="/api/auth/fusionsolar/connect"
+            href="/api/auth/fusionsolar/connect" prefetch={false}
             className="rounded-xl bg-blue-600 px-4 py-2 font-medium transition hover:bg-blue-500"
           >
             {connection ? "Reconnect" : "Connect FusionSolar"}
