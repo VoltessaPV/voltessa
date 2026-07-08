@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { promises as dns } from "node:dns";
 
 export const runtime = "nodejs";
+export const preferredRegion = "fra1";
 export const dynamic = "force-dynamic";
 
 const hostnames = [
