@@ -57,7 +57,7 @@ export async function GET() {
     "scope",
     "pvms.openapi.basic pvms.openapi.control",
   );
-  authorizationUrl.searchParams.set("state", state);
+//  authorizationUrl.searchParams.set("state", state);
   authorizationUrl.searchParams.set("locale", "bg-BG");
 
   return NextResponse.redirect(authorizationUrl);
