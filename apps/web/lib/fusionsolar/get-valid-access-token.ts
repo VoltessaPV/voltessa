@@ -27,6 +27,12 @@ type GetValidAccessTokenResult = {
   refreshed: boolean;
 };
 
+type FetchErrorCause = {
+  code?: string;
+  hostname?: string;
+  message?: string;
+};
+
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 export async function getValidFusionSolarAccessToken(
@@ -65,14 +71,44 @@ export async function getValidFusionSolarAccessToken(
   body.set("client_id", clientId);
   body.set("client_secret", clientSecret);
 
-  const tokenResponse = await fetch(FUSIONSOLAR_TOKEN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body.toString(),
-    cache: "no-store",
-  });
+  let tokenResponse: Response;
+
+  try {
+    tokenResponse = await fetch(FUSIONSOLAR_TOKEN_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: body.toString(),
+      cache: "no-store",
+    });
+  } catch (error) {
+    const cause =
+      error instanceof Error
+        ? (error.cause as FetchErrorCause | undefined)
+        : undefined;
+
+    console.error("[FusionSolar Token Refresh] Fetch failed", {
+      errorName:
+        error instanceof Error ? error.name : "UnknownError",
+      errorMessage:
+        error instanceof Error ? error.message : String(error),
+      causeCode: cause?.code,
+      causeHostname: cause?.hostname,
+      causeMessage: cause?.message,
+    });
+
+    throw new Error(
+      [
+        "FusionSolar refresh fetch failed",
+        cause?.code,
+        cause?.hostname,
+        cause?.message,
+      ]
+        .filter(Boolean)
+        .join(": "),
+    );
+  }
 
   const responseText = await tokenResponse.text();
 
