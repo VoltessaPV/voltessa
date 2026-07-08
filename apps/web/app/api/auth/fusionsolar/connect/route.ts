@@ -53,10 +53,6 @@ export async function GET() {
 authorizationUrl.searchParams.set("response_type", "code");
 authorizationUrl.searchParams.set("client_id", clientId);
 authorizationUrl.searchParams.set("redirect_uri", redirectUri);
-authorizationUrl.searchParams.set(
-  "scope",
-  "pvms.openapi.basic pvms.openapi.control",
-);
 
 authorizationUrl.searchParams.set("state", state);
 
