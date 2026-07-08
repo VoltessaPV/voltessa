@@ -61,5 +61,11 @@ console.log(
   authorizationUrl.toString(),
 );
 
+console.log({
+  clientId,
+  clientIdLength: clientId.length,
+  redirectUri,
+});
+
   return NextResponse.redirect(authorizationUrl);
 }
