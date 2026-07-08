@@ -48,6 +48,12 @@ export async function GET() {
     userId: user.id,
   });
 
+console.log({
+  clientId,
+  clientIdLength: clientId.length,
+  redirectUri,
+});
+
   const authorizationUrl = new URL(FUSIONSOLAR_AUTHORIZE_URL);
 
 authorizationUrl.searchParams.set("response_type", "code");
@@ -60,12 +66,6 @@ console.log(
   "[FusionSolar OAuth] Authorization URL:",
   authorizationUrl.toString(),
 );
-
-console.log({
-  clientId,
-  clientIdLength: clientId.length,
-  redirectUri,
-});
 
   return NextResponse.redirect(authorizationUrl);
 }
