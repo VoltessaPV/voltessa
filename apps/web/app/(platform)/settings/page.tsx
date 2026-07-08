@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
@@ -54,16 +55,26 @@ export default async function SettingsPage({
       </div>
 
       <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-        <div className="flex items-center justify-between gap-6">
-          <div>
-            <h2 className="text-lg font-medium">
-              Huawei FusionSolar
-            </h2>
+    <div className="flex items-center justify-between gap-6">
+    <div>
+        <h2 className="text-lg font-medium">
+        Huawei FusionSolar
+        </h2>
 
-            <p className="mt-2 text-sm text-white/60">
-              Connect your organization to FusionSolar.
-            </p>
-          </div>
+        <p className="mt-2 text-sm text-white/60">
+        Connect your organization to FusionSolar.
+        </p>
+    </div>
+
+    <div className="flex shrink-0">
+        <Link
+        href="/api/auth/fusionsolar/connect"
+        className="rounded-xl bg-blue-600 px-5 py-2 font-medium text-white transition hover:bg-blue-500"
+        >
+        {connection ? "Reconnect" : "Connect"}
+        </Link>
+    </div>
+    </div>
 
 
 
@@ -72,7 +83,6 @@ export default async function SettingsPage({
     To connect FusionSolar, authorize Voltessa from your FusionSolar account.
     After authorization, FusionSolar will redirect you back to Voltessa.
   </p>
-</div>
 
 
         </div>
