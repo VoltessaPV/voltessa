@@ -7,7 +7,6 @@ export const runtime = "nodejs";
 
 export const preferredRegion = "fra1";
 
-
 const FUSIONSOLAR_TOKEN_URL =
   "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/token";
 
@@ -105,11 +104,14 @@ export async function GET(request: NextRequest) {
   try {
     tokenData = JSON.parse(responseText) as FusionSolarTokenResponse;
   } catch {
-    console.error("[FusionSolar OAuth Token Exchange] Invalid JSON response", {
-      status: tokenResponse.status,
-      contentType: tokenResponse.headers.get("content-type"),
-      responseLength: responseText.length,
-    });
+    console.error(
+      "[FusionSolar OAuth Token Exchange] Invalid JSON response",
+      {
+        status: tokenResponse.status,
+        contentType: tokenResponse.headers.get("content-type"),
+        responseLength: responseText.length,
+      },
+    );
 
     const url = new URL("/settings", process.env.AUTH_URL);
 
@@ -143,11 +145,41 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  const expiresAt =
+    typeof tokenData.expires_in === "number"
+      ? new Date(Date.now() + tokenData.expires_in * 1000)
+      : null;
+
+  await prisma.fusionSolarConnection.upsert({
+    where: {
+      organizationId_provider: {
+        organizationId: user.organizationId,
+        provider: "HuaweiFusionSolar",
+      },
+    },
+    update: {
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      tokenType: tokenData.token_type ?? null,
+      scope: tokenData.scope ?? null,
+      expiresAt,
+    },
+    create: {
+      organizationId: user.organizationId,
+      provider: "HuaweiFusionSolar",
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token,
+      tokenType: tokenData.token_type ?? null,
+      scope: tokenData.scope ?? null,
+      expiresAt,
+    },
+  });
+
   console.log("[FusionSolar OAuth Token Exchange] Success", {
     userId: user.id,
     organizationId: user.organizationId,
-    accessTokenReceived: Boolean(tokenData.access_token),
-    refreshTokenReceived: Boolean(tokenData.refresh_token),
+    accessTokenStored: true,
+    refreshTokenStored: true,
     expiresIn: tokenData.expires_in,
     scope: tokenData.scope,
     tokenType: tokenData.token_type,
