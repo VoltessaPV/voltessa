@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const FUSIONSOLAR_AUTHORIZE_URL =
-  "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/authorize";
+  "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/login-page";
 
 export async function GET() {
   const session = await auth();
