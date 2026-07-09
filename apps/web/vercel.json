@@ -7,11 +7,5 @@
     "app/api/diag/fusionsolar-dns/route.ts": {
       "regions": ["fra1"]
     }
-  },
-  "crons": [
-    {
-      "path": "/api/internal/fusionsolar/ingest-plant-telemetry",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  }
 }
