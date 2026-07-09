@@ -1,6 +1,23 @@
+import { redirect } from "next/navigation";
+
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
-import { redirect } from "next/navigation";
+
+function formatEnergy(value: { toString(): string } | null | undefined) {
+  if (value == null) {
+    return "—";
+  }
+
+  const numericValue = Number(value.toString());
+
+  if (!Number.isFinite(numericValue)) {
+    return "—";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(numericValue);
+}
 
 export default async function DashboardPage() {
   const session = await auth();
@@ -39,50 +56,175 @@ export default async function DashboardPage() {
     },
   });
 
+  const latestTelemetry = plants
+    .map((plant) => plant.telemetrySnapshots[0])
+    .filter((telemetry) => telemetry !== undefined);
+
+  const totalLifetimeEnergy = latestTelemetry.reduce(
+    (sum, telemetry) => sum + Number(telemetry.totalPower?.toString() ?? 0),
+    0,
+  );
+
+  const totalTodayEnergy = latestTelemetry.reduce(
+    (sum, telemetry) => sum + Number(telemetry.dayPower?.toString() ?? 0),
+    0,
+  );
+
+  const totalMonthEnergy = latestTelemetry.reduce(
+    (sum, telemetry) => sum + Number(telemetry.monthPower?.toString() ?? 0),
+    0,
+  );
+
+  const latestUpdate =
+    latestTelemetry.length > 0
+      ? new Date(
+          Math.max(
+            ...latestTelemetry.map((telemetry) =>
+              telemetry.collectedAt.getTime(),
+            ),
+          ),
+        )
+      : null;
+
+  const kpis = [
+    {
+      label: "Plants",
+      value: plants.length.toString(),
+      unit: "connected",
+    },
+    {
+      label: "Energy Today",
+      value: formatEnergy({ toString: () => totalTodayEnergy.toString() }),
+      unit: "kWh",
+    },
+    {
+      label: "Energy This Month",
+      value: formatEnergy({ toString: () => totalMonthEnergy.toString() }),
+      unit: "kWh",
+    },
+    {
+      label: "Lifetime Energy",
+      value: formatEnergy({ toString: () => totalLifetimeEnergy.toString() }),
+      unit: "kWh",
+    },
+  ];
+
   return (
-    <main className="p-10 text-white">
-      <h1 className="text-3xl font-bold">Dashboard</h1>
+    <div className="mx-auto max-w-7xl space-y-8">
+      <section>
+        <p className="text-sm font-medium text-cyan-400">Portfolio overview</p>
 
-      <p className="mt-4">Welcome {user.name}</p>
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight text-white">
+              Dashboard
+            </h1>
 
-      <p className="mt-2">Organization: {user.organization?.name}</p>
+            <p className="mt-2 text-sm text-slate-400">
+              Live operational overview for {user.organization?.name}
+            </p>
+          </div>
 
-      <div className="mt-8 space-y-4">
-        {plants.map((plant) => {
-          const telemetry = plant.telemetrySnapshots[0];
+          <p className="text-sm text-slate-500">
+            Last telemetry:{" "}
+            <span className="text-slate-300">
+              {latestUpdate ? latestUpdate.toLocaleString() : "No data"}
+            </span>
+          </p>
+        </div>
+      </section>
 
-          return (
-            <div
-              key={plant.id}
-              className="rounded-lg border border-neutral-700 p-6"
-            >
-              <h2 className="text-xl font-semibold">{plant.name}</h2>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {kpis.map((kpi) => (
+          <div
+            key={kpi.label}
+            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 shadow-sm"
+          >
+            <p className="text-sm text-slate-400">{kpi.label}</p>
 
-              <p className="mt-3">
-                Lifetime Energy: {telemetry?.totalPower?.toString() ?? "-"} kWh
+            <div className="mt-4 flex items-baseline gap-2">
+              <p className="text-2xl font-semibold tracking-tight text-white">
+                {kpi.value}
               </p>
 
-              <p>Today: {telemetry?.dayPower?.toString() ?? "-"} kWh</p>
-
-              <p>This Month: {telemetry?.monthPower?.toString() ?? "-"} kWh</p>
-
-              <p>
-                Exported Today: {telemetry?.dayOnGridEnergy?.toString() ?? "-"}{" "}
-                kWh
-              </p>
-
-              <p>
-                Consumed Today: {telemetry?.dayUseEnergy?.toString() ?? "-"} kWh
-              </p>
-
-              <p>
-                Last Update:{" "}
-                {telemetry ? telemetry.collectedAt.toLocaleString() : "-"}
-              </p>
+              <span className="text-xs text-slate-500">{kpi.unit}</span>
             </div>
-          );
-        })}
-      </div>
-    </main>
+          </div>
+        ))}
+      </section>
+
+      <section>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-white">Plants</h2>
+
+          <p className="mt-1 text-sm text-slate-500">
+            Latest stored FusionSolar telemetry
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          {plants.map((plant) => {
+            const telemetry = plant.telemetrySnapshots[0];
+
+            return (
+              <article
+                key={plant.id}
+                className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
+              >
+                <div className="flex flex-col gap-3 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">
+                      {plant.name}
+                    </h3>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      {plant.vendor}
+                      {plant.city ? ` · ${plant.city}` : ""}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-sm text-slate-400">
+                    <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                    Telemetry available
+                  </div>
+                </div>
+
+                <div className="grid gap-px bg-white/10 sm:grid-cols-2 xl:grid-cols-5">
+                  {[
+                    ["Today", telemetry?.dayPower, "kWh"],
+                    ["This Month", telemetry?.monthPower, "kWh"],
+                    ["Lifetime", telemetry?.totalPower, "kWh"],
+                    ["Exported Today", telemetry?.dayOnGridEnergy, "kWh"],
+                    ["Consumed Today", telemetry?.dayUseEnergy, "kWh"],
+                  ].map(([label, value, unit]) => (
+                    <div key={label?.toString()} className="bg-[#080c1a] p-5">
+                      <p className="text-xs uppercase tracking-wide text-slate-500">
+                        {label?.toString()}
+                      </p>
+
+                      <p className="mt-3 text-lg font-medium text-white">
+                        {formatEnergy(
+                          value as { toString(): string } | null | undefined,
+                        )}{" "}
+                        <span className="text-xs font-normal text-slate-500">
+                          {unit?.toString()}
+                        </span>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="px-6 py-4 text-xs text-slate-500">
+                  Last updated:{" "}
+                  {telemetry
+                    ? telemetry.collectedAt.toLocaleString()
+                    : "No telemetry available"}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    </div>
   );
 }
