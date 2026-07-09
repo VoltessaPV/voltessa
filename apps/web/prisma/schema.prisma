@@ -118,6 +118,8 @@ model Plant {
 
   devices Device[]
 
+  telemetrySnapshots PlantTelemetrySnapshot[]
+
   @@unique([organizationId, stationCode])
 }
 
@@ -173,4 +175,26 @@ model Device {
   @@unique([plantId, devDn])
   @@index([plantId])
   @@index([esnCode])
+}
+
+model PlantTelemetrySnapshot {
+  id String @id @default(cuid())
+
+  plantId String
+
+  totalIncome     Decimal? @db.Decimal(18, 4)
+  totalPower      Decimal? @db.Decimal(18, 4)
+  dayOnGridEnergy Decimal? @db.Decimal(18, 4)
+  dayPower        Decimal? @db.Decimal(18, 4)
+  dayUseEnergy    Decimal? @db.Decimal(18, 4)
+  dayIncome       Decimal? @db.Decimal(18, 4)
+  realHealthState Int?
+  monthPower      Decimal? @db.Decimal(18, 4)
+
+  collectedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@index([plantId, collectedAt])
 }
