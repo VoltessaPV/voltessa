@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 import { getValidFusionSolarAccessToken } from "@/lib/fusionsolar/get-valid-access-token";
@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export const preferredRegion = "fra1";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await auth();
 
   if (!session?.user?.email) {
@@ -90,9 +90,19 @@ export async function GET() {
     );
   }
 
+  const forceRefresh =
+    request.nextUrl.searchParams.get("forceRefresh") === "1";
+
   try {
     const tokenResult =
-      await getValidFusionSolarAccessToken(connection);
+      await getValidFusionSolarAccessToken(
+        forceRefresh
+          ? {
+              ...connection,
+              expiresAt: new Date(0),
+            }
+          : connection,
+      );
 
     const stationsUrl = new URL(
       "/v1/fusionsolar/stations",
@@ -126,6 +136,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: stationsResponse.ok,
+      forceRefresh,
       tokenRefreshed: tokenResult.refreshed,
       upstreamStatus: stationsResponse.status,
       upstreamContentType:
@@ -137,6 +148,7 @@ export async function GET() {
   } catch (error) {
     console.error("[FusionSolar Stations Diagnostic] Failed", {
       organizationId: user.organizationId,
+      forceRefresh,
       error:
         error instanceof Error
           ? {
@@ -149,6 +161,7 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: false,
+        forceRefresh,
         error: "fusionsolar_stations_diagnostic_failed",
         reason:
           error instanceof Error
