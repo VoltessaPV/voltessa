@@ -1,4 +1,4 @@
-﻿import crypto from "node:crypto";
+import crypto from "node:crypto";
 
 import { NextResponse } from "next/server";
 
@@ -44,7 +44,7 @@ function isAuthorized(request: Request): boolean {
   return secretsMatch(providedSecret, cronSecret);
 }
 
-export async function POST(request: Request) {
+async function handleIngestion(request: Request) {
   if (!process.env.CRON_SECRET) {
     console.error(
       "[FusionSolar Telemetry Ingestion] CRON_SECRET is not configured",
@@ -103,4 +103,11 @@ export async function POST(request: Request) {
       },
     );
   }
+}
+export async function GET(request: Request) {
+  return handleIngestion(request);
+}
+
+export async function POST(request: Request) {
+  return handleIngestion(request);
 }

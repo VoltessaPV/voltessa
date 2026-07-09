@@ -1,10 +1,10 @@
-﻿import { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 import type { FusionSolarConnection } from "@/lib/fusionsolar/api-client";
 import { getFusionSolarPlantRealTimeData } from "@/lib/fusionsolar/plant-data";
 import { prisma } from "@/lib/prisma";
 
-const MAX_STATION_CODES_PER_REQUEST = 100;
+const MAX_STATION_CODES_PER_REQUEST = 10;
 
 function toDecimal(
   value: number | null,
