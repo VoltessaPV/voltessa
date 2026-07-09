@@ -39,57 +39,50 @@ export default async function DashboardPage() {
     },
   });
 
-
   return (
     <main className="p-10 text-white">
-      <h1 className="text-3xl font-bold">
-        Dashboard
-      </h1>
+      <h1 className="text-3xl font-bold">Dashboard</h1>
 
-      <p className="mt-4">
-        Welcome {user.name}
-      </p>
+      <p className="mt-4">Welcome {user.name}</p>
 
-      <p className="mt-2">
-        Organization: {user.organization?.name}
-      </p>
+      <p className="mt-2">Organization: {user.organization?.name}</p>
 
-<div className="mt-8 space-y-4">
-  {plants.map((plant) => {
-    const telemetry = plant.telemetrySnapshots[0];
+      <div className="mt-8 space-y-4">
+        {plants.map((plant) => {
+          const telemetry = plant.telemetrySnapshots[0];
 
-    return (
-      <div
-        key={plant.id}
-        className="rounded-lg border border-neutral-700 p-6"
-      >
-        <h2 className="text-xl font-semibold">
-          {plant.name}
-        </h2>
+          return (
+            <div
+              key={plant.id}
+              className="rounded-lg border border-neutral-700 p-6"
+            >
+              <h2 className="text-xl font-semibold">{plant.name}</h2>
 
-        <p className="mt-3">
-          Current Power: {telemetry?.totalPower?.toString() ?? "-"} kW
-        </p>
+              <p className="mt-3">
+                Lifetime Energy: {telemetry?.totalPower?.toString() ?? "-"} kWh
+              </p>
 
-        <p>
-          Today: {telemetry?.dayPower?.toString() ?? "-"} kWh
-        </p>
+              <p>Today: {telemetry?.dayPower?.toString() ?? "-"} kWh</p>
 
-        <p>
-          This Month: {telemetry?.monthPower?.toString() ?? "-"} kWh
-        </p>
+              <p>This Month: {telemetry?.monthPower?.toString() ?? "-"} kWh</p>
 
-        <p>
-          Last Update:{" "}
-          {telemetry
-            ? telemetry.collectedAt.toLocaleString()
-            : "-"}
-        </p>
+              <p>
+                Exported Today: {telemetry?.dayOnGridEnergy?.toString() ?? "-"}{" "}
+                kWh
+              </p>
+
+              <p>
+                Consumed Today: {telemetry?.dayUseEnergy?.toString() ?? "-"} kWh
+              </p>
+
+              <p>
+                Last Update:{" "}
+                {telemetry ? telemetry.collectedAt.toLocaleString() : "-"}
+              </p>
+            </div>
+          );
+        })}
       </div>
-    );
-  })}
-</div>
-
     </main>
   );
 }
