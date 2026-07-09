@@ -1,12 +1,32 @@
 ﻿import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { getValidFusionSolarAccessToken } from "@/lib/fusionsolar/get-valid-access-token";
+import { callFusionSolarApi } from "@/lib/fusionsolar/api-client";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 export const preferredRegion = "fra1";
 export const dynamic = "force-dynamic";
+
+type FusionSolarPlant = {
+  plantCode: string;
+  plantName: string;
+  plantAddress: string | null;
+  longitude: number | null;
+  latitude: number | null;
+  capacity: number;
+  contactPerson: string | null;
+  contactMethod: string | null;
+  gridConnectionDate: string | null;
+};
+
+type FusionSolarPlantListData = {
+  list: FusionSolarPlant[];
+  pageCount: number;
+  pageNo: number;
+  pageSize: number;
+  total: number;
+};
 
 export async function GET() {
   const session = await auth();
@@ -74,68 +94,24 @@ export async function GET() {
     );
   }
 
-  const gatewayUrl = process.env.FUSIONSOLAR_GATEWAY_URL;
-  const gatewaySecret =
-    process.env.FUSIONSOLAR_GATEWAY_SECRET;
-
-  if (!gatewayUrl || !gatewaySecret) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "fusionsolar_gateway_not_configured",
-      },
-      {
-        status: 500,
-      },
-    );
-  }
-
   try {
-    const tokenResult =
-      await getValidFusionSolarAccessToken(connection);
-
-    const stationsUrl = new URL(
-      "/v1/fusionsolar/api",
-      gatewayUrl,
-    ).toString();
-
-    const stationsResponse = await fetch(stationsUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${tokenResult.accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "application/json, */*",
-        "x-gateway-secret": gatewaySecret,
-      },
-      body: JSON.stringify({
-        path: "/thirdData/stations",
-        body: {
-          pageNo: 1,
+    const result =
+      await callFusionSolarApi<FusionSolarPlantListData>(
+        connection,
+        {
+          path: "/thirdData/stations",
+          body: {
+            pageNo: 1,
+          },
         },
-      }),
-      cache: "no-store",
-      redirect: "manual",
-    });
-
-    const responseText = await stationsResponse.text();
-
-    let responseBody: unknown = responseText;
-
-    try {
-      responseBody = JSON.parse(responseText);
-    } catch {
-      // Keep the raw response text for diagnostics.
-    }
+      );
 
     return NextResponse.json({
-      ok: stationsResponse.ok,
-      tokenRefreshed: tokenResult.refreshed,
-      upstreamStatus: stationsResponse.status,
-      upstreamContentType:
-        stationsResponse.headers.get("content-type"),
-      upstreamLocation:
-        stationsResponse.headers.get("location"),
-      response: responseBody,
+      ok: true,
+      tokenRefreshed: result.tokenRefreshed,
+      plantCount: result.data.list.length,
+      total: result.data.total,
+      plants: result.data.list,
     });
   } catch (error) {
     console.error("[FusionSolar Stations Diagnostic] Failed", {
@@ -164,4 +140,3 @@ export async function GET() {
     );
   }
 }
-
