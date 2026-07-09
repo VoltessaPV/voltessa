@@ -1,7 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { getValidFusionSolarAccessToken } from "@/lib/fusionsolar/get-valid-access-token";
+import { callFusionSolarApi } from "@/lib/fusionsolar/api-client";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -9,6 +9,21 @@ export const preferredRegion = "fra1";
 export const dynamic = "force-dynamic";
 
 const TEST_STATION_CODE = "NE=163554568";
+
+type FusionSolarDevice = {
+  id: number;
+  devDn: string;
+  devName: string;
+  devTypeId: number;
+  esnCode: string | null;
+  invType: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  model: string | null;
+  optimizerNumber: number | null;
+  softwareVersion: string | null;
+  stationCode: string;
+};
 
 export async function GET() {
   const session = await auth();
@@ -76,69 +91,22 @@ export async function GET() {
     );
   }
 
-  const gatewayUrl = process.env.FUSIONSOLAR_GATEWAY_URL;
-  const gatewaySecret =
-    process.env.FUSIONSOLAR_GATEWAY_SECRET;
-
-  if (!gatewayUrl || !gatewaySecret) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "fusionsolar_gateway_not_configured",
-      },
-      {
-        status: 500,
-      },
-    );
-  }
-
   try {
-    const tokenResult =
-      await getValidFusionSolarAccessToken(connection);
-
-    const devicesUrl = new URL(
-      "/v1/fusionsolar/api",
-      gatewayUrl,
-    ).toString();
-
-    const devicesResponse = await fetch(devicesUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${tokenResult.accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "application/json, */*",
-        "x-gateway-secret": gatewaySecret,
+    const result = await callFusionSolarApi<
+      FusionSolarDevice[]
+    >(connection, {
+      path: "/thirdData/getDevList",
+      body: {
+        stationCodes: TEST_STATION_CODE,
       },
-      body: JSON.stringify({
-        path: "/thirdData/getDevList",
-        body: {
-          stationCodes: TEST_STATION_CODE,
-        },
-      }),
-      cache: "no-store",
-      redirect: "manual",
     });
 
-    const responseText = await devicesResponse.text();
-
-    let responseBody: unknown = responseText;
-
-    try {
-      responseBody = JSON.parse(responseText);
-    } catch {
-      // Keep raw response text for diagnostics.
-    }
-
     return NextResponse.json({
-      ok: devicesResponse.ok,
+      ok: true,
       stationCode: TEST_STATION_CODE,
-      tokenRefreshed: tokenResult.refreshed,
-      upstreamStatus: devicesResponse.status,
-      upstreamContentType:
-        devicesResponse.headers.get("content-type"),
-      upstreamLocation:
-        devicesResponse.headers.get("location"),
-      response: responseBody,
+      tokenRefreshed: result.tokenRefreshed,
+      deviceCount: result.data.length,
+      devices: result.data,
     });
   } catch (error) {
     console.error("[FusionSolar Devices Diagnostic] Failed", {
@@ -168,4 +136,3 @@ export async function GET() {
     );
   }
 }
-
