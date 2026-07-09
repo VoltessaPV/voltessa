@@ -97,7 +97,7 @@ export async function GET() {
       await getValidFusionSolarAccessToken(connection);
 
     const devicesUrl = new URL(
-      "/v1/fusionsolar/devices",
+      "/v1/fusionsolar/api",
       gatewayUrl,
     ).toString();
 
@@ -110,7 +110,10 @@ export async function GET() {
         "x-gateway-secret": gatewaySecret,
       },
       body: JSON.stringify({
-        stationCodes: TEST_STATION_CODE,
+        path: "/thirdData/getDevList",
+        body: {
+          stationCodes: TEST_STATION_CODE,
+        },
       }),
       cache: "no-store",
       redirect: "manual",
@@ -165,3 +168,4 @@ export async function GET() {
     );
   }
 }
+
