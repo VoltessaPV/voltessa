@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../lib/utils";
 
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- intentional named alias for React.forwardRef's generic
 export interface InputProps
   extends React.InputHTMLAttributes<HTMLInputElement> {}
 
