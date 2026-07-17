@@ -1,28 +1,11 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
+import { Permissions } from "@/lib/auth/permissions";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 export default async function PlantsPage() {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requirePermission(Permissions.canViewPlants);
 
   const plants = await prisma.plant.findMany({
     where: {

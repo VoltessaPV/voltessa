@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
-import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
 import { AppShell } from "@/components/platform/layout/AppShell";
-import { prisma } from "@/lib/prisma";
+import { requireOnboardedUser } from "@/lib/auth/session";
 
 type Props = {
   children: ReactNode;
@@ -12,32 +10,7 @@ type Props = {
 export default async function PlatformLayout({
   children,
 }: Props) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      name: true,
-      email: true,
-      role: true,
-      organization: {
-        select: {
-          name: true,
-          onboardingCompletedAt: true,
-        },
-      },
-    },
-  });
-
-  if (!user?.organization?.onboardingCompletedAt) {
-    redirect("/onboarding");
-  }
+  const user = await requireOnboardedUser();
 
   return (
     <AppShell

@@ -3,7 +3,8 @@
 import { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 
-import { auth } from "@/auth";
+import { Permissions } from "@/lib/auth/permissions";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 function optionalString(formData: FormData, field: string) {
@@ -23,24 +24,7 @@ function optionalDecimal(formData: FormData, field: string) {
 }
 
 export async function createPlant(formData: FormData) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requirePermission(Permissions.canManagePlants);
 
   const name = formData.get("name")?.toString().trim();
 
@@ -74,24 +58,7 @@ export async function createPlant(formData: FormData) {
 }
 
 export async function updatePlant(plantId: string, formData: FormData) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requirePermission(Permissions.canManagePlants);
 
   const existingPlant = await prisma.plant.findFirst({
     where: {

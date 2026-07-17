@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-
-import { auth } from "@/auth";
+import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 function formatEnergy(value: { toString(): string } | null | undefined) {
@@ -20,24 +18,7 @@ function formatEnergy(value: { toString(): string } | null | undefined) {
 }
 
 export default async function DashboardPage() {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    include: {
-      organization: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requireOnboardedUser();
 
   const plants = await prisma.plant.findMany({
     where: {

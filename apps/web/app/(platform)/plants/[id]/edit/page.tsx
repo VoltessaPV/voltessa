@@ -1,6 +1,7 @@
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-import { auth } from "@/auth";
+import { Permissions } from "@/lib/auth/permissions";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 import { updatePlant } from "../../actions";
@@ -17,24 +18,7 @@ type EditPlantPageProps = {
 export default async function EditPlantPage({
   params,
 }: EditPlantPageProps) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requirePermission(Permissions.canManagePlants);
 
   const { id } = await params;
 

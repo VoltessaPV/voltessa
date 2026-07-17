@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 
-import { auth } from "@/auth";
+import { Permissions } from "@/lib/auth/permissions";
+import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 type Props = {
@@ -13,24 +14,7 @@ type Props = {
 export default async function PlantDetailsPage({
   params,
 }: Props) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requirePermission(Permissions.canViewPlants);
 
   const { id } = await params;
 

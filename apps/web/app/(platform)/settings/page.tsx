@@ -1,6 +1,4 @@
-import { redirect } from "next/navigation";
-
-import { auth } from "@/auth";
+import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 type SettingsPageProps = {
@@ -13,24 +11,7 @@ type SettingsPageProps = {
 export default async function SettingsPage({
   searchParams,
 }: SettingsPageProps) {
-  const session = await auth();
-
-  if (!session?.user?.email) {
-    redirect("/login");
-  }
-
-  const user = await prisma.user.findUnique({
-    where: {
-      email: session.user.email,
-    },
-    select: {
-      organizationId: true,
-    },
-  });
-
-  if (!user?.organizationId) {
-    redirect("/onboarding");
-  }
+  const user = await requireOnboardedUser();
 
   const connection = await prisma.fusionSolarConnection.findUnique({
     where: {
