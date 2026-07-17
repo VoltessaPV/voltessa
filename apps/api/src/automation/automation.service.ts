@@ -2,12 +2,9 @@ import { Injectable, Inject } from '@nestjs/common';
 
 import { MarketService } from '../market/market.service';
 import { PlantService } from '../plant/plant.service';
-import { DecisionService } from '../decision/decision.service';
+import { DecisionService, PlantCommand } from '../decision/decision.service';
 
-import {
-  ExportMode,
-  PlantCommand,
-} from '../plant/plant.types';
+import { ExportMode } from '../plant/plant.types';
 
 import { PLANT_DRIVER } from '../drivers/constants';
 import type { PlantDriver } from '../drivers/plant-driver.interface';
@@ -39,22 +36,12 @@ export class AutomationService {
       resumeExportThreshold: threshold,
     });
 
-    const shouldSend = this.shouldSendCommand(
-      plant.state.exportMode,
-      command,
-    );
+    const shouldSend = this.shouldSendCommand(plant.state.exportMode, command);
 
     if (shouldSend) {
-      await this.driver.execute(
-        plant.stationCode,
-        command,
-      );
+      await this.driver.execute(plant.stationCode, command);
 
-      this.plantService.saveCommand(
-        plant.id,
-        command,
-        true,
-      );
+      this.plantService.saveCommand(plant.id, command, true);
     }
 
     return {

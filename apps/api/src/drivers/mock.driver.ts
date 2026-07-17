@@ -6,12 +6,8 @@ import { PlantDriver } from './plant-driver.interface';
 export class MockDriver implements PlantDriver {
   private readonly logger = new Logger(MockDriver.name);
 
-  async execute(
-    stationCode: string,
-    command: PlantCommand,
-  ): Promise<void> {
-    this.logger.log(
-      `[MOCK] ${command} -> ${stationCode}`,
-    );
+  // eslint-disable-next-line @typescript-eslint/require-await -- must stay async to satisfy the PlantDriver interface
+  async execute(stationCode: string, command: PlantCommand): Promise<void> {
+    this.logger.log(`[MOCK] ${command} -> ${stationCode}`);
   }
 }
