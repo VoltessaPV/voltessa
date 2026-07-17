@@ -1,0 +1,68 @@
+name: CI
+
+# Voltessa CI: install, lint, type-check, build. No deployment happens here —
+# apps/web deploys via Vercel's own Git integration on push to main (see
+# docs/DEVELOPMENT_WORKFLOW.md), and apps/api has no deployment target yet.
+# This workflow exists to keep `main` deployable, per the Definition of Done in
+# CLAUDE.md: `pnpm lint`, `turbo check-types`, and `turbo build` must all pass.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, type-check, build
+    runs-on: ubuntu-latest
+
+    # Placeholder, non-secret values only — enough for `prisma generate` and
+    # `next build` to run without a real database or real OAuth credentials.
+    # This workflow never talks to a real database, FusionSolar, or Google, and
+    # never deploys, so no repository secrets are required to run it (including
+    # on pull requests from forks).
+    env:
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      AUTH_SECRET: ci-placeholder-secret
+      AUTH_URL: http://localhost:3000
+      NEXTAUTH_URL: http://localhost:3000
+      AUTH_GOOGLE_ID: ci-placeholder
+      AUTH_GOOGLE_SECRET: ci-placeholder
+      FUSIONSOLAR_CLIENT_ID: ci-placeholder
+      FUSIONSOLAR_CLIENT_SECRET: ci-placeholder
+      FUSIONSOLAR_REDIRECT_URI: http://localhost:3000/api/auth/fusionsolar/callback
+      FUSIONSOLAR_GATEWAY_URL: http://localhost:9999
+      FUSIONSOLAR_GATEWAY_SECRET: ci-placeholder
+      CRON_SECRET: ci-placeholder
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm exec turbo check-types
+
+      - name: Build
+        run: pnpm exec turbo build
