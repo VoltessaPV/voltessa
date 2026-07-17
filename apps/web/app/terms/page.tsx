@@ -53,7 +53,7 @@ export default function TermsPage() {
           </h2>
 
           <p className="mt-4">
-            Voltessa is provided on an "as available" basis. Users remain
+            Voltessa is provided on an &quot;as available&quot; basis. Users remain
             responsible for operational decisions affecting their energy assets.
           </p>
         </section>

@@ -1,9 +1,7 @@
 import ChartCard from "../dashboard/ChartCard";
 import BrowserBar from "../dashboard/BrowserBar";
 import Sidebar from "../dashboard/Sidebar";
-import Card from "../ui/Card";
 import KPICard from "../dashboard/KPICard";
-import { dashboard } from "../../lib/mock-data";
 import AIRecommendationCard from "../dashboard/AIRecommendationCard";
 import FleetStatusCard from "../dashboard/FleetStatusCard";
 import MarketOverviewCard from "../dashboard/MarketOverviewCard";

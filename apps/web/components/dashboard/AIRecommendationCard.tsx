@@ -23,7 +23,7 @@ export default function AIRecommendationCard() {
       <div className="mt-2 text-sm leading-6 text-slate-300">
         Negative electricity prices are expected in
         <span className="font-semibold text-white"> 52 minutes</span>.
-        Charging the battery at 16:15 is projected to increase today's revenue.
+        Charging the battery at 16:15 is projected to increase today&apos;s revenue.
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-4">
