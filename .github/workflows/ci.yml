@@ -46,8 +46,10 @@ jobs:
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        # No `version:` here — pnpm/action-setup@v4 auto-detects the version
+        # from package.json's `packageManager` field (pnpm@9.0.0). Passing a
+        # `version` input here as well makes the action see two conflicting
+        # sources of truth and fail with "Multiple versions of pnpm specified."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
