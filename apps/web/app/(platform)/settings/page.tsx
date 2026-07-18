@@ -1,39 +1,9 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
-import { dbMarketPriceProvider, type MarketPriceResult } from "@/lib/market-price/provider";
+import { dbMarketPriceProvider } from "@/lib/market-price/provider";
+import { getMarketPriceStatus } from "@/lib/market-price/status";
 import { prisma } from "@/lib/prisma";
 
 import { updateAutomationSettings } from "./actions";
-
-const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
-
-/**
- * Reflects only what the Market Price Provider actually returned — never
- * infers or fabricates a price when it is unavailable. "Stale" means a
- * price was persisted but is older than expected for hourly day-ahead
- * data; it is still shown (not hidden), just labeled clearly.
- */
-function getMarketPriceStatus(result: MarketPriceResult): {
-  label: string;
-  detail: string;
-  colorClass: string;
-} {
-  if (!result.available) {
-    return {
-      label: "Unavailable",
-      detail: result.reason,
-      colorClass: "bg-slate-500",
-    };
-  }
-
-  const ageMs = Date.now() - result.price.timestamp.getTime();
-  const isStale = ageMs > STALE_AFTER_MS;
-
-  return {
-    label: isStale ? "Stale" : "Live",
-    detail: `Last updated ${result.price.timestamp.toLocaleString()}`,
-    colorClass: isStale ? "bg-amber-400" : "bg-emerald-400",
-  };
-}
 
 type SettingsPageProps = {
   searchParams: Promise<{

@@ -3,31 +3,29 @@
 import { Prisma } from "@prisma/client";
 import { redirect } from "next/navigation";
 
+import { DEFAULT_EXPORT_THRESHOLD_CONFIG } from "@/lib/automation/export-threshold-config";
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
-
-const DEFAULT_MINIMUM_EXPORT_PRICE = "15.00";
-const DEFAULT_CURRENCY = "EUR";
 
 function parseMinimumExportPrice(formData: FormData): Prisma.Decimal {
   const raw = formData.get("minimumExportPrice")?.toString().trim();
 
   if (!raw) {
-    return new Prisma.Decimal(DEFAULT_MINIMUM_EXPORT_PRICE);
+    return new Prisma.Decimal(DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice);
   }
 
   try {
     return new Prisma.Decimal(raw);
   } catch {
-    return new Prisma.Decimal(DEFAULT_MINIMUM_EXPORT_PRICE);
+    return new Prisma.Decimal(DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice);
   }
 }
 
 function parseCurrency(formData: FormData): string {
   const raw = formData.get("currency")?.toString().trim().toUpperCase();
 
-  return raw || DEFAULT_CURRENCY;
+  return raw || DEFAULT_EXPORT_THRESHOLD_CONFIG.currency;
 }
 
 export async function updateAutomationSettings(formData: FormData) {

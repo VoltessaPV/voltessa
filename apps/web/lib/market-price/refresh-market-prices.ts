@@ -1,8 +1,8 @@
 /**
  * Market price scheduler logic — fetches today's day-ahead prices from
  * ENTSO-E and persists them. This is the only module allowed to write to
- * the `MarketPrice` table; the Market Price Provider
- * (`lib/market-price/provider.ts`) only ever reads from it.
+ * the `MarketPrice`/`MarketPriceImport` tables; the Market Price Provider
+ * (`lib/market-price/provider.ts`) only ever reads from them.
  *
  * Called by `app/api/internal/market-price/refresh-prices/route.ts`,
  * mirroring `lib/fusionsolar/ingest-plant-telemetry.ts` /
@@ -10,6 +10,9 @@
  * externally-triggered, `CRON_SECRET`-guarded pattern, not Vercel's
  * built-in cron (see CLAUDE.md's "Known gaps" on why that was reverted for
  * telemetry ingestion).
+ *
+ * "Today" is computed in ENTSO-E's own CET/CEST market-day convention
+ * (see `lib/market-price/timezone.ts`), not Bulgaria's own civil day.
  */
 
 import {
@@ -17,35 +20,45 @@ import {
   MARKET_PRICE_SOURCE_ENTSOE,
 } from "@/lib/market-price/constants";
 import { fetchEntsoeDayAheadPrices } from "@/lib/market-price/providers/entsoe";
+import {
+  ENTSOE_MARKET_TIMEZONE,
+  localDayBoundsUtc,
+} from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 
 export type MarketPriceRefreshResult = {
   biddingZone: string;
-  pricesFetched: number;
-  pricesUpserted: number;
+  periodStart: Date;
+  periodEnd: Date;
+  expectedIntervals: number;
+  importedIntervals: number;
+  missingIntervals: number;
+  isPartial: boolean;
 };
 
 /**
- * Fetches and persists today's (UTC calendar day) day-ahead prices for the
- * configured bidding zone. Idempotent: re-running for the same day
- * upserts existing rows rather than duplicating them.
+ * Fetches and persists today's (CET/CEST market day) day-ahead prices for
+ * the configured bidding zone. Idempotent: re-running for the same day
+ * upserts existing `MarketPrice` rows rather than duplicating them, and
+ * always records a fresh `MarketPriceImport` row describing the outcome.
+ *
+ * Never fabricates or interpolates missing intervals — see
+ * `lib/market-price/providers/entsoe.ts` for the validation/partial-import
+ * policy this relies on.
  */
 export async function refreshMarketPrices(): Promise<MarketPriceRefreshResult> {
-  const now = new Date();
-  const periodStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+  const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
+    new Date(),
+    ENTSOE_MARKET_TIMEZONE,
   );
-  const periodEnd = new Date(periodStart.getTime() + 24 * 60 * 60 * 1000);
 
-  const points = await fetchEntsoeDayAheadPrices({
+  const series = await fetchEntsoeDayAheadPrices({
     biddingZone: DEFAULT_BIDDING_ZONE,
     periodStart,
     periodEnd,
   });
 
-  let pricesUpserted = 0;
-
-  for (const point of points) {
+  for (const point of series.points) {
     await prisma.marketPrice.upsert({
       where: {
         biddingZone_timestamp_source: {
@@ -66,13 +79,31 @@ export async function refreshMarketPrices(): Promise<MarketPriceRefreshResult> {
         currency: point.currency,
       },
     });
-
-    pricesUpserted += 1;
   }
+
+  await prisma.marketPriceImport.create({
+    data: {
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      periodStart,
+      periodEnd,
+      resolutionMinutes: series.resolutionMinutes,
+      expectedIntervals: series.expectedIntervals,
+      importedIntervals: series.points.length,
+      isPartial: series.isPartial,
+      missingTimestamps: series.missingTimestamps.map((timestamp) =>
+        timestamp.toISOString(),
+      ),
+      source: MARKET_PRICE_SOURCE_ENTSOE,
+    },
+  });
 
   return {
     biddingZone: DEFAULT_BIDDING_ZONE,
-    pricesFetched: points.length,
-    pricesUpserted,
+    periodStart,
+    periodEnd,
+    expectedIntervals: series.expectedIntervals,
+    importedIntervals: series.points.length,
+    missingIntervals: series.missingTimestamps.length,
+    isPartial: series.isPartial,
   };
 }

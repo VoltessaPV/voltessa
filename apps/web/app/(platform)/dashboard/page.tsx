@@ -1,8 +1,11 @@
+import { DEFAULT_EXPORT_THRESHOLD_CONFIG } from "@/lib/automation/export-threshold-config";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import {
   getPlantConfiguredExportControlMode,
   type ConfiguredExportControlMode,
 } from "@/lib/fusionsolar/get-export-control-status";
+import { dbMarketPriceProvider } from "@/lib/market-price/provider";
+import { getMarketPriceStatus } from "@/lib/market-price/status";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -134,6 +137,47 @@ export default async function DashboardPage() {
 
   const exportControlByPlantId = new Map(exportControlEntries);
 
+  const [currentMarketPrice, dayAheadMarketPrices, marketImportStatus, automationSettings] =
+    await Promise.all([
+      dbMarketPriceProvider.getCurrentPrice(),
+      dbMarketPriceProvider.getDayAheadPrices(),
+      dbMarketPriceProvider.getLatestImportStatus(),
+      prisma.automationSettings.findUnique({
+        where: { organizationId: user.organizationId },
+      }),
+    ]);
+
+  const marketPriceStatus = getMarketPriceStatus(currentMarketPrice);
+
+  const nextIntervalPrice =
+    currentMarketPrice.available && dayAheadMarketPrices.available
+      ? (dayAheadMarketPrices.prices.find(
+          (price) =>
+            price.timestamp.getTime() >
+            currentMarketPrice.price.timestamp.getTime(),
+        ) ?? null)
+      : null;
+
+  const lowestPriceToday = dayAheadMarketPrices.available
+    ? dayAheadMarketPrices.prices.reduce((lowest, price) =>
+        price.price < lowest.price ? price : lowest,
+      )
+    : null;
+
+  const highestPriceToday = dayAheadMarketPrices.available
+    ? dayAheadMarketPrices.prices.reduce((highest, price) =>
+        price.price > highest.price ? price : highest,
+      )
+    : null;
+
+  const exportThreshold = {
+    minimumExportPrice: automationSettings
+      ? Number(automationSettings.minimumExportPrice.toString())
+      : DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice,
+    currency:
+      automationSettings?.currency ?? DEFAULT_EXPORT_THRESHOLD_CONFIG.currency,
+  };
+
   const latestTelemetry = plants
     .map((plant) => plant.telemetrySnapshots[0])
     .filter((telemetry) => telemetry !== undefined);
@@ -229,6 +273,105 @@ export default async function DashboardPage() {
             </div>
           </div>
         ))}
+      </section>
+
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-white">
+              Bulgarian Day-Ahead Market
+            </h2>
+
+            <p className="mt-1 text-sm text-slate-500">
+              Data source: ENTSO-E
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <span
+              className={`h-2 w-2 rounded-full ${marketPriceStatus.colorClass}`}
+            />
+            {marketPriceStatus.label}
+          </div>
+        </div>
+
+        {marketImportStatus.available && marketImportStatus.isPartial && (
+          <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+            Latest import is partial: {marketImportStatus.importedIntervals}/
+            {marketImportStatus.expectedIntervals} intervals available (
+            {marketImportStatus.missingIntervalsCount} missing from
+            ENTSO-E). Missing intervals are not shown — never fabricated or
+            interpolated.
+          </p>
+        )}
+
+        <div className="mt-6 grid gap-px overflow-hidden rounded-xl bg-white/10 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="bg-[#080c1a] p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Current Hour
+            </p>
+            <p className="mt-3 text-lg font-medium text-white">
+              {currentMarketPrice.available
+                ? `${currentMarketPrice.price.price} ${currentMarketPrice.price.currency}/MWh`
+                : "—"}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {currentMarketPrice.available
+                ? `From ${currentMarketPrice.price.timestamp.toLocaleTimeString("en-GB", { timeZone: "Europe/Sofia", hour: "2-digit", minute: "2-digit" })} (Europe/Sofia)`
+                : marketPriceStatus.detail}
+            </p>
+          </div>
+
+          <div className="bg-[#080c1a] p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Next Hour Price
+            </p>
+            <p className="mt-3 text-lg font-medium text-white">
+              {nextIntervalPrice
+                ? `${nextIntervalPrice.price} ${nextIntervalPrice.currency}/MWh`
+                : "—"}
+            </p>
+          </div>
+
+          <div className="bg-[#080c1a] p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Lowest Today
+            </p>
+            <p className="mt-3 text-lg font-medium text-white">
+              {lowestPriceToday
+                ? `${lowestPriceToday.price} ${lowestPriceToday.currency}/MWh`
+                : "—"}
+            </p>
+          </div>
+
+          <div className="bg-[#080c1a] p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Highest Today
+            </p>
+            <p className="mt-3 text-lg font-medium text-white">
+              {highestPriceToday
+                ? `${highestPriceToday.price} ${highestPriceToday.currency}/MWh`
+                : "—"}
+            </p>
+          </div>
+
+          <div className="bg-[#080c1a] p-5">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Export Threshold
+            </p>
+            <p className="mt-3 text-lg font-medium text-white">
+              {exportThreshold.minimumExportPrice} {exportThreshold.currency}
+              /MWh
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-xs text-slate-500">
+          Last successful update:{" "}
+          {marketImportStatus.available
+            ? marketImportStatus.importedAt.toLocaleString()
+            : "No import has run yet"}
+        </p>
       </section>
 
       <section>

@@ -21,6 +21,10 @@
 import { Prisma } from "@prisma/client";
 
 import { DEFAULT_BIDDING_ZONE } from "@/lib/market-price/constants";
+import {
+  ENTSOE_MARKET_TIMEZONE,
+  localDayBoundsUtc,
+} from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 
 export type MarketPrice = {
@@ -40,11 +44,24 @@ export type MarketPriceSeriesResult =
   | { available: true; prices: MarketPrice[] }
   | { available: false; reason: string };
 
+export type MarketPriceImportStatus =
+  | {
+      available: true;
+      isPartial: boolean;
+      expectedIntervals: number;
+      importedIntervals: number;
+      missingIntervalsCount: number;
+      importedAt: Date;
+    }
+  | { available: false; reason: string };
+
 export type MarketPriceProvider = {
   getCurrentPrice: () => Promise<MarketPriceResult>;
   getDayAheadPrices: () => Promise<MarketPriceSeriesResult>;
   /** Placeholder — see module doc comment. Always returns `available: false`. */
   getIntradayPrices: () => Promise<MarketPriceSeriesResult>;
+  /** Status of the most recent import run — surfaces partial imports to the application. */
+  getLatestImportStatus: () => Promise<MarketPriceImportStatus>;
 };
 
 type PersistedMarketPriceRow = {
@@ -91,11 +108,15 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
   },
 
   async getDayAheadPrices(): Promise<MarketPriceSeriesResult> {
-    const now = new Date();
-    const startOfDay = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    // Must use the same CET/CEST market-day boundary the importer persists
+    // against (see lib/market-price/timezone.ts) — a naive UTC calendar day
+    // would miss the early hours of "today" (which the importer stores
+    // under the previous UTC calendar date) and include hours that belong
+    // to a different market day.
+    const { start: startOfDay, end: endOfDay } = localDayBoundsUtc(
+      new Date(),
+      ENTSOE_MARKET_TIMEZONE,
     );
-    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const rows = await prisma.marketPrice.findMany({
       where: {
@@ -117,5 +138,25 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
 
   async getIntradayPrices(): Promise<MarketPriceSeriesResult> {
     return { available: false, reason: "intraday_prices_not_implemented" };
+  },
+
+  async getLatestImportStatus(): Promise<MarketPriceImportStatus> {
+    const row = await prisma.marketPriceImport.findFirst({
+      where: { biddingZone: DEFAULT_BIDDING_ZONE },
+      orderBy: { importedAt: "desc" },
+    });
+
+    if (!row) {
+      return { available: false, reason: "no_import_has_run_yet" };
+    }
+
+    return {
+      available: true,
+      isPartial: row.isPartial,
+      expectedIntervals: row.expectedIntervals,
+      importedIntervals: row.importedIntervals,
+      missingIntervalsCount: row.missingTimestamps.length,
+      importedAt: row.importedAt,
+    };
   },
 };

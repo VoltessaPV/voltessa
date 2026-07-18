@@ -249,6 +249,40 @@ model MarketPrice {
   @@index([biddingZone, timestamp])
 }
 
+/// Records the outcome of each market-price import run (see
+/// lib/market-price/refresh-market-prices.ts). A single MarketPrice row
+/// per interval can't represent "this interval is missing" (we never
+/// fabricate a row for it), so this model exists to carry that status -
+/// expectedIntervals/importedIntervals/isPartial/missingTimestamps - from
+/// the importer through to the Dashboard via the Market Price Provider's
+/// getLatestImportStatus(). Not organization-scoped, for the same reason
+/// MarketPrice isn't - see that model's comment.
+model MarketPriceImport {
+  id String @id @default(cuid())
+
+  biddingZone String
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  resolutionMinutes Int
+
+  expectedIntervals Int
+  importedIntervals Int
+
+  isPartial Boolean @default(false)
+
+  /// ISO timestamps of intervals that were missing from the ENTSO-E
+  /// response and were NOT fabricated or interpolated.
+  missingTimestamps String[]
+
+  source String @default("ENTSOE")
+
+  importedAt DateTime @default(now())
+
+  @@index([biddingZone, importedAt])
+}
+
 model PlantTelemetrySnapshot {
   id String @id @default(cuid())
 
