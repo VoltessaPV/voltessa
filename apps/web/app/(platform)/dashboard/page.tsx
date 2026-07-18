@@ -1,82 +1,49 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
 import {
-  getPlantExportControlStatus,
-  type ExportControlStatus,
+  getPlantConfiguredExportControlMode,
+  type ConfiguredExportControlMode,
 } from "@/lib/fusionsolar/get-export-control-status";
 import { prisma } from "@/lib/prisma";
 
-function getExportControlBadge(status: ExportControlStatus | null): {
+/**
+ * Reflects ONLY the plant's configured export-control mode
+ * (getPlantConfiguredExportControlMode). Deliberately does not fall back to
+ * inverter_state or any other telemetry-derived signal when unavailable —
+ * see lib/fusionsolar/get-export-control-status.ts for why those are not
+ * interchangeable. If this data is ever unavailable, that must be shown
+ * explicitly, not inferred from something else.
+ */
+function getExportControlModeBadge(
+  status: ConfiguredExportControlMode | null,
+): {
   label: string;
   colorClass: string;
-  caption?: string;
 } {
-  if (!status) {
+  if (!status || !status.available) {
     return {
-      label: "Export status unavailable",
+      label: "Configured export control unavailable",
       colorClass: "bg-slate-500",
     };
   }
 
-  if (status.source === "configuration") {
-    const mode = status.mode;
-
-    switch (mode.activePowerControlMode) {
-      case "noLimit":
-        return { label: "No Export Limit", colorClass: "bg-emerald-400" };
-      case "zeroExportLimitation":
-        return { label: "Zero Export", colorClass: "bg-red-400" };
-      case "limitedPowerGridKW":
-        return {
-          label: `Limited to ${mode.limitedPowerGridValueParam.maxGridFeedInPowerValue} kW`,
-          colorClass: "bg-amber-400",
-        };
-      case "limitedPowerGridPercent":
-        return {
-          label: `Limited to ${mode.limitedPowerGridPercentParam.maxGridFeedInPowerPercent}%`,
-          colorClass: "bg-amber-400",
-        };
-      default:
-        return { label: "Export Mode: Other", colorClass: "bg-slate-400" };
-    }
-  }
-
-  if (status.source === "inverterState") {
-    const caption = "Configured limit unavailable — based on inverter status";
-
-    const anyLimited = status.inverters.some(
-      (inverter) =>
-        inverter.state === "powerLimited" ||
-        inverter.state === "selfDerating",
-    );
-
-    if (anyLimited) {
+  switch (status.mode.activePowerControlMode) {
+    case "noLimit":
+      return { label: "No Export Limit", colorClass: "bg-emerald-400" };
+    case "zeroExportLimitation":
+      return { label: "Zero Export", colorClass: "bg-red-400" };
+    case "limitedPowerGridKW":
       return {
-        label: "Export Limited (inverter status)",
+        label: `Limited to ${status.mode.limitedPowerGridValueParam.maxGridFeedInPowerValue} kW`,
         colorClass: "bg-amber-400",
-        caption,
       };
-    }
-
-    const allGridConnected = status.inverters.every(
-      (inverter) => inverter.state === "gridConnected",
-    );
-
-    if (allGridConnected) {
+    case "limitedPowerGridPercent":
       return {
-        label: "Grid-Connected (inverter status)",
-        colorClass: "bg-emerald-400",
-        caption,
+        label: `Limited to ${status.mode.limitedPowerGridPercentParam.maxGridFeedInPowerPercent}%`,
+        colorClass: "bg-amber-400",
       };
-    }
-
-    return {
-      label: "Export Status: Mixed",
-      colorClass: "bg-slate-400",
-      caption,
-    };
+    default:
+      return { label: "Export Mode: Other", colorClass: "bg-slate-400" };
   }
-
-  return { label: "Export status unavailable", colorClass: "bg-slate-500" };
 }
 
 function formatEnergy(value: { toString(): string } | null | undefined) {
@@ -109,18 +76,6 @@ export default async function DashboardPage() {
         },
         take: 1,
       },
-      devices: {
-        where: {
-          devTypeId: {
-            in: [1, 38], // string inverter, residential inverter
-          },
-        },
-        select: {
-          id: true,
-          devName: true,
-          huaweiDeviceId: true,
-        },
-      },
     },
     orderBy: {
       name: "asc",
@@ -146,23 +101,23 @@ export default async function DashboardPage() {
 
   const exportControlEntries = await Promise.all(
     plants.map(async (plant) => {
-      if (!connection || !plant.plantCode || plant.devices.length === 0) {
+      if (!connection || !plant.plantCode) {
         return [plant.id, null] as const;
       }
 
       try {
-        const status = await getPlantExportControlStatus(
+        const status = await getPlantConfiguredExportControlMode(
           connection,
           plant.plantCode,
-          plant.devices,
         );
 
         return [plant.id, status] as const;
       } catch (error) {
         // Never let an unexpected FusionSolar error break the dashboard —
-        // degrade to "unavailable" and log for operators.
+        // degrade to "unavailable" and log for operators. Not a fallback
+        // to another data source — just an explicit "unavailable" render.
         console.error(
-          "[Dashboard] Export control status failed unexpectedly",
+          "[Dashboard] Configured export control mode failed unexpectedly",
           {
             plantId: plant.id,
             error:
@@ -289,7 +244,7 @@ export default async function DashboardPage() {
           {plants.map((plant) => {
             const telemetry = plant.telemetrySnapshots[0];
             const exportControl = exportControlByPlantId.get(plant.id) ?? null;
-            const exportBadge = getExportControlBadge(exportControl);
+            const exportBadge = getExportControlModeBadge(exportControl);
 
             return (
               <article
@@ -320,12 +275,6 @@ export default async function DashboardPage() {
                       />
                       {exportBadge.label}
                     </div>
-
-                    {exportBadge.caption ? (
-                      <p className="text-xs text-slate-500">
-                        {exportBadge.caption}
-                      </p>
-                    ) : null}
                   </div>
                 </div>
 

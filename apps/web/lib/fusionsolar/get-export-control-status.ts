@@ -9,62 +9,103 @@ import {
 import { getFusionSolarDeviceRealTimeKpi } from "@/lib/fusionsolar/device-real-time-kpi";
 
 /**
- * Orchestrates the plant-level export-control status shown on the
- * dashboard. Reuses two existing, independently-verified helpers — issues
- * no Huawei request of its own:
+ * Two deliberately SEPARATE, non-interchangeable concepts. Each has its own
+ * function and its own return type below, with no shared union type between
+ * them and no fallback path from one to the other:
  *
- * 1. `getActivePowerControlMode()` — the documented, authoritative source
- *    for the plant's *configured* export limit. Per
- *    docs/research/fusionsolar-active-power-control.md, this endpoint
- *    exists and is fully specified, but is confirmed to currently return
- *    `failCode 20609` for at least one production plant — so it must be
- *    treated as "try first, may fail," not assumed to always succeed.
- * 2. `getFusionSolarDeviceRealTimeKpi()` — falls back to the confirmed,
- *    officially documented `inverter_state` enumeration (Grid-connected /
- *    power limited / self-derating) when (1) is unavailable. This is NOT
- *    the configured limit — it's each inverter's own real-time operating
- *    state — and is surfaced to callers tagged with its own source, never
- *    relabeled as the configured limit.
+ * - `getPlantConfiguredExportControlMode()` — the plant's *configured*
+ *   export-control mode, from the documented Huawei configuration endpoint
+ *   (`getActivePowerControlMode()`, reused as-is). This is the only source
+ *   of truth for the configured limit. Per
+ *   docs/research/fusionsolar-active-power-control.md, this endpoint
+ *   exists and is fully specified, but currently returns `failCode 20609`
+ *   for at least one production plant — callers MUST handle
+ *   `available: false` explicitly and must never substitute another data
+ *   source when it occurs.
+ *
+ * - `getPlantInverterOperatingState()` — each inverter's real-time
+ *   *operating* state (Grid-connected / power limited / self-derating),
+ *   from `inverter_state` via `getFusionSolarDeviceRealTimeKpi()`, reused
+ *   as-is. This describes what the inverter is doing right now, not what
+ *   it is configured to do. It is NOT a substitute for the configured mode
+ *   above, even though the two states share similar-sounding vocabulary
+ *   ("power limited") — a plant can be reported as `noLimit` in
+ *   configuration while an individual inverter's operating state still
+ *   momentarily reports `powerLimited` for unrelated grid-code reasons,
+ *   and vice versa. Never merge these two results into one status; never
+ *   render one in place of the other.
  *
  * See docs/research/fusionsolar-active-power-control.md for the full
- * evidence behind this fallback design. Per that document's "Next
+ * evidence behind this distinction. Per that document's "Next
  * investigation" section, do not add a third data source here without new
  * evidence.
  */
 
-export type InverterExportState =
+export type ConfiguredExportControlMode =
+  | {
+      available: true;
+      mode: ActivePowerControlModeResult;
+    }
+  | {
+      available: false;
+      reason: "configuration_endpoint_failed";
+    };
+
+/**
+ * Reads the plant's configured export-control mode. Never falls back to
+ * any other data source on failure — callers must display an explicit
+ * "unavailable" state instead (see the dashboard's
+ * "Configured export control unavailable" label).
+ */
+export async function getPlantConfiguredExportControlMode(
+  connection: FusionSolarConnection,
+  plantCode: string,
+): Promise<ConfiguredExportControlMode> {
+  try {
+    const mode = await getActivePowerControlMode(connection, plantCode);
+
+    return { available: true, mode };
+  } catch (error) {
+    if (!(error instanceof FusionSolarApiError)) {
+      throw error;
+    }
+
+    // Expected, documented failure mode for this endpoint (e.g. failCode
+    // 20609 — see docs/research/fusionsolar-active-power-control.md).
+    // Deliberately does NOT fall back to any other data source.
+    return { available: false, reason: "configuration_endpoint_failed" };
+  }
+}
+
+export type InverterOperatingState =
   | "gridConnected"
   | "powerLimited"
   | "selfDerating"
   | "other";
 
-export type InverterExportStatus = {
+export type InverterOperatingStateEntry = {
   deviceId: string;
   devName: string;
-  state: InverterExportState;
+  state: InverterOperatingState;
   rawValue: number | null;
 };
 
-export type ExportControlStatus =
+export type InverterOperatingStateResult =
   | {
-      source: "configuration";
-      mode: ActivePowerControlModeResult;
+      available: true;
+      inverters: InverterOperatingStateEntry[];
     }
   | {
-      source: "inverterState";
-      inverters: InverterExportStatus[];
-    }
-  | {
-      source: "unavailable";
+      available: false;
       reason:
-        | "configuration_failed_no_inverter_devices"
-        | "inverter_state_unavailable"
-        | "inverter_state_empty";
+        | "no_inverter_devices"
+        | "request_failed"
+        | "empty_response";
     };
 
 function decodeInverterState(
   value: number | null | undefined,
-): InverterExportState {
+): InverterOperatingState {
   if (value === 512) return "gridConnected";
   if (value === 513) return "powerLimited";
   if (value === 514) return "selfDerating";
@@ -72,43 +113,28 @@ function decodeInverterState(
 }
 
 /**
+ * Reads each inverter's real-time operating state. This is NOT the
+ * configured export-control mode — see the module doc comment above.
+ *
  * @param inverterDevices Only string/residential inverter devices
  * (devTypeId 1 / 38) — the only device types `inverter_state` is
  * documented for.
  */
-export async function getPlantExportControlStatus(
+export async function getPlantInverterOperatingState(
   connection: FusionSolarConnection,
-  plantCode: string,
   inverterDevices: Array<{
     id: string;
     devName: string;
     huaweiDeviceId: bigint | null;
   }>,
-): Promise<ExportControlStatus> {
-  try {
-    const mode = await getActivePowerControlMode(connection, plantCode);
-
-    return { source: "configuration", mode };
-  } catch (error) {
-    if (!(error instanceof FusionSolarApiError)) {
-      throw error;
-    }
-
-    // Expected, documented failure mode for this endpoint (e.g. failCode
-    // 20609 — see docs/research/fusionsolar-active-power-control.md) —
-    // fall through to the inverter_state fallback below.
-  }
-
+): Promise<InverterOperatingStateResult> {
   const devicesWithId = inverterDevices.filter(
     (device): device is typeof device & { huaweiDeviceId: bigint } =>
       device.huaweiDeviceId !== null,
   );
 
   if (devicesWithId.length === 0) {
-    return {
-      source: "unavailable",
-      reason: "configuration_failed_no_inverter_devices",
-    };
+    return { available: false, reason: "no_inverter_devices" };
   }
 
   const devIds = devicesWithId
@@ -124,7 +150,7 @@ export async function getPlantExportControlStatus(
       devIds,
     );
   } catch {
-    return { source: "unavailable", reason: "inverter_state_unavailable" };
+    return { available: false, reason: "request_failed" };
   }
 
   const deviceById = new Map(
@@ -134,7 +160,7 @@ export async function getPlantExportControlStatus(
     ]),
   );
 
-  const inverters: InverterExportStatus[] = [];
+  const inverters: InverterOperatingStateEntry[] = [];
 
   for (const item of kpiResult) {
     const device = deviceById.get(item.devId.toString());
@@ -154,8 +180,8 @@ export async function getPlantExportControlStatus(
   }
 
   if (inverters.length === 0) {
-    return { source: "unavailable", reason: "inverter_state_empty" };
+    return { available: false, reason: "empty_response" };
   }
 
-  return { source: "inverterState", inverters };
+  return { available: true, inverters };
 }
