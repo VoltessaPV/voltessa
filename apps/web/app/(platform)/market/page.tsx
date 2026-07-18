@@ -1,11 +1,15 @@
+import { requireOnboardedUser } from "@/lib/auth/session";
+import { prisma } from "@/lib/prisma";
+
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 import { MarketRevenueCard } from "@/components/market/MarketRevenueCard";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketTimeline } from "@/components/market/MarketTimeline";
+import { MarketToolbar } from "@/components/market/MarketToolbar";
 
-import { getMockMarketPageData } from "./mock-data";
+import { getMarketPageData } from "./market-data";
 
 const TREND_LABEL_PREFIX: Record<"up" | "down" | "flat", string> = {
   up: "+",
@@ -13,121 +17,194 @@ const TREND_LABEL_PREFIX: Record<"up" | "down" | "flat", string> = {
   flat: "±",
 };
 
-export default function MarketPage() {
-  const { series, summary, revenue, timeline, distribution, insights } =
-    getMockMarketPageData();
+type MarketPageProps = {
+  searchParams: Promise<{ date?: string }>;
+};
 
-  const deltaDirection =
-    summary.currentPrice.deltaVsPrevious > 0
-      ? "up"
-      : summary.currentPrice.deltaVsPrevious < 0
-        ? "down"
-        : "flat";
+export default async function MarketPage({ searchParams }: MarketPageProps) {
+  const user = await requireOnboardedUser();
+  const params = await searchParams;
+
+  const automationSettings = await prisma.automationSettings.findUnique({
+    where: { organizationId: user.organizationId },
+  });
+
+  const data = await getMarketPageData({
+    selectedDateParam: params.date,
+    automationSettings,
+  });
+
+  const currentPriceDelta = data.dataAvailable
+    ? data.summary.currentPrice?.deltaVsPrevious
+    : undefined;
+  const currentPriceDirection: "up" | "down" | "flat" =
+    currentPriceDelta === undefined
+      ? "flat"
+      : currentPriceDelta > 0
+        ? "up"
+        : currentPriceDelta < 0
+          ? "down"
+          : "flat";
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className="mx-auto max-w-7xl space-y-4">
       <section>
         <p className="text-sm font-medium text-cyan-400">
           Bulgarian day-ahead market
         </p>
 
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">
+            <h1 className="text-2xl font-semibold tracking-tight text-white">
               Market
             </h1>
 
-            <p className="mt-2 text-sm text-slate-400">
-              Electricity prices, export windows and revenue for today.
+            <p className="mt-1 text-sm text-slate-400">
+              Electricity prices, export windows and revenue.
             </p>
           </div>
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        <MarketSummaryCard
-          eyebrow="Current Price"
-          value={summary.currentPrice.value.toString()}
-          valueUnit="EUR/MWh"
-          caption={summary.currentPrice.intervalLabel}
-          trend={{
-            direction: deltaDirection,
-            label: `${TREND_LABEL_PREFIX[deltaDirection]}${Math.abs(summary.currentPrice.deltaVsPrevious)}`,
-          }}
-        />
+      <MarketToolbar
+        selectedDate={data.selectedDate}
+        prevDateParam={data.prevDateParam}
+        nextDateParam={data.nextDateParam}
+        isToday={data.isToday}
+      />
 
-        <MarketSummaryCard
-          eyebrow="Next Hour"
-          value={summary.nextHour.value.toString()}
-          valueUnit="EUR/MWh"
-          caption={summary.nextHour.intervalLabel}
-          trend={{
-            direction: summary.nextHour.direction,
-            label:
-              summary.nextHour.direction === "up"
-                ? "Rising"
-                : summary.nextHour.direction === "down"
-                  ? "Falling"
-                  : "Flat",
-          }}
-        />
-
-        <MarketSummaryCard
-          eyebrow="Lowest Today"
-          value={summary.lowestToday.value.toString()}
-          valueUnit="EUR/MWh"
-          caption={summary.lowestToday.intervalLabel}
-        />
-
-        <MarketSummaryCard
-          eyebrow="Highest Today"
-          value={summary.highestToday.value.toString()}
-          valueUnit="EUR/MWh"
-          caption={summary.highestToday.intervalLabel}
-        />
-
-        <MarketSummaryCard
-          eyebrow="Market Status"
-          statusDot={{
-            colorClass: summary.marketStatus.healthy
-              ? "bg-emerald-400"
-              : "bg-red-400",
-            label: summary.marketStatus.healthy ? "Healthy" : "Degraded",
-          }}
-          rows={[
-            { label: "Country", value: summary.marketStatus.country },
-            { label: "Source", value: summary.marketStatus.source },
-            {
-              label: "Last update",
-              value: summary.marketStatus.lastUpdateLabel,
-            },
-          ]}
-        />
-      </section>
-
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-white">
-              Price &amp; Export
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Day-ahead price, export power and export windows
+      {!data.dataAvailable ? (
+        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+          <p className="text-sm font-medium text-white">
+            No market data available for {data.selectedDate}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Nothing has been imported from ENTSO-E for this day yet. Use the
+            date picker above to choose a different day.
+          </p>
+        </section>
+      ) : (
+        <>
+          {data.isPartialImport && (
+            <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300">
+              Today&apos;s import is partial — some intervals are missing
+              from ENTSO-E and are shown as gaps, never fabricated.
             </p>
-          </div>
-        </div>
+          )}
 
-        <div className="mt-4 h-[280px] sm:h-[420px] lg:h-[460px] xl:h-[560px]">
-          <MarketPriceChart series={series} />
-        </div>
-      </section>
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <MarketSummaryCard
+              eyebrow="Current Price"
+              value={data.summary.currentPrice?.value.toString()}
+              valueUnit={data.summary.currentPrice ? "EUR/MWh" : undefined}
+              caption={data.summary.currentPrice?.intervalLabel}
+              unavailableNote="Live price only available for today"
+              trend={
+                data.summary.currentPrice
+                  ? {
+                      direction: currentPriceDirection,
+                      label: `${TREND_LABEL_PREFIX[currentPriceDirection]}${Math.abs(data.summary.currentPrice.deltaVsPrevious)}`,
+                    }
+                  : undefined
+              }
+            />
 
-      <section className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
-        <MarketRevenueCard revenue={revenue} />
-        <MarketTimeline events={timeline} />
-        <MarketDistribution buckets={distribution} />
-        <MarketInsights insights={insights} />
-      </section>
+            <MarketSummaryCard
+              eyebrow="Next Interval"
+              value={data.summary.nextInterval?.value.toString()}
+              valueUnit={data.summary.nextInterval ? "EUR/MWh" : undefined}
+              caption={data.summary.nextInterval?.intervalLabel}
+              unavailableNote="Live price only available for today"
+              trend={
+                data.summary.nextInterval
+                  ? {
+                      direction: data.summary.nextInterval.direction,
+                      label:
+                        data.summary.nextInterval.direction === "up"
+                          ? "Rising"
+                          : data.summary.nextInterval.direction === "down"
+                            ? "Falling"
+                            : "Flat",
+                    }
+                  : undefined
+              }
+            />
+
+            <MarketSummaryCard
+              eyebrow="Lowest"
+              value={data.summary.lowestToday.value.toString()}
+              valueUnit="EUR/MWh"
+              caption={data.summary.lowestToday.intervalLabel}
+            />
+
+            <MarketSummaryCard
+              eyebrow="Highest"
+              value={data.summary.highestToday.value.toString()}
+              valueUnit="EUR/MWh"
+              caption={data.summary.highestToday.intervalLabel}
+            />
+
+            <MarketSummaryCard
+              eyebrow="Market Status"
+              statusDot={{
+                colorClass: data.summary.marketStatus.healthy
+                  ? "bg-emerald-400"
+                  : "bg-red-400",
+                label: data.summary.marketStatus.healthy
+                  ? "Healthy"
+                  : "Degraded",
+              }}
+              rows={[
+                { label: "Country", value: data.summary.marketStatus.country },
+                { label: "Source", value: data.summary.marketStatus.source },
+                ...(data.summary.marketStatus.lastUpdateLabel
+                  ? [
+                      {
+                        label: "Last update",
+                        value: data.summary.marketStatus.lastUpdateLabel,
+                      },
+                    ]
+                  : []),
+                {
+                  label: "Min. profitable price",
+                  value: `${data.threshold.minimumExportPrice} ${data.threshold.currency}/MWh`,
+                  valueColorClass: "text-amber-400",
+                },
+              ]}
+            />
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-white">
+                  Price &amp; Export
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Day-ahead price, export power and export windows
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 h-[220px] sm:h-[320px] lg:h-[360px] xl:h-[420px]">
+              <MarketPriceChart
+                series={data.series}
+                thresholdPrice={data.threshold.minimumExportPrice}
+              />
+            </div>
+          </section>
+
+          <section className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+            <MarketRevenueCard revenue={data.revenue} />
+            <MarketTimeline
+              events={data.timeline}
+              summary={data.timelineSummary}
+            />
+            <MarketDistribution buckets={data.distribution} />
+            <MarketInsights insights={data.insights} />
+          </section>
+        </>
+      )}
     </div>
   );
 }

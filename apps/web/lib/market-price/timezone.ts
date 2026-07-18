@@ -84,6 +84,14 @@ function dateParts(
   };
 }
 
+/** Formats an instant as its local calendar date (`YYYY-MM-DD`) in `timeZone`. */
+export function formatDateInZone(instant: Date, timeZone: string): string {
+  const { year, month, day } = dateParts(instant, timeZone);
+  const pad = (value: number) => value.toString().padStart(2, "0");
+
+  return `${year}-${pad(month)}-${pad(day)}`;
+}
+
 /**
  * Returns the `[start, end)` UTC instants for one calendar day in
  * `timeZone`, correctly handling DST (a local day can be 23, 24, or 25

@@ -21,3 +21,25 @@ export const DEFAULT_EXPORT_THRESHOLD_CONFIG: ExportThresholdConfig = {
   minimumExportPrice: 15,
   currency: "EUR",
 };
+
+/**
+ * Resolves the effective export threshold for an organization: its own
+ * configured `AutomationSettings` row if one exists, otherwise the
+ * platform default above. Shared by the Dashboard and Market pages so
+ * there is exactly one place this fallback rule is expressed.
+ */
+export function resolveExportThreshold(
+  automationSettings: {
+    minimumExportPrice: { toString(): string };
+    currency: string;
+  } | null,
+): ExportThresholdConfig {
+  if (!automationSettings) {
+    return DEFAULT_EXPORT_THRESHOLD_CONFIG;
+  }
+
+  return {
+    minimumExportPrice: Number(automationSettings.minimumExportPrice.toString()),
+    currency: automationSettings.currency,
+  };
+}

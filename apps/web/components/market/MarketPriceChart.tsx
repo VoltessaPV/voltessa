@@ -12,15 +12,16 @@ import {
   YAxis,
 } from "recharts";
 
-import type { MarketPricePoint } from "@/app/(platform)/market/mock-data";
+import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
 
 type MarketPriceChartProps = {
   series: MarketPricePoint[];
+  thresholdPrice: number;
 };
 
 type ChartDatum = {
   time: number;
-  price: number;
+  price: number | null;
   exportPowerMw: number;
 };
 
@@ -71,7 +72,7 @@ function ChartTooltip({
   label,
 }: {
   active?: boolean;
-  payload?: Array<{ value: number; dataKey: string }>;
+  payload?: Array<{ value: number | null; dataKey: string }>;
   label?: number;
 }) {
   if (!active || !payload || payload.length === 0 || label === undefined) {
@@ -87,14 +88,16 @@ function ChartTooltip({
     <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-xs shadow-[0_12px_28px_-16px_rgba(0,0,0,0.7)]">
       <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
 
-      {price !== undefined && (
+      {price !== undefined && price !== null ? (
         <p className="mt-1 flex items-center gap-1.5 text-blue-400">
           <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
           {price} EUR/MWh
         </p>
+      ) : (
+        <p className="mt-1 text-slate-500">No price data</p>
       )}
 
-      {exportPower !== undefined && (
+      {exportPower !== undefined && exportPower !== null && (
         <p className="mt-0.5 flex items-center gap-1.5 text-emerald-400">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
           {exportPower} MW
@@ -105,13 +108,19 @@ function ChartTooltip({
 }
 
 /**
- * Multi-series market chart — currently: day-ahead price (blue) and export
- * power (green), with a NOW marker and translucent bands over
- * export-enabled intervals. Built to take more series later (e.g. a
- * forecast line) without restructuring: each series is one <Line>, driven
- * by the same `time`-keyed data array.
+ * Multi-series market chart — day-ahead price (blue, real ENTSO-E data —
+ * gaps for genuinely missing intervals are rendered as breaks, never
+ * connected/interpolated) and illustrative export power (green), with a
+ * NOW marker, a minimum-profitable-export-price threshold reference, and
+ * translucent bands over export-enabled intervals. Built to take more
+ * series later (e.g. a forecast line, real FusionSolar production) without
+ * restructuring: each series is one <Line>, driven by the same
+ * `time`-keyed data array.
  */
-export function MarketPriceChart({ series }: MarketPriceChartProps) {
+export function MarketPriceChart({
+  series,
+  thresholdPrice,
+}: MarketPriceChartProps) {
   const data: ChartDatum[] = series.map((point) => ({
     time: point.timestamp.getTime(),
     price: point.price,
@@ -144,6 +153,11 @@ export function MarketPriceChart({ series }: MarketPriceChartProps) {
         <span className="flex items-center gap-1.5">
           <span className="h-2 w-2 rounded-sm bg-emerald-400/20" />
           Export enabled
+        </span>
+
+        <span className="flex items-center gap-1.5">
+          <span className="h-0.5 w-3 rounded-full border-t border-dashed border-amber-400" />
+          Profit threshold
         </span>
       </div>
 
@@ -201,6 +215,20 @@ export function MarketPriceChart({ series }: MarketPriceChartProps) {
 
             <Tooltip content={<ChartTooltip />} />
 
+            <ReferenceLine
+              yAxisId="price"
+              y={thresholdPrice}
+              stroke="#fbbf24"
+              strokeOpacity={0.5}
+              strokeDasharray="4 4"
+              label={{
+                value: `${thresholdPrice} EUR/MWh`,
+                position: "insideBottomLeft",
+                fill: "#fbbf24",
+                fontSize: 10,
+              }}
+            />
+
             {nowInRange && (
               <ReferenceLine
                 yAxisId="price"
@@ -225,6 +253,7 @@ export function MarketPriceChart({ series }: MarketPriceChartProps) {
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 3 }}
+              connectNulls={false}
               isAnimationActive
               animationDuration={800}
             />

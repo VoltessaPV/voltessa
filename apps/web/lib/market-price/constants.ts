@@ -20,3 +20,24 @@
 export const DEFAULT_BIDDING_ZONE = "10YCA-BULGARIA-R";
 
 export const MARKET_PRICE_SOURCE_ENTSOE = "ENTSOE";
+
+/**
+ * Bidding zones the Market page's country selector can offer. Only one
+ * entry today (the MVP scope is Bulgaria only) - adding a second country
+ * later is adding an entry here plus wiring its own importer schedule,
+ * not redesigning the selector or the provider, since every
+ * `MarketPriceProvider` method already accepts an optional `biddingZone`.
+ */
+export const SUPPORTED_BIDDING_ZONES: ReadonlyArray<{
+  code: string;
+  label: string;
+}> = [{ code: DEFAULT_BIDDING_ZONE, label: "Bulgaria" }];
+
+/**
+ * Fallback interval size used only when reconstructing an expected-time
+ * grid before any import has ever run for a zone (so there is no real
+ * `MarketPriceImport.resolutionMinutes` to read yet). Not a fabricated
+ * price - a structural/grid parameter, matching ENTSO-E's current
+ * 15-minute market time unit for this zone.
+ */
+export const DEFAULT_RESOLUTION_MINUTES = 15;

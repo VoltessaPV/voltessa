@@ -1,4 +1,4 @@
-import { DEFAULT_EXPORT_THRESHOLD_CONFIG } from "@/lib/automation/export-threshold-config";
+import { resolveExportThreshold } from "@/lib/automation/export-threshold-config";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import {
   getPlantConfiguredExportControlMode,
@@ -170,13 +170,7 @@ export default async function DashboardPage() {
       )
     : null;
 
-  const exportThreshold = {
-    minimumExportPrice: automationSettings
-      ? Number(automationSettings.minimumExportPrice.toString())
-      : DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice,
-    currency:
-      automationSettings?.currency ?? DEFAULT_EXPORT_THRESHOLD_CONFIG.currency,
-  };
+  const exportThreshold = resolveExportThreshold(automationSettings);
 
   const latestTelemetry = plants
     .map((plant) => plant.telemetrySnapshots[0])

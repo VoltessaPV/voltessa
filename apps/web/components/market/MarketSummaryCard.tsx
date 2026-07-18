@@ -1,5 +1,3 @@
-import type { ReactNode } from "react";
-
 type Trend = "up" | "down" | "flat";
 
 const TREND_GLYPH: Record<Trend, string> = {
@@ -26,16 +24,17 @@ export type MarketSummaryCardProps = {
   valueUnit?: string;
   caption?: string;
   trend?: { direction: Trend; label: string };
+  /** Shown instead of the value block when `value` is omitted (e.g. no live price for a non-today view). */
+  unavailableNote?: string;
   rows?: MarketSummaryCardRow[];
   statusDot?: { colorClass: string; label: string };
-  children?: ReactNode;
 };
 
 /**
  * Single reusable shell for the Market page's top-row summary cards.
  * Deliberately one flexible component rather than five bespoke ones —
- * Current Price, Next Hour, Lowest/Highest Today, and Market Status all
- * render through this with different props, matching the same visual
+ * Current Price, Next Interval, Lowest/Highest Today, and Market Status
+ * all render through this with different props, matching the same visual
  * rhythm (`rounded-2xl border border-white/10 bg-white/[0.03]`) already
  * used across the Dashboard/Settings pages.
  */
@@ -45,14 +44,14 @@ export function MarketSummaryCard({
   valueUnit,
   caption,
   trend,
+  unavailableNote,
   rows,
   statusDot,
-  children,
 }: MarketSummaryCardProps) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-medium uppercase tracking-wider text-slate-500">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
           {eyebrow}
         </p>
 
@@ -66,20 +65,26 @@ export function MarketSummaryCard({
         )}
       </div>
 
-      {value !== undefined && (
-        <div className="mt-3 flex items-baseline gap-1.5">
-          <span className="text-[28px] font-semibold leading-none tracking-tight text-white tabular-nums">
+      {value !== undefined ? (
+        <div className="mt-2 flex items-baseline gap-1.5">
+          <span className="text-2xl font-semibold leading-none tracking-tight text-white tabular-nums">
             {value}
           </span>
 
           {valueUnit && (
-            <span className="text-sm text-slate-500">{valueUnit}</span>
+            <span className="text-xs text-slate-500">{valueUnit}</span>
           )}
         </div>
+      ) : (
+        unavailableNote && (
+          <p className="mt-2 text-xs leading-snug text-slate-500">
+            {unavailableNote}
+          </p>
+        )
       )}
 
       {(caption || trend) && (
-        <div className="mt-2 flex items-center justify-between gap-2">
+        <div className="mt-1.5 flex items-center justify-between gap-2">
           {caption && (
             <span className="text-xs text-slate-500">{caption}</span>
           )}
@@ -98,7 +103,7 @@ export function MarketSummaryCard({
       )}
 
       {rows && rows.length > 0 && (
-        <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+        <div className="mt-2.5 space-y-1.5 border-t border-white/10 pt-2.5">
           {rows.map((row) => (
             <div
               key={row.label}
@@ -112,8 +117,6 @@ export function MarketSummaryCard({
           ))}
         </div>
       )}
-
-      {children}
     </div>
   );
 }
