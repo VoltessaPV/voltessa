@@ -1,5 +1,83 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
+import {
+  getPlantExportControlStatus,
+  type ExportControlStatus,
+} from "@/lib/fusionsolar/get-export-control-status";
 import { prisma } from "@/lib/prisma";
+
+function getExportControlBadge(status: ExportControlStatus | null): {
+  label: string;
+  colorClass: string;
+  caption?: string;
+} {
+  if (!status) {
+    return {
+      label: "Export status unavailable",
+      colorClass: "bg-slate-500",
+    };
+  }
+
+  if (status.source === "configuration") {
+    const mode = status.mode;
+
+    switch (mode.activePowerControlMode) {
+      case "noLimit":
+        return { label: "No Export Limit", colorClass: "bg-emerald-400" };
+      case "zeroExportLimitation":
+        return { label: "Zero Export", colorClass: "bg-red-400" };
+      case "limitedPowerGridKW":
+        return {
+          label: `Limited to ${mode.limitedPowerGridValueParam.maxGridFeedInPowerValue} kW`,
+          colorClass: "bg-amber-400",
+        };
+      case "limitedPowerGridPercent":
+        return {
+          label: `Limited to ${mode.limitedPowerGridPercentParam.maxGridFeedInPowerPercent}%`,
+          colorClass: "bg-amber-400",
+        };
+      default:
+        return { label: "Export Mode: Other", colorClass: "bg-slate-400" };
+    }
+  }
+
+  if (status.source === "inverterState") {
+    const caption = "Configured limit unavailable — based on inverter status";
+
+    const anyLimited = status.inverters.some(
+      (inverter) =>
+        inverter.state === "powerLimited" ||
+        inverter.state === "selfDerating",
+    );
+
+    if (anyLimited) {
+      return {
+        label: "Export Limited (inverter status)",
+        colorClass: "bg-amber-400",
+        caption,
+      };
+    }
+
+    const allGridConnected = status.inverters.every(
+      (inverter) => inverter.state === "gridConnected",
+    );
+
+    if (allGridConnected) {
+      return {
+        label: "Grid-Connected (inverter status)",
+        colorClass: "bg-emerald-400",
+        caption,
+      };
+    }
+
+    return {
+      label: "Export Status: Mixed",
+      colorClass: "bg-slate-400",
+      caption,
+    };
+  }
+
+  return { label: "Export status unavailable", colorClass: "bg-slate-500" };
+}
 
 function formatEnergy(value: { toString(): string } | null | undefined) {
   if (value == null) {
@@ -31,11 +109,75 @@ export default async function DashboardPage() {
         },
         take: 1,
       },
+      devices: {
+        where: {
+          devTypeId: {
+            in: [1, 38], // string inverter, residential inverter
+          },
+        },
+        select: {
+          id: true,
+          devName: true,
+          huaweiDeviceId: true,
+        },
+      },
     },
     orderBy: {
       name: "asc",
     },
   });
+
+  const connection = await prisma.fusionSolarConnection.findUnique({
+    where: {
+      organizationId_provider: {
+        organizationId: user.organizationId,
+        provider: "HuaweiFusionSolar",
+      },
+    },
+    select: {
+      id: true,
+      accessToken: true,
+      refreshToken: true,
+      tokenType: true,
+      scope: true,
+      expiresAt: true,
+    },
+  });
+
+  const exportControlEntries = await Promise.all(
+    plants.map(async (plant) => {
+      if (!connection || !plant.plantCode || plant.devices.length === 0) {
+        return [plant.id, null] as const;
+      }
+
+      try {
+        const status = await getPlantExportControlStatus(
+          connection,
+          plant.plantCode,
+          plant.devices,
+        );
+
+        return [plant.id, status] as const;
+      } catch (error) {
+        // Never let an unexpected FusionSolar error break the dashboard —
+        // degrade to "unavailable" and log for operators.
+        console.error(
+          "[Dashboard] Export control status failed unexpectedly",
+          {
+            plantId: plant.id,
+            error:
+              error instanceof Error
+                ? { name: error.name, message: error.message }
+                : String(error),
+          },
+        );
+
+        return [plant.id, null] as const;
+      }
+    }),
+  );
+
+  const exportControlByPlantId = new Map(exportControlEntries);
 
   const latestTelemetry = plants
     .map((plant) => plant.telemetrySnapshots[0])
@@ -146,6 +288,8 @@ export default async function DashboardPage() {
         <div className="space-y-4">
           {plants.map((plant) => {
             const telemetry = plant.telemetrySnapshots[0];
+            const exportControl = exportControlByPlantId.get(plant.id) ?? null;
+            const exportBadge = getExportControlBadge(exportControl);
 
             return (
               <article
@@ -164,9 +308,24 @@ export default async function DashboardPage() {
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2 text-sm text-slate-400">
-                    <span className="h-2 w-2 rounded-full bg-cyan-400" />
-                    Telemetry available
+                  <div className="flex flex-col items-start gap-1 sm:items-end">
+                    <div className="flex items-center gap-2 text-sm text-slate-400">
+                      <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                      Telemetry available
+                    </div>
+
+                    <div className="flex items-center gap-2 text-sm text-slate-300">
+                      <span
+                        className={`h-2 w-2 rounded-full ${exportBadge.colorClass}`}
+                      />
+                      {exportBadge.label}
+                    </div>
+
+                    {exportBadge.caption ? (
+                      <p className="text-xs text-slate-500">
+                        {exportBadge.caption}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
 
