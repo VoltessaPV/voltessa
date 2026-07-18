@@ -41,6 +41,7 @@ function getDeviceData(device: FusionSolarDevice) {
     devDn: device.devDn,
     devName: device.devName,
     devTypeId: device.devTypeId,
+    huaweiDeviceId: BigInt(device.id),
     esnCode: device.esnCode,
     invType: device.invType,
     model: device.model,

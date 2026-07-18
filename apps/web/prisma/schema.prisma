@@ -157,6 +157,12 @@ model Device {
   devName   String
   devTypeId Int
 
+  /// Huawei numeric device identifier.
+  /// Used only for Huawei API calls (for example getDevRealKpi).
+  /// Refreshed on every device synchronization.
+  /// Not a Voltessa business identifier.
+  huaweiDeviceId BigInt?
+
   esnCode String?
   invType String?
   model   String?
