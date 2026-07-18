@@ -1,7 +1,39 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
+import { dbMarketPriceProvider, type MarketPriceResult } from "@/lib/market-price/provider";
 import { prisma } from "@/lib/prisma";
 
 import { updateAutomationSettings } from "./actions";
+
+const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Reflects only what the Market Price Provider actually returned — never
+ * infers or fabricates a price when it is unavailable. "Stale" means a
+ * price was persisted but is older than expected for hourly day-ahead
+ * data; it is still shown (not hidden), just labeled clearly.
+ */
+function getMarketPriceStatus(result: MarketPriceResult): {
+  label: string;
+  detail: string;
+  colorClass: string;
+} {
+  if (!result.available) {
+    return {
+      label: "Unavailable",
+      detail: result.reason,
+      colorClass: "bg-slate-500",
+    };
+  }
+
+  const ageMs = Date.now() - result.price.timestamp.getTime();
+  const isStale = ageMs > STALE_AFTER_MS;
+
+  return {
+    label: isStale ? "Stale" : "Live",
+    detail: `Last updated ${result.price.timestamp.toLocaleString()}`,
+    colorClass: isStale ? "bg-amber-400" : "bg-emerald-400",
+  };
+}
 
 type SettingsPageProps = {
   searchParams: Promise<{
@@ -29,6 +61,9 @@ export default async function SettingsPage({
       organizationId: user.organizationId,
     },
   });
+
+  const currentMarketPrice = await dbMarketPriceProvider.getCurrentPrice();
+  const marketPriceStatus = getMarketPriceStatus(currentMarketPrice);
 
   const params = await searchParams;
 
@@ -104,6 +139,32 @@ export default async function SettingsPage({
           your minimum export price, and restore it once the price recovers.
         </p>
 
+        <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-sm text-white/70">Current market price</p>
+
+            <div className="flex items-center gap-2 text-sm text-white/80">
+              <span
+                className={`h-2 w-2 rounded-full ${marketPriceStatus.colorClass}`}
+              />
+              {marketPriceStatus.label}
+            </div>
+          </div>
+
+          <p className="mt-2 text-2xl font-semibold text-white">
+            {currentMarketPrice.available
+              ? `${currentMarketPrice.price.price} ${currentMarketPrice.price.currency}/MWh`
+              : "—"}
+          </p>
+
+          <p className="mt-2 text-xs text-white/50">
+            {marketPriceStatus.detail}
+            {currentMarketPrice.available
+              ? ` · Source: ${currentMarketPrice.price.source}`
+              : ""}
+          </p>
+        </div>
+
         <form
           action={updateAutomationSettings}
           className="mt-6 space-y-6"
@@ -136,6 +197,21 @@ export default async function SettingsPage({
                 automationSettings?.minimumExportPrice.toString() ?? "15.00"
               }
               className="mt-2 w-40 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="currency" className="block text-sm text-white/80">
+              Currency
+            </label>
+
+            <input
+              id="currency"
+              type="text"
+              name="currency"
+              maxLength={3}
+              defaultValue={automationSettings?.currency ?? "EUR"}
+              className="mt-2 w-24 rounded-xl border border-white/10 bg-white/5 px-4 py-2 uppercase text-white"
             />
           </div>
 

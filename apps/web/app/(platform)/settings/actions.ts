@@ -8,6 +8,7 @@ import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MINIMUM_EXPORT_PRICE = "15.00";
+const DEFAULT_CURRENCY = "EUR";
 
 function parseMinimumExportPrice(formData: FormData): Prisma.Decimal {
   const raw = formData.get("minimumExportPrice")?.toString().trim();
@@ -23,11 +24,18 @@ function parseMinimumExportPrice(formData: FormData): Prisma.Decimal {
   }
 }
 
+function parseCurrency(formData: FormData): string {
+  const raw = formData.get("currency")?.toString().trim().toUpperCase();
+
+  return raw || DEFAULT_CURRENCY;
+}
+
 export async function updateAutomationSettings(formData: FormData) {
   const user = await requirePermission(Permissions.canManagePlants);
 
   const automationEnabled = formData.get("automationEnabled") === "on";
   const minimumExportPrice = parseMinimumExportPrice(formData);
+  const currency = parseCurrency(formData);
   const energyTrader =
     formData.get("energyTrader")?.toString().trim() || null;
 
@@ -39,11 +47,13 @@ export async function updateAutomationSettings(formData: FormData) {
       organizationId: user.organizationId,
       automationEnabled,
       minimumExportPrice,
+      currency,
       energyTrader,
     },
     update: {
       automationEnabled,
       minimumExportPrice,
+      currency,
       energyTrader,
     },
   });

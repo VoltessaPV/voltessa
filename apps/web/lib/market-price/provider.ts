@@ -1,40 +1,121 @@
 /**
- * Market Price Provider — interface only.
+ * Market Price Provider — the abstraction the Dashboard, Settings page,
+ * and Decision Engine (`lib/automation/export-decision.ts`) all depend on.
+ * None of them may read ENTSO-E, or any other market data source, directly
+ * — they go through this interface only.
  *
- * This module establishes the abstraction the Decision Engine
- * (`lib/automation/export-decision.ts`) and Dashboard will eventually read
- * current market prices through. No real market integration (ENTSO-E or
- * otherwise) is implemented here: no HTTP requests, no API keys, no
- * scheduling. `mockMarketPriceProvider` returns a fixed value so the rest
- * of the automation architecture has something real to build against.
+ * This provider itself never calls ENTSO-E. It only reads prices that the
+ * scheduler (`lib/market-price/refresh-market-prices.ts`) has already
+ * persisted via `lib/market-price/providers/entsoe.ts`. If no persisted
+ * data is available it returns an explicit unavailable result — it never
+ * fabricates a price.
  *
- * Implementing a real provider (e.g. ENTSO-E day-ahead prices) is explicit
- * future work, not done here — see `docs/BACKLOG.md` / `docs/ROADMAP.md`.
+ * Deliberately not designed around a single "current price" function:
+ * day-ahead prices are exposed as their own operation (this is exactly the
+ * shape of data ENTSO-E's day-ahead auction — and therefore the scheduler
+ * — provides). Intraday prices are a genuine placeholder: ENTSO-E's
+ * intraday continuous-trading data is a different document type/endpoint
+ * and implementing it is explicit future work, not done here.
  */
+
+import { Prisma } from "@prisma/client";
+
+import { DEFAULT_BIDDING_ZONE } from "@/lib/market-price/constants";
+import { prisma } from "@/lib/prisma";
 
 export type MarketPrice = {
   price: number;
-  currency: "EUR";
+  currency: string;
   unit: "MWh";
   timestamp: Date;
+  biddingZone: string;
+  source: string;
 };
+
+export type MarketPriceResult =
+  | { available: true; price: MarketPrice }
+  | { available: false; reason: string };
+
+export type MarketPriceSeriesResult =
+  | { available: true; prices: MarketPrice[] }
+  | { available: false; reason: string };
 
 export type MarketPriceProvider = {
-  getCurrentMarketPrice: () => Promise<MarketPrice>;
+  getCurrentPrice: () => Promise<MarketPriceResult>;
+  getDayAheadPrices: () => Promise<MarketPriceSeriesResult>;
+  /** Placeholder — see module doc comment. Always returns `available: false`. */
+  getIntradayPrices: () => Promise<MarketPriceSeriesResult>;
 };
 
+type PersistedMarketPriceRow = {
+  price: Prisma.Decimal;
+  currency: string;
+  timestamp: Date;
+  biddingZone: string;
+  source: string;
+};
+
+function toMarketPrice(row: PersistedMarketPriceRow): MarketPrice {
+  return {
+    price: Number(row.price.toString()),
+    currency: row.currency,
+    unit: "MWh",
+    timestamp: row.timestamp,
+    biddingZone: row.biddingZone,
+    source: row.source,
+  };
+}
+
 /**
- * Temporary mock provider. Returns a fixed price so callers can be wired
- * up and tested before a real market data source exists. Not used by
- * anything automatically — nothing in this milestone calls it.
+ * Reads persisted market prices from the database. This is the concrete
+ * implementation the Dashboard, Settings page, and Decision Engine use —
+ * there is no mock provider anymore; when no data has been persisted yet
+ * (for example before the scheduler's first successful run), callers get
+ * an explicit `available: false` result instead of a fabricated price.
  */
-export const mockMarketPriceProvider: MarketPriceProvider = {
-  async getCurrentMarketPrice(): Promise<MarketPrice> {
-    return {
-      price: 20,
-      currency: "EUR",
-      unit: "MWh",
-      timestamp: new Date(),
-    };
+export const dbMarketPriceProvider: MarketPriceProvider = {
+  async getCurrentPrice(): Promise<MarketPriceResult> {
+    const row = await prisma.marketPrice.findFirst({
+      where: {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        timestamp: { lte: new Date() },
+      },
+      orderBy: { timestamp: "desc" },
+    });
+
+    if (!row) {
+      return { available: false, reason: "no_persisted_price_data" };
+    }
+
+    return { available: true, price: toMarketPrice(row) };
+  },
+
+  async getDayAheadPrices(): Promise<MarketPriceSeriesResult> {
+    const now = new Date();
+    const startOfDay = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+    );
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+    const rows = await prisma.marketPrice.findMany({
+      where: {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        timestamp: { gte: startOfDay, lt: endOfDay },
+      },
+      orderBy: { timestamp: "asc" },
+    });
+
+    if (rows.length === 0) {
+      return {
+        available: false,
+        reason: "no_persisted_price_data_for_today",
+      };
+    }
+
+    return { available: true, prices: rows.map(toMarketPrice) };
+  },
+
+  async getIntradayPrices(): Promise<MarketPriceSeriesResult> {
+    return { available: false, reason: "intraday_prices_not_implemented" };
   },
 };

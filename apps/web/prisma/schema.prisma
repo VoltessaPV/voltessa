@@ -202,12 +202,51 @@ model AutomationSettings {
 
   minimumExportPrice Decimal @default(15.00) @db.Decimal(10, 2)
 
+  /// Currency the organization expects minimumExportPrice to be denominated
+  /// in. Does not trigger any currency conversion today - MarketPrice rows
+  /// read through the Market Price Provider are compared to
+  /// minimumExportPrice assuming they already match (true for the current
+  /// single-market/EUR MVP scope). Converting across currencies is explicit
+  /// future work, not done here.
+  currency String @default("EUR")
+
   energyTrader String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Persisted, normalized market prices (currently: ENTSO-E day-ahead
+/// electricity prices). Populated only by
+/// lib/market-price/refresh-market-prices.ts via the ENTSO-E provider
+/// (lib/market-price/providers/entsoe.ts) - never written to directly from
+/// the Dashboard, Settings page, or Decision Engine. Read only through the
+/// Market Price Provider (lib/market-price/provider.ts).
+///
+/// Deliberately NOT organization-scoped, unlike every other model in this
+/// schema: a market price for a given bidding zone is a shared public
+/// commodity value, not per-tenant data. This is a narrow, deliberate
+/// exception to the multi-tenancy rule in ADR-002
+/// (docs/ARCHITECT_DECISIONS.md), not an oversight.
+model MarketPrice {
+  id String @id @default(cuid())
+
+  timestamp DateTime
+
+  price Decimal @db.Decimal(10, 4)
+
+  currency String @default("EUR")
+
+  biddingZone String
+
+  source String @default("ENTSOE")
+
+  createdAt DateTime @default(now())
+
+  @@unique([biddingZone, timestamp, source])
+  @@index([biddingZone, timestamp])
 }
 
 model PlantTelemetrySnapshot {
