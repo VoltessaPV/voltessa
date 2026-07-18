@@ -86,6 +86,8 @@ model Organization {
   users                  User[]
   plants                 Plant[]
   fusionSolarConnections FusionSolarConnection[]
+
+  automationSettings AutomationSettings?
 }
 
 model Plant {
@@ -181,6 +183,31 @@ model Device {
   @@unique([plantId, devDn])
   @@index([plantId])
   @@index([esnCode])
+}
+
+/// Per-organization automation configuration. Foundation for the Voltessa
+/// Automation MVP - the Decision Engine (lib/automation/export-decision.ts)
+/// reads these values as plain business inputs; it never queries this model
+/// itself. `energyTrader` is a free-text placeholder today so it can later
+/// evolve into a real trader integration (e.g. becoming a foreign key into
+/// a future TraderIntegration table) without renaming this field. Transfer
+/// costs, imbalance costs, and margins are deliberately not modeled here -
+/// later milestone.
+model AutomationSettings {
+  id String @id @default(cuid())
+
+  organizationId String @unique
+
+  automationEnabled Boolean @default(false)
+
+  minimumExportPrice Decimal @default(15.00) @db.Decimal(10, 2)
+
+  energyTrader String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 model PlantTelemetrySnapshot {

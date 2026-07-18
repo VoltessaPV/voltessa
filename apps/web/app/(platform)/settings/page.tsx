@@ -1,6 +1,8 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
+import { updateAutomationSettings } from "./actions";
+
 type SettingsPageProps = {
   searchParams: Promise<{
     fusionsolar?: string;
@@ -19,6 +21,12 @@ export default async function SettingsPage({
         organizationId: user.organizationId,
         provider: "HuaweiFusionSolar",
       },
+    },
+  });
+
+  const automationSettings = await prisma.automationSettings.findUnique({
+    where: {
+      organizationId: user.organizationId,
     },
   });
 
@@ -86,6 +94,76 @@ export default async function SettingsPage({
             {params.reason ?? params.fusionsolar}
           </p>
         )}
+      </section>
+
+      <section className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-6">
+        <h2 className="text-lg font-medium">Automation</h2>
+
+        <p className="mt-2 text-sm text-white/60">
+          Automatically limit grid export when the market price falls below
+          your minimum export price, and restore it once the price recovers.
+        </p>
+
+        <form
+          action={updateAutomationSettings}
+          className="mt-6 space-y-6"
+        >
+          <label className="flex items-center gap-3 text-sm text-white/80">
+            <input
+              type="checkbox"
+              name="automationEnabled"
+              defaultChecked={automationSettings?.automationEnabled ?? false}
+              className="h-4 w-4 rounded border-white/20 bg-white/5"
+            />
+            Enable automation
+          </label>
+
+          <div>
+            <label
+              htmlFor="minimumExportPrice"
+              className="block text-sm text-white/80"
+            >
+              Minimum export price (EUR/MWh)
+            </label>
+
+            <input
+              id="minimumExportPrice"
+              type="number"
+              name="minimumExportPrice"
+              step="0.01"
+              min="0"
+              defaultValue={
+                automationSettings?.minimumExportPrice.toString() ?? "15.00"
+              }
+              className="mt-2 w-40 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="energyTrader"
+              className="block text-sm text-white/80"
+            >
+              Energy trader
+            </label>
+
+            <input
+              id="energyTrader"
+              type="text"
+              name="energyTrader"
+              defaultValue={automationSettings?.energyTrader ?? ""}
+              placeholder="Optional"
+              className="mt-2 w-full max-w-sm rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-white"
+            />
+          </div>
+
+          <button
+            type="submit"
+            className="rounded-xl bg-blue-600 px-5 py-2 font-medium text-white transition hover:bg-blue-500"
+          >
+            Save
+          </button>
+        </form>
       </section>
     </div>
   );
