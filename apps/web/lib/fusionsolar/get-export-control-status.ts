@@ -77,6 +77,39 @@ export async function getPlantConfiguredExportControlMode(
   }
 }
 
+/**
+ * Human-readable label/color for a `ConfiguredExportControlMode` — the
+ * ONLY source for this is the configured mode itself (never
+ * `inverter_state`, never a power measurement). Shared so a second
+ * consumer of this result doesn't need to reimplement the same mapping.
+ */
+export function describeConfiguredExportMode(
+  status: ConfiguredExportControlMode,
+): { label: string; colorClass: string } {
+  if (!status.available) {
+    return { label: "Unavailable", colorClass: "bg-slate-500" };
+  }
+
+  switch (status.mode.activePowerControlMode) {
+    case "noLimit":
+      return { label: "Unlimited", colorClass: "bg-emerald-400" };
+    case "zeroExportLimitation":
+      return { label: "Zero Export", colorClass: "bg-red-400" };
+    case "limitedPowerGridKW":
+      return {
+        label: `Limited to ${status.mode.limitedPowerGridValueParam.maxGridFeedInPowerValue} kW`,
+        colorClass: "bg-amber-400",
+      };
+    case "limitedPowerGridPercent":
+      return {
+        label: `Limited to ${status.mode.limitedPowerGridPercentParam.maxGridFeedInPowerPercent}%`,
+        colorClass: "bg-amber-400",
+      };
+    default:
+      return { label: "Other", colorClass: "bg-slate-400" };
+  }
+}
+
 export type InverterOperatingState =
   | "gridConnected"
   | "powerLimited"

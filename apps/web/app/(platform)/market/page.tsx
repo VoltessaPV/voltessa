@@ -10,6 +10,7 @@ import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
 
 import { getMarketPageData } from "./market-data";
+import { getProductionPageData } from "./production-data";
 
 const TREND_LABEL_PREFIX: Record<"up" | "down" | "flat", string> = {
   up: "+",
@@ -29,10 +30,15 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     where: { organizationId: user.organizationId },
   });
 
-  const data = await getMarketPageData({
-    selectedDateParam: params.date,
-    automationSettings,
-  });
+  // Two completely independent data sources, composed only here — see
+  // market-data.ts / production-data.ts module doc comments.
+  const [data, production] = await Promise.all([
+    getMarketPageData({
+      selectedDateParam: params.date,
+      automationSettings,
+    }),
+    getProductionPageData(user.organizationId),
+  ]);
 
   const currentPriceDelta = data.dataAvailable
     ? data.summary.currentPrice?.deltaVsPrevious
@@ -45,6 +51,43 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
         : currentPriceDelta < 0
           ? "down"
           : "flat";
+
+  // Grid direction is derived once here so the card below stays simple —
+  // never inferred from configuration, only from the real meter reading.
+  const gridDirection: "export" | "import" | "neutral" | "unavailable" =
+    production.currentExport.available && production.currentExport.kw > 0
+      ? "export"
+      : production.currentImport.available && production.currentImport.kw > 0
+        ? "import"
+        : production.currentExport.available || production.currentImport.available
+          ? "neutral"
+          : "unavailable";
+
+  const gridValue =
+    gridDirection === "export" && production.currentExport.available
+      ? production.currentExport.kw.toString()
+      : gridDirection === "import" && production.currentImport.available
+        ? production.currentImport.kw.toString()
+        : gridDirection === "neutral"
+          ? "0"
+          : undefined;
+
+  // Current production/grid power is a single real-time reading, never a
+  // fabricated time series — only overlay it on the chart when viewing
+  // today, since it describes right now, not the day being browsed.
+  const nowAnnotationParts: string[] = [];
+  if (data.dataAvailable && data.isToday) {
+    if (production.currentProduction.available) {
+      nowAnnotationParts.push(`${production.currentProduction.kw} kW prod`);
+    }
+    if (gridDirection === "export" && production.currentExport.available) {
+      nowAnnotationParts.push(`${production.currentExport.kw} kW export`);
+    } else if (gridDirection === "import" && production.currentImport.available) {
+      nowAnnotationParts.push(`${production.currentImport.kw} kW import`);
+    }
+  }
+  const nowAnnotation =
+    nowAnnotationParts.length > 0 ? nowAnnotationParts.join(" · ") : undefined;
 
   return (
     <div className="mx-auto max-w-7xl space-y-3">
@@ -103,49 +146,58 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
 
             <MarketSummaryCard
-              eyebrow="Next Interval"
-              value={data.summary.nextInterval?.value.toString()}
-              valueUnit={data.summary.nextInterval ? "EUR/MWh" : undefined}
-              caption={data.summary.nextInterval?.intervalLabel}
-              unavailableNote="Live price only available for today"
-              trend={
-                data.summary.nextInterval
-                  ? {
-                      direction: data.summary.nextInterval.direction,
-                      label:
-                        data.summary.nextInterval.direction === "up"
-                          ? "Rising"
-                          : data.summary.nextInterval.direction === "down"
-                            ? "Falling"
-                            : "Flat",
-                    }
+              eyebrow="Current Production"
+              value={
+                production.currentProduction.available
+                  ? production.currentProduction.kw.toString()
                   : undefined
               }
+              valueUnit={production.currentProduction.available ? "kW" : undefined}
+              caption={
+                production.todaysProduction.available
+                  ? `Today: ${production.todaysProduction.mwh} MWh`
+                  : undefined
+              }
+              unavailableNote="FusionSolar production data unavailable"
             />
 
             <MarketSummaryCard
-              eyebrow="Lowest"
-              value={data.summary.lowestToday.value.toString()}
-              valueUnit="EUR/MWh"
-              caption={data.summary.lowestToday.intervalLabel}
+              eyebrow={gridDirection === "import" ? "Current Import" : "Current Export"}
+              value={gridValue}
+              valueUnit={gridValue !== undefined ? "kW" : undefined}
+              caption={
+                gridDirection === "export"
+                  ? "Exporting to grid"
+                  : gridDirection === "import"
+                    ? "Importing from grid"
+                    : gridDirection === "neutral"
+                      ? "No grid exchange"
+                      : undefined
+              }
+              unavailableNote="FusionSolar meter data unavailable"
             />
 
             <MarketSummaryCard
-              eyebrow="Highest"
-              value={data.summary.highestToday.value.toString()}
-              valueUnit="EUR/MWh"
-              caption={data.summary.highestToday.intervalLabel}
+              eyebrow="Configured Mode"
+              statusDot={{
+                colorClass: production.configuredExportModeLabel.colorClass,
+                label: production.configuredExportModeLabel.label,
+              }}
+              rows={[
+                { label: "Source", value: "Huawei configuration endpoint" },
+              ]}
             />
 
             <MarketSummaryCard
-              eyebrow="Market Status"
+              eyebrow="Threshold"
+              value={data.threshold.minimumExportPrice.toString()}
+              valueUnit={`${data.threshold.currency}/MWh`}
+              caption="Minimum profitable export price"
               statusDot={{
                 colorClass: data.summary.marketStatus.healthy
                   ? "bg-emerald-400"
                   : "bg-red-400",
-                label: data.summary.marketStatus.healthy
-                  ? "Healthy"
-                  : "Degraded",
+                label: data.summary.marketStatus.healthy ? "Healthy" : "Degraded",
               }}
               rows={[
                 { label: "Country", value: data.summary.marketStatus.country },
@@ -158,11 +210,6 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                       },
                     ]
                   : []),
-                {
-                  label: "Min. profitable price",
-                  value: `${data.threshold.minimumExportPrice} ${data.threshold.currency}/MWh`,
-                  valueColorClass: "text-amber-400",
-                },
               ]}
             />
           </section>
@@ -183,6 +230,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               <MarketPriceChart
                 series={data.series}
                 thresholdPrice={data.threshold.minimumExportPrice}
+                nowAnnotation={nowAnnotation}
               />
             </div>
           </section>

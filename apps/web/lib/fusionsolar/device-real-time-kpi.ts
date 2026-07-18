@@ -10,19 +10,27 @@ import {
  *
  * `dataItemMap` is intentionally left mostly open (`[key: string]: unknown`)
  * — its full field set (~100 keys for string inverters, per the official
- * doc tables) is not modeled here, only `inverter_state`, which is the one
- * field this integration currently needs (confirmed authoritative per
- * docs/research/fusionsolar-active-power-control.md — an officially
- * documented enumeration, not a bitmask: 512 = Grid-connected, 513 = power
- * limited, 514 = self-derating). Only present for string/residential
- * inverter device types (devTypeId 1 / 38); absent for other device types
- * such as meters, hence optional.
+ * doc tables) is not modeled here. Two fields are typed because this
+ * integration reads them directly:
+ *
+ * - `inverter_state` (confirmed authoritative per
+ *   docs/research/fusionsolar-active-power-control.md — an officially
+ *   documented enumeration, not a bitmask: 512 = Grid-connected, 513 =
+ *   power limited, 514 = self-derating). Only present for string/
+ *   residential inverter device types (devTypeId 1 / 38).
+ * - `active_power` — real-time active power in **watts** (confirmed
+ *   against real production data: a meter reading of `-1962` corresponds
+ *   to ~1.96 kW; division by 1000 is required, not assumed). Present for
+ *   both inverters (devTypeId 1/38, production) and meters (devTypeId 47,
+ *   signed grid power — see `get-plant-power-status.ts` for the sign
+ *   convention this integration relies on).
  */
 export type FusionSolarDeviceRealTimeKpiItem = {
   devId: number;
   sn?: string;
   dataItemMap: {
     inverter_state?: number | null;
+    active_power?: number | null;
     [key: string]: unknown;
   };
 };
