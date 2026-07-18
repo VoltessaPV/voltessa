@@ -51,6 +51,12 @@ export default async function SettingsPage({
           </div>
 
           <div className="flex shrink-0">
+            {/*
+              Plain <a>, not next/link, is intentional: this starts the
+              FusionSolar OAuth flow, and Link's prefetching previously
+              triggered that flow before the user actually clicked.
+            */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/api/auth/fusionsolar/connect"
               className="rounded-xl bg-blue-600 px-5 py-2 font-medium text-white transition hover:bg-blue-500"
