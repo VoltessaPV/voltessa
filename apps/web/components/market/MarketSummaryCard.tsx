@@ -37,6 +37,9 @@ export type MarketSummaryCardProps = {
  * all render through this with different props, matching the same visual
  * rhythm (`rounded-2xl border border-white/10 bg-white/[0.03]`) already
  * used across the Dashboard/Settings pages.
+ *
+ * Hierarchy is deliberate, top to bottom: value (dominant), interval
+ * time, trend, then secondary detail rows — not all equally weighted.
  */
 export function MarketSummaryCard({
   eyebrow,
@@ -49,9 +52,9 @@ export function MarketSummaryCard({
   statusDot,
 }: MarketSummaryCardProps) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
           {eyebrow}
         </p>
 
@@ -66,44 +69,40 @@ export function MarketSummaryCard({
       </div>
 
       {value !== undefined ? (
-        <div className="mt-2 flex items-baseline gap-1.5">
-          <span className="text-2xl font-semibold leading-none tracking-tight text-white tabular-nums">
+        <div className="mt-1.5 flex items-baseline gap-1.5">
+          <span className="text-xl font-semibold leading-none tracking-tight text-white tabular-nums">
             {value}
           </span>
 
           {valueUnit && (
-            <span className="text-xs text-slate-500">{valueUnit}</span>
+            <span className="text-[11px] text-slate-500">{valueUnit}</span>
           )}
         </div>
       ) : (
         unavailableNote && (
-          <p className="mt-2 text-xs leading-snug text-slate-500">
+          <p className="mt-1.5 text-xs leading-snug text-slate-500">
             {unavailableNote}
           </p>
         )
       )}
 
-      {(caption || trend) && (
-        <div className="mt-1.5 flex items-center justify-between gap-2">
-          {caption && (
-            <span className="text-xs text-slate-500">{caption}</span>
-          )}
+      {caption && (
+        <p className="mt-1 text-[11px] text-slate-500">{caption}</p>
+      )}
 
-          {trend && (
-            <span
-              className={`flex items-center gap-1 text-xs font-medium tabular-nums ${TREND_COLOR_CLASS[trend.direction]}`}
-            >
-              <span aria-hidden className="text-[9px]">
-                {TREND_GLYPH[trend.direction]}
-              </span>
-              {trend.label}
-            </span>
-          )}
-        </div>
+      {trend && (
+        <p
+          className={`mt-0.5 flex items-center gap-1 text-xs font-medium tabular-nums ${TREND_COLOR_CLASS[trend.direction]}`}
+        >
+          <span aria-hidden className="text-[9px]">
+            {TREND_GLYPH[trend.direction]}
+          </span>
+          {trend.label}
+        </p>
       )}
 
       {rows && rows.length > 0 && (
-        <div className="mt-2.5 space-y-1.5 border-t border-white/10 pt-2.5">
+        <div className="mt-2 space-y-1 border-t border-white/10 pt-2">
           {rows.map((row) => (
             <div
               key={row.label}

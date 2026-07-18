@@ -35,8 +35,19 @@ export function MarketToolbar({
   isToday,
 }: MarketToolbarProps) {
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex flex-col gap-2.5 rounded-2xl border border-white/10 bg-white/[0.03] p-2.5 lg:flex-row lg:items-center lg:justify-between">
       <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.02] px-2 h-8">
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${isToday ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`}
+          />
+          <span
+            className={`text-[10px] font-semibold uppercase tracking-wider ${isToday ? "text-emerald-400" : "text-slate-600"}`}
+          >
+            {isToday ? "Live" : "Historical"}
+          </span>
+        </div>
+
         <a
           href={`/market?date=${prevDateParam}`}
           aria-label="Previous day"
@@ -68,14 +79,17 @@ export function MarketToolbar({
           ›
         </a>
 
-        {!isToday && (
-          <a
-            href="/market"
-            className="h-8 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-2.5 text-xs font-medium leading-8 text-cyan-300 transition hover:bg-cyan-500/15"
-          >
-            Jump to today
-          </a>
-        )}
+        <a
+          href="/market"
+          aria-disabled={isToday}
+          className={
+            isToday
+              ? "h-8 cursor-default rounded-lg border border-white/5 px-2.5 text-xs font-medium leading-8 text-slate-600"
+              : "h-8 rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-2.5 text-xs font-medium leading-8 text-cyan-300 transition hover:bg-cyan-500/15"
+          }
+        >
+          Today
+        </a>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

@@ -2,16 +2,15 @@
  * Market page data orchestration — reads real ENTSO-E day-ahead prices
  * through the Market Price Provider (`lib/market-price/provider.ts`) only;
  * nothing here calls ENTSO-E directly or bypasses the provider. Every
- * price shown on the Market page comes from this module.
+ * number shown on the Market page is either a real price or a plain,
+ * disclosed statistic computed over real prices — nothing is fabricated.
  *
- * The one deliberately-not-real input is illustrative export volume
- * (`illustrative-production.ts`) — there is no FusionSolar/Huawei
- * production or export-state data wired into this page yet (explicit
- * future work, see the module doc comment there). Every function below
- * that touches revenue is built so that swapping the illustrative curve
- * for a real per-plant production series later is a one-line change: it
- * always takes a `getProductionMw(timestamp)` shaped input rather than
- * assuming a fixed curve inline.
+ * There is deliberately no revenue/production figure here: production
+ * telemetry (FusionSolar) isn't connected to this page yet, and a prior
+ * version of this module multiplied real prices by an illustrative
+ * generation curve to produce a Euro figure. That looked like real money
+ * and wasn't — removed entirely, not just hidden in the UI. See
+ * `MarketRevenueCard`'s waiting state.
  */
 
 import {
@@ -26,15 +25,10 @@ import {
   localDayBoundsUtc,
 } from "@/lib/market-price/timezone";
 
-import { estimateIllustrativeProductionMw } from "./illustrative-production";
-
-const INTERVAL_HOURS_FALLBACK = DEFAULT_RESOLUTION_MINUTES / 60;
-
 export type MarketPricePoint = {
   timestamp: Date;
   /** `null` only for a genuinely missing interval — never fabricated. */
   price: number | null;
-  exportPowerMw: number;
   exportEnabled: boolean;
 };
 
@@ -60,27 +54,26 @@ export type MarketSummaryData = {
   };
 };
 
-export type RevenueSummaryData = {
-  totalRevenue: number;
-  currency: string;
-  exportedEnergyMwh: number;
-  averageSellingPrice: number;
-  revenuePerExportedMwh: number;
-  sparkline: number[];
-};
-
-export type TimelineEvent = {
-  timeLabel: string;
-  type: "export_enabled" | "export_disabled";
-  reason: string;
-  isPast: boolean;
-  isNext: boolean;
-};
-
-export type TimelineSummary = {
-  currentStateLabel: string;
-  currentStateSinceLabel: string;
-  nextActionLabel: string | null;
+/**
+ * A real system event — not derived from prices. Every variant here is
+ * something a future milestone will actually emit; none are populated
+ * yet, which is why `getMarketPageData` always returns an empty log
+ * today (see its doc comment). Kept as a real, forward-typed shape
+ * rather than a loose `string` so wiring in the first real producer
+ * later is additive, not a redesign.
+ */
+export type MarketEventLogEntry = {
+  timestamp: Date;
+  type:
+    | "export_enabled"
+    | "export_stopped"
+    | "threshold_crossed"
+    | "automation_executed"
+    | "huawei_command_sent"
+    | "trader_schedule_generated"
+    | "manual_override";
+  label: string;
+  detail?: string;
 };
 
 export type DistributionBucket = {
@@ -113,9 +106,7 @@ export type MarketPageResult =
       series: MarketPricePoint[];
       isPartialImport: boolean;
       summary: MarketSummaryData;
-      revenue: RevenueSummaryData;
-      timeline: TimelineEvent[];
-      timelineSummary: TimelineSummary;
+      eventLog: MarketEventLogEntry[];
       distribution: DistributionBucket[];
       insights: MarketInsight[];
     } & MarketToolbarState);
@@ -161,93 +152,15 @@ function buildSeries(
   ) {
     const timestamp = new Date(t);
     const price = byTime.get(t) ?? null;
-    const exportPowerMw = estimateIllustrativeProductionMw(
-      timestamp,
-      ENTSOE_MARKET_TIMEZONE,
-    );
 
     points.push({
       timestamp,
       price,
-      exportPowerMw,
       exportEnabled: price !== null && price >= threshold.minimumExportPrice,
     });
   }
 
   return points;
-}
-
-function buildTimeline(
-  series: MarketPricePoint[],
-  now: Date,
-  isToday: boolean,
-): { events: TimelineEvent[]; summary: TimelineSummary } {
-  const knownPoints = series.filter((point) => point.price !== null);
-  const events: TimelineEvent[] = [];
-  let previousEnabled: boolean | null = null;
-  let nextEventIndex = -1;
-
-  knownPoints.forEach((point) => {
-    if (previousEnabled !== null && point.exportEnabled !== previousEnabled) {
-      const isPast = isToday ? point.timestamp.getTime() <= now.getTime() : true;
-
-      if (!isPast && nextEventIndex === -1) {
-        nextEventIndex = events.length;
-      }
-
-      events.push({
-        timeLabel: sofiaTimeLabel(point.timestamp),
-        type: point.exportEnabled ? "export_enabled" : "export_disabled",
-        reason: point.exportEnabled
-          ? "Price above threshold"
-          : "Price below threshold",
-        isPast,
-        isNext: false,
-      });
-    }
-
-    previousEnabled = point.exportEnabled;
-  });
-
-  if (nextEventIndex >= 0) {
-    events[nextEventIndex] = { ...events[nextEventIndex]!, isNext: true };
-  }
-
-  let currentStateLabel = "No data";
-  let currentStateSinceLabel = "";
-
-  if (isToday) {
-    const currentPoint = [...knownPoints]
-      .reverse()
-      .find((point) => point.timestamp.getTime() <= now.getTime());
-
-    if (currentPoint) {
-      currentStateLabel = currentPoint.exportEnabled
-        ? "Export enabled"
-        : "Export disabled";
-
-      const lastTransition = [...events]
-        .filter((event) => event.isPast)
-        .at(-1);
-
-      currentStateSinceLabel = lastTransition
-        ? `since ${lastTransition.timeLabel}`
-        : "since start of day";
-    }
-  } else if (knownPoints.length > 0) {
-    currentStateLabel = "Historical day";
-    currentStateSinceLabel = "no live state for a non-today view";
-  }
-
-  const nextEvent = events.find((event) => event.isNext);
-  const nextActionLabel = nextEvent
-    ? `${nextEvent.type === "export_enabled" ? "Export will be enabled" : "Export will be disabled"} at ${nextEvent.timeLabel}`
-    : null;
-
-  return {
-    events,
-    summary: { currentStateLabel, currentStateSinceLabel, nextActionLabel },
-  };
 }
 
 function buildDistribution(
@@ -283,49 +196,15 @@ function buildDistribution(
     .filter((bucket) => bucket.percentage > 0);
 }
 
-function buildRevenue(knownPoints: MarketPricePoint[]): RevenueSummaryData {
-  const intervalHours = INTERVAL_HOURS_FALLBACK;
-
-  const exportingPoints = knownPoints.filter((point) => point.exportEnabled);
-
-  let exportedEnergyMwh = 0;
-  let totalRevenue = 0;
-  let cumulativeRevenue = 0;
-  const sparkline: number[] = [];
-
-  for (const point of knownPoints) {
-    const producedMwh = point.exportPowerMw * intervalHours;
-    const isExporting = point.exportEnabled;
-
-    if (isExporting) {
-      exportedEnergyMwh += producedMwh;
-      totalRevenue += producedMwh * (point.price as number);
-    }
-
-    cumulativeRevenue += isExporting ? producedMwh * (point.price as number) : 0;
-    sparkline.push(Math.round(cumulativeRevenue));
-  }
-
-  const averageSellingPrice =
-    exportingPoints.length > 0
-      ? exportingPoints.reduce((sum, point) => sum + (point.price as number), 0) /
-        exportingPoints.length
-      : 0;
-
-  const revenuePerExportedMwh =
-    exportedEnergyMwh > 0 ? totalRevenue / exportedEnergyMwh : 0;
-
-  return {
-    totalRevenue: Math.round(totalRevenue),
-    currency: "EUR",
-    exportedEnergyMwh: Math.round(exportedEnergyMwh * 100) / 100,
-    averageSellingPrice: Math.round(averageSellingPrice * 100) / 100,
-    revenuePerExportedMwh: Math.round(revenuePerExportedMwh * 100) / 100,
-    sparkline,
-  };
-}
-
-function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
+/**
+ * Plain, factual observations over the real price series — never
+ * speculative ("expected", "predicted"). Each one is a statistic anyone
+ * could recompute from the same series.
+ */
+function buildInsights(
+  knownPoints: MarketPricePoint[],
+  resolutionMinutes: number,
+): MarketInsight[] {
   const withPrice = knownPoints.filter(
     (point): point is MarketPricePoint & { price: number } =>
       point.price !== null,
@@ -347,17 +226,35 @@ function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
   const stdDev = Math.sqrt(variance);
   const volatility = stdDev > 45 ? "High" : stdDev > 25 ? "Medium" : "Low";
 
+  const negativeHours =
+    Math.round(
+      withPrice.filter((point) => point.price < 0).length *
+        (resolutionMinutes / 60) *
+        10,
+    ) / 10;
+
+  let crossingCount = 0;
+  let previousEnabled: boolean | null = null;
+  for (const point of knownPoints) {
+    if (previousEnabled !== null && point.exportEnabled !== previousEnabled) {
+      crossingCount += 1;
+    }
+    previousEnabled = point.exportEnabled;
+  }
+
   return [
     {
-      text: `Highest price: ${sofiaTimeLabel(highest.timestamp)} (${highest.price} EUR/MWh)`,
+      text: `Highest price today: ${highest.price} EUR/MWh at ${sofiaTimeLabel(highest.timestamp)}`,
       tone: "warning",
     },
     {
-      text: `Lowest price: ${sofiaTimeLabel(lowest.timestamp)} (${lowest.price} EUR/MWh)`,
+      text: `Lowest price today: ${lowest.price} EUR/MWh at ${sofiaTimeLabel(lowest.timestamp)}`,
       tone: "positive",
     },
-    { text: `Market volatility: ${volatility}`, tone: "neutral" },
-    { text: `Spread: ${spread} EUR/MWh`, tone: "neutral" },
+    { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
+    { text: `Volatility: ${volatility}`, tone: "neutral" },
+    { text: `Negative price hours: ${negativeHours} h`, tone: "neutral" },
+    { text: `Threshold crossings: ${crossingCount}`, tone: "neutral" },
   ];
 }
 
@@ -412,7 +309,6 @@ export async function getMarketPageData(params: {
   );
 
   const knownPoints = series.filter((point) => point.price !== null);
-  const now = new Date();
 
   let currentPrice: MarketSummaryData["currentPrice"] = null;
   let nextInterval: MarketSummaryData["nextInterval"] = null;
@@ -490,23 +386,18 @@ export async function getMarketPageData(params: {
     },
   };
 
-  const { events: timeline, summary: timelineSummary } = buildTimeline(
-    series,
-    now,
-    isToday,
-  );
-
   return {
     dataAvailable: true,
     threshold,
     series,
     isPartialImport: isToday && importStatus.available && importStatus.isPartial,
     summary,
-    revenue: buildRevenue(knownPoints),
-    timeline,
-    timelineSummary,
+    // No automation, Huawei execution, or trader integration exists yet —
+    // there is nothing real to log. An empty, honestly-empty log is
+    // correct here, not a bug; see MarketEventLogEntry's doc comment.
+    eventLog: [],
     distribution: buildDistribution(knownPoints),
-    insights: buildInsights(knownPoints),
+    insights: buildInsights(knownPoints, resolutionMinutes),
     ...toolbarState,
   };
 }

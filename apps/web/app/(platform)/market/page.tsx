@@ -2,11 +2,11 @@ import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
 import { MarketDistribution } from "@/components/market/MarketDistribution";
+import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 import { MarketRevenueCard } from "@/components/market/MarketRevenueCard";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
-import { MarketTimeline } from "@/components/market/MarketTimeline";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
 
 import { getMarketPageData } from "./market-data";
@@ -47,22 +47,15 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           : "flat";
 
   return (
-    <div className="mx-auto max-w-7xl space-y-4">
-      <section>
-        <p className="text-sm font-medium text-cyan-400">
-          Bulgarian day-ahead market
-        </p>
-
-        <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-white">
-              Market
-            </h1>
-
-            <p className="mt-1 text-sm text-slate-400">
-              Electricity prices, export windows and revenue.
-            </p>
-          </div>
+    <div className="mx-auto max-w-7xl space-y-3">
+      <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-medium text-cyan-400">
+            Bulgarian day-ahead market
+          </p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
+            Market
+          </h1>
         </div>
       </section>
 
@@ -86,13 +79,13 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       ) : (
         <>
           {data.isPartialImport && (
-            <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-xs text-amber-300">
+            <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
               Today&apos;s import is partial — some intervals are missing
               from ENTSO-E and are shown as gaps, never fabricated.
             </p>
           )}
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
             <MarketSummaryCard
               eyebrow="Current Price"
               value={data.summary.currentPrice?.value.toString()}
@@ -174,19 +167,19 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
           </section>
 
-          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-5">
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-base font-semibold text-white">
+                <h2 className="text-sm font-semibold text-white">
                   Price &amp; Export
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Day-ahead price, export power and export windows
+                  Day-ahead price and export windows
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 h-[220px] sm:h-[320px] lg:h-[360px] xl:h-[420px]">
+            <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
               <MarketPriceChart
                 series={data.series}
                 thresholdPrice={data.threshold.minimumExportPrice}
@@ -194,12 +187,9 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             </div>
           </section>
 
-          <section className="grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-            <MarketRevenueCard revenue={data.revenue} />
-            <MarketTimeline
-              events={data.timeline}
-              summary={data.timelineSummary}
-            />
+          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+            <MarketRevenueCard />
+            <MarketEventLog entries={data.eventLog} />
             <MarketDistribution buckets={data.distribution} />
             <MarketInsights insights={data.insights} />
           </section>
