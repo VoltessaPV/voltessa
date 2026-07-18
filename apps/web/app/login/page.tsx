@@ -1,5 +1,4 @@
 import { signIn } from "@/auth";
-import { headers } from "next/headers";
 
 export default function LoginPage() {
   return (
@@ -7,16 +6,6 @@ export default function LoginPage() {
       <form
         action={async () => {
           "use server";
-
-          // TEMPORARY PKCE diagnostic (Tier 1, point A) — remove after root cause is confirmed.
-          const requestHeaders = await headers();
-          console.log("[PKCE-DIAG:signin]", {
-            resolvedAuthUrl: process.env.AUTH_URL ?? null,
-            host: requestHeaders.get("host"),
-            xForwardedHost: requestHeaders.get("x-forwarded-host"),
-            xForwardedProto: requestHeaders.get("x-forwarded-proto"),
-            vercelRegion: process.env.VERCEL_REGION ?? null,
-          });
 
           await signIn("google", {
             redirectTo: "/dashboard",
