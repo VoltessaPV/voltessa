@@ -26,6 +26,7 @@ export class FusionSolarApiError extends Error {
   readonly httpStatus: number | null;
   readonly failCode: number | null;
   readonly response: unknown;
+  readonly headers: Record<string, string> | null;
 
   constructor(
     message: string,
@@ -33,6 +34,7 @@ export class FusionSolarApiError extends Error {
       httpStatus?: number | null;
       failCode?: number | null;
       response?: unknown;
+      headers?: Record<string, string> | null;
     } = {},
   ) {
     super(message);
@@ -40,6 +42,7 @@ export class FusionSolarApiError extends Error {
     this.httpStatus = options.httpStatus ?? null;
     this.failCode = options.failCode ?? null;
     this.response = options.response ?? null;
+    this.headers = options.headers ?? null;
   }
 }
 
@@ -94,6 +97,10 @@ export async function callFusionSolarApi<T>(
 
   const responseText = await response.text();
 
+  const responseHeaders = Object.fromEntries(
+    response.headers.entries(),
+  );
+
   let responseBody: FusionSolarApiResponse<T>;
 
   try {
@@ -106,6 +113,7 @@ export async function callFusionSolarApi<T>(
       {
         httpStatus: response.status,
         response: responseText,
+        headers: responseHeaders,
       },
     );
   }
@@ -117,6 +125,7 @@ export async function callFusionSolarApi<T>(
         httpStatus: response.status,
         failCode: responseBody.failCode,
         response: responseBody,
+        headers: responseHeaders,
       },
     );
   }
@@ -129,6 +138,7 @@ export async function callFusionSolarApi<T>(
         httpStatus: response.status,
         failCode: responseBody.failCode,
         response: responseBody,
+        headers: responseHeaders,
       },
     );
   }

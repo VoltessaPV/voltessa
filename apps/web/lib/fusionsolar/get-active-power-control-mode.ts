@@ -1,5 +1,6 @@
 import {
   callFusionSolarApi,
+  FusionSolarApiError,
   type FusionSolarConnection,
 } from "@/lib/fusionsolar/api-client";
 
@@ -97,16 +98,54 @@ export async function getActivePowerControlMode(
   connection: FusionSolarConnection,
   plantCode: string,
 ): Promise<ActivePowerControlModeResult> {
-  const result =
-    await callFusionSolarApi<HuaweiActivePowerControlModeResponse>(
-      connection,
-      {
-        path: ACTIVE_POWER_CONTROL_MODE_PATH,
-        body: {
-          plantCode,
-        },
-      },
-    );
+  const requestBody = { plantCode };
 
-  return result.data;
+  // TEMPORARY diagnostic logging — remove once the upstream HTTP 400 is
+  // understood. Does not change the request being sent or any error
+  // handling below; only observes and re-throws unchanged.
+  console.log("[FusionSolar Diagnostic] Active power control mode request", {
+    path: ACTIVE_POWER_CONTROL_MODE_PATH,
+    plantCode,
+    body: requestBody,
+  });
+
+  try {
+    const result =
+      await callFusionSolarApi<HuaweiActivePowerControlModeResponse>(
+        connection,
+        {
+          path: ACTIVE_POWER_CONTROL_MODE_PATH,
+          body: requestBody,
+        },
+      );
+
+    return result.data;
+  } catch (error) {
+    if (error instanceof FusionSolarApiError) {
+      const response = error.response;
+      const parsedJson =
+        response && typeof response === "object"
+          ? (response as {
+              success?: boolean;
+              failCode?: number;
+              message?: string | null;
+            })
+          : null;
+
+      // TEMPORARY diagnostic logging — see comment above.
+      console.error(
+        "[FusionSolar Diagnostic] Active power control mode upstream error",
+        {
+          httpStatus: error.httpStatus,
+          headers: error.headers,
+          responseBody: error.response,
+          success: parsedJson?.success ?? null,
+          failCode: parsedJson?.failCode ?? error.failCode,
+          message: parsedJson?.message ?? error.message,
+        },
+      );
+    }
+
+    throw error;
+  }
 }
