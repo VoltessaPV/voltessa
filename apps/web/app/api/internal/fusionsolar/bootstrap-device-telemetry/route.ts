@@ -5,26 +5,27 @@ import { NextResponse } from "next/server";
 import { bootstrapDeviceTelemetry } from "@/lib/fusionsolar/bootstrap-device-telemetry";
 
 /**
- * Continuous ingestion of the DeviceTelemetry table (today + yesterday
- * only) for every organization with a FusionSolar connection. Scheduled via
- * `vercel.json`'s `crons` entry (every 15 minutes) — Vercel automatically
- * sends `Authorization: Bearer $CRON_SECRET` for cron-triggered requests,
- * so no separate cron-specific auth path is needed. Still callable
- * manually with the same bearer token (e.g. for a one-off bootstrap or
- * backfill) — same bearer-token convention as `ingest-plant-telemetry`.
+ * Manual/externally-triggered ingestion of the DeviceTelemetry table
+ * (today + yesterday only) for every organization with a FusionSolar
+ * connection. Bearer-token gated (`CRON_SECRET`), same convention as
+ * `ingest-plant-telemetry`. Idempotent: `bootstrapDeviceTelemetry` ->
+ * `importDeviceTelemetry` writes via `createMany({ skipDuplicates: true })`,
+ * so calling this any number of times never duplicates a row.
  *
- * Idempotent: `bootstrapDeviceTelemetry` -> `importDeviceTelemetry` writes
- * via `createMany({ skipDuplicates: true })`, so re-running every 15
- * minutes never duplicates a row — each run only ever inserts whatever is
- * genuinely new since the last run.
- *
- * A previous attempt at this exact schedule (commit `6643255`) was
- * reverted (`853893d`) with no recorded reason. Re-attempted here per an
- * explicit milestone requirement ("DeviceTelemetry must always stay within
- * approximately one telemetry interval of the current local time") —
- * verify the deployment succeeds; if Vercel rejects this specific cron
- * frequency (a plan-tier limit, not a code issue), that will surface as a
- * deployment/build error, not a runtime one.
+ * NOT wired to Vercel's native `crons` config. Confirmed (not assumed) via
+ * a real deployment attempt in the Telemetry Reliability & Market Chart
+ * Completion milestone: adding a `crons` entry to `vercel.json` for this
+ * route made the production deployment fail outright — the failure
+ * shortlink Vercel attached to the failed GitHub status pointed directly
+ * at `vercel.com/docs/cron-jobs/usage-and-pricing`, confirming a plan-tier
+ * cron restriction, the same cause a prior identical attempt (commit
+ * `6643255`, reverted as `853893d`) almost certainly hit. Continuous
+ * ingestion therefore requires either upgrading the Vercel plan or an
+ * external scheduler (e.g. a GitHub Actions cron workflow calling this
+ * route with the real `CRON_SECRET` as a repository secret) — both are
+ * manual account/cloud-configuration steps outside what this codebase
+ * alone can decide or perform. See
+ * docs/research/telemetry-consumer-migration.md for the full writeup.
  */
 
 export const runtime = "nodejs";
