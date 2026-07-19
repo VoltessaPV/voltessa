@@ -20,6 +20,7 @@
  */
 
 import {
+  isExportRecommended,
   resolveExportThreshold,
   type ExportThresholdConfig,
 } from "@/lib/automation/export-threshold-config";
@@ -66,7 +67,6 @@ export type MarketSummaryData = {
     country: string;
     source: string;
     healthy: boolean;
-    lastUpdateLabel: string | null;
   };
 };
 
@@ -151,15 +151,6 @@ function sofiaTimeLabel(date: Date): string {
   });
 }
 
-/**
- * Full date+time, always in Europe/Sofia — never the bare
- * `.toLocaleString()` default, which would render in the server's own
- * timezone (UTC on Vercel) rather than the plant's real local time.
- */
-function sofiaDateTimeLabel(date: Date): string {
-  return date.toLocaleString("en-GB", { timeZone: "Europe/Sofia" });
-}
-
 function buildSeries(
   prices: Array<{ timestamp: Date; price: number }>,
   periodStart: Date,
@@ -181,7 +172,7 @@ function buildSeries(
     points.push({
       timestamp,
       price,
-      exportEnabled: price !== null && price >= threshold.minimumExportPrice,
+      exportEnabled: price !== null && isExportRecommended(price, threshold),
     });
   }
 
@@ -229,7 +220,10 @@ function buildDistribution(
  * speculative ("expected", "predicted"). Each one is a statistic anyone
  * could recompute from the same series.
  */
-function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
+function buildInsights(
+  knownPoints: MarketPricePoint[],
+  resolutionMinutes: number,
+): MarketInsight[] {
   const withPrice = knownPoints.filter(
     (point): point is MarketPricePoint & { price: number } =>
       point.price !== null,
@@ -245,6 +239,7 @@ function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
 
   const mean =
     withPrice.reduce((sum, point) => sum + point.price, 0) / withPrice.length;
+  const averagePrice = Math.round(mean * 100) / 100;
   const variance =
     withPrice.reduce((sum, point) => sum + (point.price - mean) ** 2, 0) /
     withPrice.length;
@@ -254,6 +249,16 @@ function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
   const negativeIntervalCount = withPrice.filter(
     (point) => point.price < 0,
   ).length;
+
+  const intervalHours = resolutionMinutes / 60;
+  const aboveThresholdCount = knownPoints.filter(
+    (point) => point.exportEnabled,
+  ).length;
+  const hoursAboveThreshold =
+    Math.round(aboveThresholdCount * intervalHours * 10) / 10;
+  const hoursBelowThreshold =
+    Math.round((knownPoints.length - aboveThresholdCount) * intervalHours * 10) /
+    10;
 
   let crossingCount = 0;
   let previousEnabled: boolean | null = null;
@@ -274,8 +279,11 @@ function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
       tone: "positive",
     },
     { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
+    { text: `Average price: ${averagePrice} EUR/MWh`, tone: "neutral" },
     { text: `Volatility: ${volatility}`, tone: "neutral" },
     { text: `Negative price intervals: ${negativeIntervalCount}`, tone: "neutral" },
+    { text: `Hours above threshold: ${hoursAboveThreshold} h`, tone: "positive" },
+    { text: `Hours below threshold: ${hoursBelowThreshold} h`, tone: "neutral" },
     { text: `Threshold crossings: ${crossingCount}`, tone: "neutral" },
   ];
 }
@@ -402,10 +410,6 @@ export async function getMarketPageData(params: {
       country: "Bulgaria",
       source: "ENTSO-E",
       healthy: importStatus.available ? !importStatus.isPartial : false,
-      lastUpdateLabel:
-        isToday && importStatus.available
-          ? sofiaDateTimeLabel(importStatus.importedAt)
-          : null,
     },
   };
 
@@ -420,7 +424,7 @@ export async function getMarketPageData(params: {
     // correct here, not a bug; see MarketEventLogEntry's doc comment.
     eventLog: [],
     distribution: buildDistribution(knownPoints),
-    insights: buildInsights(knownPoints),
+    insights: buildInsights(knownPoints, resolutionMinutes),
     ...toolbarState,
   };
 }

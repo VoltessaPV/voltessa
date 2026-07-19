@@ -1,8 +1,8 @@
 import { resolveExportThreshold } from "@/lib/automation/export-threshold-config";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import {
+  describeConfiguredExportMode,
   getPlantConfiguredExportControlMode,
-  type ConfiguredExportControlMode,
 } from "@/lib/fusionsolar/get-export-control-status";
 import {
   getPlantCurrentPowerStatus,
@@ -13,6 +13,9 @@ import { getMarketPriceStatus } from "@/lib/market-price/status";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { computePlantEnergyMetrics } from "@/lib/telemetry/energy-metrics";
+
+import { getMarketPageData } from "@/app/(platform)/market/market-data";
+import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 
 /**
  * Per the Telemetry Consumer Migration milestone (ADR-007,
@@ -37,45 +40,18 @@ import { computePlantEnergyMetrics } from "@/lib/telemetry/energy-metrics";
  */
 
 /**
- * Reflects ONLY the plant's configured export-control mode
- * (getPlantConfiguredExportControlMode). Deliberately does not fall back to
- * inverter_state or any other telemetry-derived signal when unavailable —
- * see lib/fusionsolar/get-export-control-status.ts for why those are not
- * interchangeable. If this data is ever unavailable, that must be shown
- * explicitly, not inferred from something else.
+ * Configured export-control badge — reads through `describeConfiguredExportMode`
+ * (the single shared label mapping, also used by Market's `production-data.ts`)
+ * rather than a second, locally-duplicated mapping. Final Market UX Completion
+ * milestone: this file used to keep its own copy of this switch statement,
+ * with different wording ("No Export Limit" vs. the shared "Unlimited",
+ * "Export Mode: Other" vs. "Other") — a real, confirmed instance of
+ * duplicated business logic the milestone's consistency audit flagged.
  */
-function getExportControlModeBadge(
-  status: ConfiguredExportControlMode | null,
-): {
-  label: string;
-  colorClass: string;
-} {
-  if (!status || !status.available) {
-    return {
-      label: "Configured export control unavailable",
-      colorClass: "bg-slate-500",
-    };
-  }
-
-  switch (status.mode.activePowerControlMode) {
-    case "noLimit":
-      return { label: "No Export Limit", colorClass: "bg-emerald-400" };
-    case "zeroExportLimitation":
-      return { label: "Zero Export", colorClass: "bg-red-400" };
-    case "limitedPowerGridKW":
-      return {
-        label: `Limited to ${status.mode.limitedPowerGridValueParam.maxGridFeedInPowerValue} kW`,
-        colorClass: "bg-amber-400",
-      };
-    case "limitedPowerGridPercent":
-      return {
-        label: `Limited to ${status.mode.limitedPowerGridPercentParam.maxGridFeedInPowerPercent}%`,
-        colorClass: "bg-amber-400",
-      };
-    default:
-      return { label: "Export Mode: Other", colorClass: "bg-slate-400" };
-  }
-}
+const UNAVAILABLE_EXPORT_MODE = {
+  available: false as const,
+  reason: "configuration_endpoint_failed" as const,
+};
 
 function sofiaTimeLabel(date: Date): string {
   return date.toLocaleTimeString("en-GB", {
@@ -285,6 +261,18 @@ export default async function DashboardPage() {
 
   const exportThreshold = resolveExportThreshold(automationSettings);
 
+  // The Dashboard's own "Recommended Export" visualization reuses Market's
+  // exact page-data loader and chart component (Final Market UX Completion
+  // milestone) — not a second implementation. `getMarketPageData` is the
+  // single place price series + threshold-crossing ("recommended export")
+  // bands are computed; rendering the same `series`/`threshold` through the
+  // same `MarketPriceChart` here guarantees the green highlighting can
+  // never diverge from what the Market page shows for today.
+  const marketChartData = await getMarketPageData({
+    selectedDateParam: undefined,
+    automationSettings,
+  });
+
   // "This Month"/"Lifetime" still read PlantTelemetrySnapshot — DeviceTelemetry
   // has no monthly/lifetime data yet (see the module doc comment above).
   const latestSnapshots = plants
@@ -479,6 +467,20 @@ export default async function DashboardPage() {
           </div>
         </div>
 
+        {marketChartData.dataAvailable && (
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500">
+              Recommended Export
+            </p>
+            <div className="mt-2 h-[180px]">
+              <MarketPriceChart
+                series={marketChartData.series}
+                thresholdPrice={marketChartData.threshold.minimumExportPrice}
+              />
+            </div>
+          </div>
+        )}
+
         <p className="mt-4 text-xs text-slate-500">
           Last successful update:{" "}
           {marketImportStatus.available
@@ -500,8 +502,9 @@ export default async function DashboardPage() {
           {plants.map((plant) => {
             const telemetry = plant.telemetrySnapshots[0];
             const metrics = telemetryByPlantId.get(plant.id);
-            const exportControl = exportControlByPlantId.get(plant.id) ?? null;
-            const exportBadge = getExportControlModeBadge(exportControl);
+            const exportControl =
+              exportControlByPlantId.get(plant.id) ?? UNAVAILABLE_EXPORT_MODE;
+            const exportBadge = describeConfiguredExportMode(exportControl);
             const powerStatus = powerStatusByPlantId.get(plant.id) ?? null;
 
             const lastUpdatedLabel = metrics?.latestSampleAt

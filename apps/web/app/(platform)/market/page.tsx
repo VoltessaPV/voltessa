@@ -15,6 +15,15 @@ import { getProductionPageData } from "./production-data";
 
 type Trend = "up" | "down" | "flat";
 
+/**
+ * Full date+time, always in Europe/Sofia — never the bare
+ * `.toLocaleString()` default, which would render in the server's own
+ * timezone (UTC on Vercel) rather than the plant's real local time.
+ */
+function sofiaDateTimeLabel(date: Date): string {
+  return date.toLocaleString("en-GB", { timeZone: "Europe/Sofia" });
+}
+
 function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
   const direction: Trend = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
   const sign = delta > 0 ? "+" : delta < 0 ? "-" : "±";
@@ -287,13 +296,23 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
             <MarketEventLog entries={data.eventLog} />
             <MarketInsights
-              insights={[...data.insights, ...production.telemetryInsights]}
+              insights={data.insights}
             />
             <MarketDistribution buckets={data.distribution} />
             <MarketInfo
               country={data.summary.marketStatus.country}
               source={data.summary.marketStatus.source}
-              lastUpdateLabel={data.summary.marketStatus.lastUpdateLabel}
+              // The newest real DeviceTelemetry sample for this plant —
+              // not the ENTSO-E price-import timestamp (which is largely
+              // static and was found to be hours staler than the
+              // telemetry actually driving this page's chart/revenue
+              // figures; see production-data.ts's `latestTelemetryAt`
+              // doc comment for the traced root cause).
+              lastUpdateLabel={
+                production.latestTelemetryAt
+                  ? sofiaDateTimeLabel(production.latestTelemetryAt)
+                  : null
+              }
             />
           </section>
         </>

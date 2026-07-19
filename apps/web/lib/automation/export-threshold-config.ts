@@ -43,3 +43,22 @@ export function resolveExportThreshold(
     currency: automationSettings.currency,
   };
 }
+
+/**
+ * Whether export is recommended at a given price — the single predicate
+ * behind every "recommended export" rendering in the app (the Market
+ * chart's green bands, the Dashboard's green highlighting). A price
+ * qualifies exactly when it's at or above the configured threshold,
+ * mirroring the automation domain's own `decideExportAction` convention
+ * (export enabled when price >= threshold). Kept here, next to
+ * `resolveExportThreshold`, so there is exactly one place this rule is
+ * expressed — see docs/research/ for the Final Market UX Completion
+ * milestone's consolidation of this logic (previously duplicated as
+ * inline `price >= threshold.minimumExportPrice` checks).
+ */
+export function isExportRecommended(
+  price: number,
+  threshold: ExportThresholdConfig,
+): boolean {
+  return price >= threshold.minimumExportPrice;
+}
