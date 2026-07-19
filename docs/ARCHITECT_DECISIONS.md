@@ -329,6 +329,78 @@ table's raw data.
 - Schema was applied via `prisma db push`, matching the database's actual, already-diverged
   migration state (see the research doc §2) rather than adding a second out-of-sync migration
   file.
-- The bootstrap importer (today + yesterday only, manual `CRON_SECRET`-gated trigger, no cron) is
-  intentionally narrow — backfilling older history and populating `HOURLY`/`DAILY` resolutions are
-  both future work the schema already accommodates but does not yet perform.
+- The bootstrap importer (today + yesterday only, `CRON_SECRET`-gated trigger) is intentionally
+  narrow — backfilling older history and populating `HOURLY`/`DAILY` resolutions are both future
+  work the schema already accommodates but does not yet perform. Continuous scheduling of this
+  importer (originally "no cron" here) is now solved — see ADR-008.
+
+## ADR-008: Scaleway-hosted systemd timer is the single production scheduler
+
+### Status
+
+Accepted (Continuous Telemetry Ingestion milestone, commit-pending; see
+`docs/research/telemetry-platform-foundation.md` for the full investigation).
+
+### Context
+
+ADR-007 shipped `bootstrapDeviceTelemetry` as a manually/externally-triggered importer with no
+scheduler of its own — Vercel's native `crons` config had already been proven blocked on this plan
+tier (see `docs/research/telemetry-consumer-migration.md` §11). The Mathematical Correctness
+milestone (§14 of that same doc) worked around this with a GitHub Actions schedule
+(`.github/workflows/telemetry-ingest.yml`, every 15 minutes) calling `bootstrap-device-telemetry`,
+explicitly documented as a *temporary* workaround. Separately, and unknown to that milestone (GitHub
+Actions and this codebase have no visibility into it), a Scaleway VM already existed in
+production — `voltessa-fusionsolar-proxy`, the same host that runs the FusionSolar gateway proxy
+(ADR-004) — running a `systemd` timer (`voltessa-telemetry-ingestion.timer`/`.service`) on a
+15-minute schedule since before that milestone. Investigating it directly (SSH) for this milestone
+found it had been silently failing every single run with HTTP 401 (the server's
+`/etc/voltessa-telemetry-scheduler.env` held a `CRON_SECRET` that no longer matched Vercel
+production's `CRON_SECRET`, which — being a "Sensitive" Vercel env var — cannot be read back via
+`vercel env pull`/`env ls` once set, only rotated), and was targeting the legacy
+`/api/internal/fusionsolar/ingest-plant-telemetry` endpoint (writes `PlantTelemetrySnapshot`
+snapshots via `syncFusionSolarPlantTelemetry`), not `bootstrap-device-telemetry`/`DeviceTelemetry`
+at all — so it would never have kept Dashboard/Market fresh even if authorized.
+
+### Decision
+
+The Scaleway-hosted systemd timer is the one production scheduler for `DeviceTelemetry` ingestion.
+Concretely:
+
+- `voltessa-telemetry-ingestion.timer` now runs `OnCalendar=*:0/5` (every 5 minutes) — telemetry
+  refreshes faster than the 15-minute financial settlement interval (Market/Dashboard's exported-
+  energy calculations, unchanged) so that future automation has a fresh operational reading before
+  each settlement interval closes, not just at its boundary.
+- `voltessa-telemetry-ingestion.service` calls
+  `POST https://app.voltessa.ai/api/internal/fusionsolar/bootstrap-device-telemetry?days=1` (not
+  `ingest-plant-telemetry`) — the endpoint that actually writes `DeviceTelemetry`, the table
+  Dashboard and Market read (ADR-007).
+- `CRON_SECRET` was rotated in Vercel (Production + Preview) and the new value written to
+  `/etc/voltessa-telemetry-scheduler.env` (root-only, `chmod 600`) on the Scaleway host.
+- `.github/workflows/telemetry-ingest.yml` and its GitHub repository secret `CRON_SECRET` are
+  deleted — there is exactly one production scheduler, matching this ADR's title.
+- `bootstrap-device-telemetry`'s idempotency (`(deviceId, timestamp, resolution)` unique constraint
+  + `skipDuplicates: true`, per ADR-007) was re-verified, not re-assumed, against production:
+  calling it twice in immediate succession the second call inserted zero new rows and skipped every
+  fetched sample as a duplicate. This is what makes a 5-minute schedule (which necessarily overlaps
+  the prior call's `days=1` window every time) safe.
+- Operational logging was added (start time, per-plant samples fetched/inserted/duplicates/
+  unmatched, duration, failures) to `bootstrap-device-telemetry`'s route and service, so a
+  production issue can be diagnosed from Vercel's runtime logs alone.
+
+### Consequences
+
+- There is now exactly one scheduler for `DeviceTelemetry` ingestion, on infrastructure that
+  already existed for the FusionSolar gateway proxy — no new vendor/service was introduced.
+- The legacy `ingest-plant-telemetry` endpoint / `PlantTelemetrySnapshot` path is no longer invoked
+  by anything on a schedule; it still exists in the codebase but is now fully dormant. Whether to
+  remove it outright is a separate decision, not made here.
+- Because the Scaleway VM sits outside this repository, its systemd unit files
+  (`/etc/systemd/system/voltessa-telemetry-ingestion.{timer,service}`) and env file
+  (`/etc/voltessa-telemetry-scheduler.env`) are not version-controlled — this ADR and
+  `docs/research/telemetry-platform-foundation.md` are their authoritative record until/unless they
+  are brought under infrastructure-as-code (`docker/`/`business/` remain empty today — see
+  `CLAUDE.md`).
+- `CRON_SECRET` being a Vercel "Sensitive" variable means it can never again be read back for
+  comparison/diagnosis, only rotated; if the Scaleway host's copy and Vercel's copy ever drift again
+  (e.g. a future rotation done in only one place), the symptom will be the same silent HTTP 401 this
+  milestone found — worth checking first if ingestion ever goes stale again.

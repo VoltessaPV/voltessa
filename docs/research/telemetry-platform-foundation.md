@@ -1,8 +1,8 @@
 # Telemetry Platform Foundation — Engineering Report
 
-Status: **Implemented and validated against production.** Huawei is now a producer into
-Voltessa's own telemetry store; nothing yet consumes it (Dashboard, Market, and automation are
-all untouched — see "What was deliberately not done" below).
+Status: **Implemented and validated against production**, now with continuous scheduled ingestion
+(§8). Huawei is a producer into Voltessa's own telemetry store; Dashboard and Market both consume
+it (see `docs/research/telemetry-consumer-migration.md`).
 
 ## 1. Why this exists
 
@@ -148,3 +148,145 @@ production environment, triggered manually with the real `CRON_SECRET`. This is 
 limitation already documented in the historical-KPI diagnostic milestone; it did not block this
 milestone, but every future change touching the gateway or `CRON_SECRET`-gated routes should
 expect the same constraint.
+
+## 8. Continuous Telemetry Ingestion (Scaleway Cron) — follow-up milestone
+
+§6 above listed "Cron/scheduling: none added" as deliberately out of scope. A later milestone (the
+Mathematical Correctness milestone, `docs/research/telemetry-consumer-migration.md` §14) added a
+temporary GitHub Actions schedule for this reason. This milestone replaces that workaround with the
+real, permanent scheduler and traces the complete pipeline end to end, per the milestone's own
+instruction to verify every stage before changing anything.
+
+### 8.1 Pipeline trace (as it exists after this milestone)
+
+```
+Scaleway systemd timer (voltessa-telemetry-ingestion.timer, OnCalendar=*:0/5)
+  -> voltessa-telemetry-ingestion.service (curl, Bearer CRON_SECRET)
+  -> POST https://app.voltessa.ai/api/internal/fusionsolar/bootstrap-device-telemetry?days=1
+  -> route.ts: crypto.timingSafeEqual auth check
+  -> bootstrapDeviceTelemetry() (lib/fusionsolar/bootstrap-device-telemetry.ts)
+  -> importDeviceTelemetry() (lib/fusionsolar/import-device-telemetry.ts)
+  -> Huawei getDevFiveMinutes (via the FusionSolar gateway, ADR-004)
+  -> DeviceTelemetry (createMany, skipDuplicates: true)
+  -> Dashboard / Market (getLatestTelemetry, getPlantTelemetryRange, lib/telemetry/queries.ts)
+```
+
+Every stage was verified directly against production, not assumed — see below.
+
+### 8.2 What the existing Scaleway cron actually was
+
+Production already ran a Scaleway VM, `voltessa-fusionsolar-proxy` (51.15.103.175) — the same host
+that runs the FusionSolar gateway proxy (ADR-004, `/opt/voltessa-fusionsolar-proxy/server.js`, its
+own separate `systemd` service, untouched by this milestone). Investigated directly over SSH:
+
+- A `systemd` timer/service pair, `voltessa-telemetry-ingestion.timer`/`.service`, already existed
+  and had been running every 15 minutes since 2026-07-09 — **before** the GitHub Actions workaround
+  was ever added, and entirely invisible to that milestone (it lives outside this repository).
+- `journalctl -u voltessa-telemetry-ingestion.service` showed **every single run failing with HTTP
+  401**, back to the earliest retained log entries. Root cause, confirmed rather than guessed: the
+  `CRON_SECRET` in the server's `/etc/voltessa-telemetry-scheduler.env` (last written 2026-07-09)
+  no longer matched Vercel production's `CRON_SECRET` — the two had drifted apart at some point
+  after initial setup (Vercel's own env history shows this var was last changed independently of
+  the server file).
+- Separately, and more importantly: the service targeted
+  `/api/internal/fusionsolar/ingest-plant-telemetry`, the *legacy* pre-`DeviceTelemetry` route
+  (`ingestFusionSolarPlantTelemetry` -> `syncFusionSolarPlantTelemetry` -> `PlantTelemetrySnapshot`
+  snapshots — a different table `DeviceTelemetry`'s own consumers, Dashboard and Market, never
+  read). Even with correct auth, this cron would never have kept Dashboard/Market fresh — it was
+  pointed at the wrong pipeline entirely.
+
+So the actual state before this milestone was: one broken (401) scheduler hitting the wrong
+endpoint, plus one working-but-temporary GitHub Actions schedule hitting the right endpoint. Not
+"no scheduler," and not "a working Scaleway scheduler" either — the brief's premise needed
+correcting in both directions, which is why this was investigated before any change was made.
+
+### 8.3 `CRON_SECRET` is a Vercel "Sensitive" variable — this changes how it must be handled
+
+`vercel env pull --environment=production` returned *a* value for `CRON_SECRET`, but that value did
+not authenticate against the live production endpoint (confirmed: a concurrently-running GitHub
+Actions workflow, using the real repository secret, succeeded against the exact same endpoint at
+the exact same time). `vercel env ls` confirms `CRON_SECRET` is stored as `Sensitive` — Vercel's
+write-only variable type, which cannot be read back in plaintext by any CLI/dashboard operation
+once set, by design. This means **the true prior value could not be recovered** to simply copy onto
+the Scaleway host. The fix was to rotate: generate a new 32-byte random secret, set it as the new
+`CRON_SECRET` (Production + Preview, still `--sensitive`), and write that same new value to
+`/etc/voltessa-telemetry-scheduler.env` (root-only, `chmod 600`). A production redeploy was required
+before the new value took effect — Vercel serverless functions read environment variables from the
+deployment's own snapshot, not a live store, confirmed empirically (the new secret 401'd until the
+next deploy, then worked).
+
+### 8.4 Endpoint idempotency — re-verified against production, not re-assumed
+
+Called `bootstrap-device-telemetry?days=1` twice in immediate succession against production:
+
+| Run | samplesFetched | samplesInserted | duplicatesSkipped |
+|---|---|---|---|
+| 1st | 1288 | 21 | 1267 |
+| 2nd (immediately after) | 1288 | **0** | 1288 |
+
+Zero new rows on the second call, every fetched sample correctly recognized as a duplicate — the
+`(deviceId, timestamp, resolution)` unique constraint + `createMany({ skipDuplicates: true })`
+design (ADR-007) holds exactly as intended. No code change was needed for idempotency itself; this
+is what makes a 5-minute schedule (whose `days=1` window necessarily overlaps the previous call's)
+safe to run continuously. An empty `rows` array (no new/matching samples) already returns early
+without inserting or erroring (`import-device-telemetry.ts`), so "no new telemetry exists" is also
+already a no-op, not a failure.
+
+### 8.5 Freshness — re-verified, not re-fixed
+
+"Last Update" was already wired to `getLatestTelemetry` (direct `DeviceTelemetry` query, ordered by
+`timestamp desc`) by the prior Market UX Completion milestone — confirmed by reading
+`lib/telemetry/queries.ts` and its call sites, not reintroduced. This milestone is infrastructure-
+only and made no changes to Dashboard, Market, or any other UI, per its own constraints; nothing
+here needed to change for freshness to be correct once ingestion itself runs reliably.
+
+### 8.6 Logging added
+
+`bootstrap-device-telemetry`'s route and service now log: a start timestamp, a per-plant summary
+(organization, plant, samples fetched/inserted, duplicates skipped, unmatched samples, errors) as
+each plant is processed, and a completion summary (duration, per-organization success/failure
+counts, aggregate totals, failures) whether the call succeeds or throws. Verified live in Vercel's
+runtime logs after deployment — both the per-plant and completion log lines appear exactly as
+designed for real production invocations.
+
+### 8.7 Failure handling — verified, not changed
+
+`bootstrapDeviceTelemetry` already wraps each organization's processing in its own `try`/`catch`
+(unchanged): one organization's failure is recorded in `failures` and does not stop the loop over
+the remaining organizations, and — because each scheduled run is an independent, stateless
+serverless invocation triggered fresh by the next timer tick — a single failed execution can never
+prevent the next one from running. No code change was required to satisfy this; verified by reading
+the existing control flow, not assumed.
+
+### 8.8 Production verification
+
+After deploying the logging change and rotating `CRON_SECRET`, the reconfigured Scaleway timer
+(`OnCalendar=*:0/5`) was observed directly via `journalctl` for two consecutive real (not manually
+triggered) executions:
+
+| Run | Time (UTC) | Result |
+|---|---|---|
+| 1 | 2026-07-19 22:50:04 | `ok:true`, 3 new samples inserted, 1288 duplicates skipped, `Finished` (success) |
+| 2 | 2026-07-19 22:55:01 | `ok:true`, 3 new samples inserted, 1291 duplicates skipped, `Finished` (success) |
+
+Exactly 5 minutes apart, both successful, both idempotent (no unexpected duplicate growth), no
+failed executions. `.github/workflows/telemetry-ingest.yml` and its GitHub repository secret were
+deleted only after this confirmation — there is now exactly one production scheduler.
+
+### 8.9 Why 5 minutes for telemetry, 15 minutes for settlement
+
+`DeviceTelemetry` samples arrive from Huawei on a 5-minute grid already (`TelemetryResolution.
+FIVE_MIN`); financial settlement (Market's revenue/price-interval calculations,
+`SETTLEMENT_INTERVAL_MINUTES`) is unchanged at 15 minutes and this milestone made no changes to any
+financial calculation. Refreshing telemetry every 5 minutes means fresh operational data is always
+available *before* each 15-minute settlement interval closes (up to three fresh samples per
+interval), which future automation logic can react to intra-interval — the reason stated in the
+milestone brief for choosing 5 minutes specifically rather than matching the settlement cadence.
+
+### 8.10 What was deliberately not touched
+
+No changes to Dashboard, Market, or any other UI/component. No changes to `import-device-telemetry.
+ts`'s Huawei request logic, `DeviceTelemetry`'s schema, or any financial/settlement calculation. The
+legacy `ingest-plant-telemetry` route/`PlantTelemetrySnapshot` path was left in place (still dormant,
+no longer invoked by anything scheduled) — retiring it outright is a separate decision, not made
+here.
