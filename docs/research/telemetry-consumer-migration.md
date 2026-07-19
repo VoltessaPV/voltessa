@@ -102,6 +102,48 @@ silent substitution.
   values (`15,301.72` / `208,952.94` / `7.96`), no error digests, chart legend present. Temporary
   session deleted after verification.
 
+## 7a. Follow-up fix: chart appeared empty despite correct data (post-deploy)
+
+After this milestone shipped, the Market chart's production/export overlay still looked empty.
+Investigated methodically, in the order requested:
+
+1. **Does `DeviceTelemetry` contain rows for the selected day?** Yes — 141 of the table's 1378
+   total rows fall within `[today's local midnight, now)` for this plant.
+2. **Does the selected day match the imported timestamps?** Yes — the window
+   `[2026-07-18T21:00:00Z, now)` (Sofia local midnight) correctly captured the bootstrap's
+   `2026-07-18T21:20:00Z`–`2026-07-19T01:10:00Z` rows; the remaining 1237 rows correctly fall
+   before that window (yesterday's data, correctly excluded).
+3. **Exact Prisma query?** `getPlantTelemetryRange({ plantId, timestamp: { gte: dayStart, lt: now
+   } })` — no `devTypeId` filter at this layer, no resolution filter.
+4. **Does it return rows?** Yes — 141, matching a hand-run equivalent query exactly.
+5. **If rows exist, where are they discarded?** *Nowhere.* Confirmed end-to-end via the actual
+   rendered page: the RSC payload contains real `telemetrySeries` entries
+   (`productionKw`/`exportKw`/`importKw`), and a rendered-SVG inspection found the amber
+   (`#fbbf24`) and violet (`#a78bfa`) line paths genuinely present in the DOM.
+6. **Timezone handling?** Correct — Sofia local-midnight boundary computed correctly via the
+   existing `localDayBoundsUtc` (reused from `market-price/timezone.ts`).
+7. **Resolution filter?** Not a factor — only `FIVE_MIN` rows exist for this plant; no query
+   anywhere filters on `resolution`.
+8. **plantId/organizationId filtering?** Correct — zero `DeviceTelemetry` rows exist for any other
+   plant, and the query is correctly scoped to this plant's `id`.
+
+**Root cause**: not a data bug. `productionKw`/`exportKw` are genuinely `0` for the entire window
+available so far (real, correct — it's nighttime, before sunrise). Recharts' default `"auto"`
+Y-axis domain collapses to `[0, 0]` when every value is exactly `0`, which pins the flat line
+exactly on the plot's edge (bottom, or — as first attempted — the top, if only the lower bound is
+padded) where it visually blends with the axis stroke. **Fix**: give the power Y-axis's domain
+explicit headroom on both sides regardless of the real data's range
+(`domain={[(min) => Math.min(min - 0.5, -0.5), (max) => Math.max(max + 0.5, 1)]}` in
+`MarketPriceChart.tsx`), so a flat-zero line always renders visibly separated from both plot
+edges. Verified visually (Playwright screenshot): the line now renders as a clearly visible flat
+segment spanning exactly the real data's time range, correctly stopping where data ends rather
+than extending across the whole day.
+
+Printed diagnostic values (from the investigation script, since deleted):
+imported row count `1378`, queried row count (today's window) `141`, first timestamp
+`2026-07-17T21:20:00.000Z`, last timestamp `2026-07-19T01:10:00.000Z`, first `activePower` `0`,
+first `meterActivePower` `-1.83`.
+
 ## 8. What was explicitly not touched
 
 - UI/visual design — only additive changes to existing components (two chart lines, five insight

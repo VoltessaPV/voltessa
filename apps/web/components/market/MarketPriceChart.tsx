@@ -374,6 +374,19 @@ export function MarketPriceChart({
                 width={44}
                 tickMargin={8}
                 unit=" kW"
+                // A genuinely flat 0 kW line (e.g. nighttime, before
+                // sunrise — real, not fabricated) would otherwise sit
+                // exactly on the plot's top or bottom edge (both "auto"
+                // bounds collapse to 0 when every value is 0) and be
+                // visually indistinguishable from an empty chart. Forcing
+                // headroom on both sides of the real data range — not
+                // just a fixed floor — keeps a flat-zero line visible in
+                // the middle of the axis regardless of what the real
+                // min/max happen to be.
+                domain={[
+                  (dataMin: number) => Math.min(dataMin - 0.5, -0.5),
+                  (dataMax: number) => Math.max(dataMax + 0.5, 1),
+                ]}
               />
             )}
 
