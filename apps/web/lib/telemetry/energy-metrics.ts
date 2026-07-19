@@ -59,11 +59,28 @@ import {
  * integrating instantaneous power — a counter difference is what a human
  * reading the meter twice would get, strictly more accurate than
  * numerically integrating 5-minute power samples. Power integration is
- * kept only for `producedKwh`/`peakProduction`, since inverters have no
- * equivalent typed cumulative-energy column in this table (Huawei's
- * `day_cap`/`total_cap` fields exist only in `rawPayload`, not backfilled
- * into a typed column — building that out is explicit future work, not
- * done here).
+ * kept only for `producedKwh`, since inverters have no equivalent typed
+ * cumulative-energy column in this table (Huawei's `day_cap`/`total_cap`
+ * fields exist only in `rawPayload`, not backfilled into a typed column —
+ * building that out is explicit future work, not done here).
+ *
+ * ## `peakExport` (Final Market UI Polish milestone)
+ *
+ * `peakExport` is the plant's peak *meter* export power (`exportKw` —
+ * `max(meterActivePower, 0)`), not peak *inverter* production power.
+ * This was a real, found-and-fixed bug: the field used to be called
+ * `peakProduction` and was computed from inverter `productionKw`, which
+ * for this plant's inverters reads consistently near-zero (confirmed:
+ * 0.07 kW all day) even while the meter shows genuine export up to
+ * ~60 kW at the same timestamps — a real, plant-specific inverter-vs-meter
+ * measurement discrepancy (see the `activeEnergy`/`reverseActiveEnergy`
+ * investigation above for the same inverter-telemetry quirk surfacing
+ * elsewhere). Both `dashboard/page.tsx` and the Market page read this same
+ * field, so they can never diverge — the discrepancy the milestone
+ * reported (Market showing ~0.07 kW, Dashboard showing a much larger
+ * number) was exactly this: two different underlying quantities
+ * (production vs. export) rendered under confusingly similar labels, not
+ * a data or timing bug.
  */
 
 /**
@@ -91,7 +108,8 @@ export type PlantEnergyMetrics = {
   producedKwh: number;
   exportedKwh: number;
   importedKwh: number;
-  peakProduction: { kw: number; timestamp: Date } | null;
+  /** Peak *meter export* power (not inverter production power) — see this module's `peakExport` doc comment above. */
+  peakExport: { kw: number; timestamp: Date } | null;
   latestSampleAt: Date | null;
   sampleCount: number;
 };
@@ -107,7 +125,8 @@ export type PlantEnergyMetrics = {
 export type PlantProductionSeriesMetrics = {
   available: boolean;
   producedKwh: number;
-  peakProduction: { kw: number; timestamp: Date } | null;
+  /** Peak *meter export* power (not inverter production power) — see this module's `peakExport` doc comment above. */
+  peakExport: { kw: number; timestamp: Date } | null;
   latestSampleAt: Date | null;
   sampleCount: number;
 };
@@ -204,7 +223,7 @@ export function computeEnergyMetricsFromSeries(
     return {
       available: false,
       producedKwh: 0,
-      peakProduction: null,
+      peakExport: null,
       latestSampleAt: null,
       sampleCount: 0,
     };
@@ -214,16 +233,14 @@ export function computeEnergyMetricsFromSeries(
     series.map((p) => ({ timestamp: p.timestamp, kw: p.productionKw })),
   );
 
-  const withProduction = series.filter(
-    (p): p is PlantTelemetrySeriesPoint & { productionKw: number } =>
-      p.productionKw !== null,
+  const withExport = series.filter(
+    (p): p is PlantTelemetrySeriesPoint & { exportKw: number } =>
+      p.exportKw !== null,
   );
 
   const peakPoint =
-    withProduction.length > 0
-      ? withProduction.reduce((max, p) =>
-          p.productionKw > max.productionKw ? p : max,
-        )
+    withExport.length > 0
+      ? withExport.reduce((max, p) => (p.exportKw > max.exportKw ? p : max))
       : null;
 
   const lastPoint = series[series.length - 1];
@@ -231,8 +248,8 @@ export function computeEnergyMetricsFromSeries(
   return {
     available: true,
     producedKwh: Math.round(producedKwh * 100) / 100,
-    peakProduction: peakPoint
-      ? { kw: peakPoint.productionKw, timestamp: peakPoint.timestamp }
+    peakExport: peakPoint
+      ? { kw: peakPoint.exportKw, timestamp: peakPoint.timestamp }
       : null,
     latestSampleAt: lastPoint ? lastPoint.timestamp : null,
     sampleCount: series.length,
@@ -434,7 +451,7 @@ export async function computePlantEnergyMetrics(
     producedKwh: productionMetrics.producedKwh,
     exportedKwh: settlementTotals.exportedKwh,
     importedKwh: settlementTotals.importedKwh,
-    peakProduction: productionMetrics.peakProduction,
+    peakExport: productionMetrics.peakExport,
     latestSampleAt: productionMetrics.latestSampleAt,
     sampleCount: productionMetrics.sampleCount,
   };

@@ -355,7 +355,7 @@ export function MarketPriceChart({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-blue-400" />
-          Day-ahead price
+          Electricity price
         </span>
 
         <span className="h-3 w-px bg-white/10" />
@@ -367,7 +367,7 @@ export function MarketPriceChart({
 
         <span className="flex items-center gap-1.5 text-slate-500">
           <span className="h-2.5 w-2.5 rounded-sm bg-gradient-to-b from-emerald-400/40 to-emerald-400/0" />
-          Export window
+          Recommended export
         </span>
 
         {hasEnergyAxis && (

@@ -575,16 +575,16 @@ export default async function DashboardPage() {
                       Peak Production
                     </p>
                     <p className="mt-3 text-lg font-medium text-white">
-                      {metrics?.available && metrics.peakProduction
-                        ? metrics.peakProduction.kw
+                      {metrics?.available && metrics.peakExport
+                        ? metrics.peakExport.kw
                         : "—"}{" "}
                       <span className="text-xs font-normal text-slate-500">
                         kW
                       </span>
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {metrics?.available && metrics.peakProduction
-                        ? `at ${sofiaTimeLabel(metrics.peakProduction.timestamp)}`
+                      {metrics?.available && metrics.peakExport
+                        ? `at ${sofiaTimeLabel(metrics.peakExport.timestamp)}`
                         : "No production yet today"}
                     </p>
                   </div>

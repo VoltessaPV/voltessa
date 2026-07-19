@@ -220,19 +220,14 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
 
             <MarketSummaryCard
-              eyebrow="Current Production"
+              eyebrow="Current Export"
               value={
-                production.currentProduction.available
-                  ? production.currentProduction.kw.toString()
+                production.currentExport.available
+                  ? production.currentExport.kw.toString()
                   : undefined
               }
-              valueUnit={production.currentProduction.available ? "kW" : undefined}
-              caption={
-                production.todaysProduction.available
-                  ? `Today: ${production.todaysProduction.kwh} kWh`
-                  : undefined
-              }
-              unavailableNote="FusionSolar production data unavailable"
+              valueUnit={production.currentExport.available ? "kW" : undefined}
+              unavailableNote="FusionSolar meter data unavailable"
             />
 
             <MarketSummaryCard
@@ -241,13 +236,16 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 colorClass: production.configuredExportModeLabel.colorClass,
                 label: production.configuredExportModeLabel.label,
               }}
+              rows={[
+                { label: "Source", value: "Huawei configuration endpoint" },
+              ]}
             />
 
             <MarketSummaryCard
               eyebrow="Threshold"
               value={data.threshold.minimumExportPrice.toString()}
               valueUnit={`${data.threshold.currency}/MWh`}
-              caption="Minimum profitable export price"
+              caption="Minimum profitable price"
               statusDot={{
                 colorClass: data.summary.marketStatus.healthy
                   ? "bg-emerald-400"
@@ -264,7 +262,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                   Price &amp; Export
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Day-ahead price and export windows
+                  Electricity price and recommended export windows
                 </p>
               </div>
             </div>

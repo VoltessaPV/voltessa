@@ -16,7 +16,7 @@
  *   no historical equivalent to fall back to — kept exactly as built for
  *   earlier milestones, no new direct API calls introduced here.
  * - **Category B — historical/trend data, now DeviceTelemetry-only**:
- *   `todaysProduction`, `peakProduction`, `exportedEnergyToday`,
+ *   `todaysProduction`, `peakExport`, `exportedEnergyToday`,
  *   `telemetryInsights`, and `settlementEnergySeries` all come from
  *   `lib/telemetry/energy-metrics.ts`, which only reads `DeviceTelemetry`
  *   — no Huawei call, no FusionSolar connection needed for any of these.
@@ -78,7 +78,8 @@ export type TodaysProductionReading =
   | { available: true; kwh: number; sampleCount: number }
   | { available: false; reason: string };
 
-export type PeakProductionReading =
+/** Peak *meter export* power (not inverter production power) — see energy-metrics.ts's `peakExport` doc comment for why this distinction matters and how it was found. */
+export type PeakExportReading =
   | { available: true; kw: number; atLabel: string }
   | { available: false; reason: string };
 
@@ -93,7 +94,7 @@ export type ProductionPageData = {
   currentExport: ProductionReading;
   currentImport: ProductionReading;
   todaysProduction: TodaysProductionReading;
-  peakProductionToday: PeakProductionReading;
+  peakExportToday: PeakExportReading;
   exportedEnergyToday: TodaysProductionReading;
   configuredExportMode: ConfiguredExportControlMode;
   configuredExportModeLabel: { label: string; colorClass: string };
@@ -134,7 +135,7 @@ const UNAVAILABLE_NO_PLANT: TodaysProductionReading = {
   reason: "no_plant",
 };
 
-const UNAVAILABLE_NO_PLANT_PEAK: PeakProductionReading = {
+const UNAVAILABLE_NO_PLANT_PEAK: PeakExportReading = {
   available: false,
   reason: "no_plant",
 };
@@ -165,7 +166,7 @@ function sofiaTimeLabel(date: Date): string {
 function buildTelemetryInsights(params: {
   isToday: boolean;
   todaysProduction: TodaysProductionReading;
-  peakProductionToday: PeakProductionReading;
+  peakExportToday: PeakExportReading;
   exportedEnergyToday: TodaysProductionReading;
 }): ProductionInsight[] {
   const insights: ProductionInsight[] = [];
@@ -178,9 +179,9 @@ function buildTelemetryInsights(params: {
     });
   }
 
-  if (params.peakProductionToday.available) {
+  if (params.peakExportToday.available) {
     insights.push({
-      text: `Peak production: ${params.peakProductionToday.kw} kW at ${params.peakProductionToday.atLabel}`,
+      text: `Maximum export today: ${params.peakExportToday.kw} kW at ${params.peakExportToday.atLabel}`,
       tone: "positive",
     });
   }
@@ -236,7 +237,7 @@ export async function getProductionPageData(
   // can exist (and should keep being shown) even if the live connection is
   // currently broken or was revoked.
   let todaysProduction: TodaysProductionReading = UNAVAILABLE_NO_PLANT;
-  let peakProductionToday: PeakProductionReading = UNAVAILABLE_NO_PLANT_PEAK;
+  let peakExportToday: PeakExportReading = UNAVAILABLE_NO_PLANT_PEAK;
   let exportedEnergyToday: TodaysProductionReading = UNAVAILABLE_NO_PLANT;
   let settlementEnergySeries: SettlementEnergyPoint[] = [];
 
@@ -252,11 +253,11 @@ export async function getProductionPageData(
       ? { available: true, kwh: metrics.producedKwh, sampleCount: metrics.sampleCount }
       : { available: false, reason: "no_telemetry" };
 
-    peakProductionToday = metrics.available && metrics.peakProduction
+    peakExportToday = metrics.available && metrics.peakExport
       ? {
           available: true,
-          kw: metrics.peakProduction.kw,
-          atLabel: sofiaTimeLabel(metrics.peakProduction.timestamp),
+          kw: metrics.peakExport.kw,
+          atLabel: sofiaTimeLabel(metrics.peakExport.timestamp),
         }
       : { available: false, reason: "no_telemetry" };
 
@@ -268,7 +269,7 @@ export async function getProductionPageData(
   const telemetryInsights = buildTelemetryInsights({
     isToday,
     todaysProduction,
-    peakProductionToday,
+    peakExportToday,
     exportedEnergyToday,
   });
 
@@ -302,7 +303,7 @@ export async function getProductionPageData(
       currentExport: UNAVAILABLE_NO_CONNECTION,
       currentImport: UNAVAILABLE_NO_CONNECTION,
       todaysProduction,
-      peakProductionToday,
+      peakExportToday,
       exportedEnergyToday,
       configuredExportMode: UNAVAILABLE_NO_CONNECTION_MODE,
       configuredExportModeLabel: describeConfiguredExportMode(
@@ -362,7 +363,7 @@ export async function getProductionPageData(
     currentExport: powerStatus.currentExport,
     currentImport: powerStatus.currentImport,
     todaysProduction,
-    peakProductionToday,
+    peakExportToday,
     exportedEnergyToday,
     configuredExportMode,
     configuredExportModeLabel: describeConfiguredExportMode(configuredExportMode),
