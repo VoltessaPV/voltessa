@@ -276,6 +276,68 @@ documented in "Known gaps" above (the orphaned `market.controller.ts`, the unuse
 9. **Summarize changes** — what changed, why, which files, and any follow-up needed (docs updated,
    ADR added, env var declared, etc.), per `docs/FEATURE_CHECKLIST.md`.
 
+## Autonomous Milestone Execution
+
+This repository is developed through milestone-based engineering.
+
+When the user starts a milestone, execute it from beginning to end without asking for confirmation
+between intermediate steps.
+
+Treat the following as routine parts of completing a milestone:
+
+- editing files
+- running shell commands
+- creating temporary diagnostics
+- Playwright
+- Prisma
+- lint
+- typecheck
+- build
+- local verification
+- git add
+- git commit
+- git push
+- waiting for GitHub Actions
+- waiting for Vercel
+- production verification
+- removing temporary diagnostic artifacts created during the milestone
+
+Do not ask:
+
+"Should I continue?"
+
+"Should I commit?"
+
+"Should I push?"
+
+"Should I verify production?"
+
+These are all considered part of the milestone.
+
+Only stop when one of these is genuinely true:
+
+- the specification is ambiguous
+- user input is required
+- credentials or secrets are unavailable
+- a cloud resource must be manually created
+- a cloud resource must be manually deleted
+
+Everything else should be executed autonomously.
+
+## Diagnostic Scripts
+
+Temporary diagnostic scripts are allowed.
+
+Prefer using existing tooling.
+
+If a temporary script is required:
+
+- create it
+- execute it
+- delete it before finishing the milestone
+
+Never leave temporary diagnostic artifacts inside the repository.
+
 ## Tool Usage
 
 The preferred workflow for steps 2–5 of "AI Operating Principles" above, stated as concrete rules
