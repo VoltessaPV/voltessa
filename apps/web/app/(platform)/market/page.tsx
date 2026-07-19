@@ -155,7 +155,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               valueUnit={production.currentProduction.available ? "kW" : undefined}
               caption={
                 production.todaysProduction.available
-                  ? `Today: ${production.todaysProduction.mwh} MWh`
+                  ? `Today: ${production.todaysProduction.kwh} kWh`
                   : undefined
               }
               unavailableNote="FusionSolar production data unavailable"
@@ -231,6 +231,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 series={data.series}
                 thresholdPrice={data.threshold.minimumExportPrice}
                 nowAnnotation={nowAnnotation}
+                // Real telemetry only exists for "today so far" — never
+                // shown when browsing a past/future day via the toolbar,
+                // rather than fabricating or reusing today's data for a
+                // different date.
+                telemetrySeries={data.isToday ? production.telemetrySeries : undefined}
               />
             </div>
           </section>
@@ -239,7 +244,9 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <MarketRevenueCard />
             <MarketEventLog entries={data.eventLog} />
             <MarketDistribution buckets={data.distribution} />
-            <MarketInsights insights={data.insights} />
+            <MarketInsights
+              insights={[...data.insights, ...production.telemetryInsights]}
+            />
           </section>
         </>
       )}

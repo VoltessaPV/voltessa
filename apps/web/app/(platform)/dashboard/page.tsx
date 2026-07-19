@@ -6,7 +6,29 @@ import {
 } from "@/lib/fusionsolar/get-export-control-status";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { getMarketPriceStatus } from "@/lib/market-price/status";
+import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { computePlantEnergyMetrics } from "@/lib/telemetry/energy-metrics";
+
+/**
+ * Per the Telemetry Consumer Migration milestone (ADR-007,
+ * docs/research/telemetry-platform-foundation.md): every FusionSolar read
+ * on this page is one of two explicit categories.
+ *
+ * - **Category A — real-time operational state, still a live Huawei
+ *   read**: `getPlantConfiguredExportControlMode` (the configured
+ *   export-control badge below). No historical equivalent exists to read
+ *   instead — this describes "right now."
+ * - **Category B — historical/trend data, now DeviceTelemetry-only**:
+ *   Today's production/exported/imported energy, and the "Last telemetry"
+ *   timestamp, all come from `lib/telemetry/energy-metrics.ts` — no
+ *   Huawei call, no FusionSolar connection needed. "This Month"/"Lifetime"
+ *   still read the older `PlantTelemetrySnapshot` table (itself already a
+ *   Postgres read, not a live Huawei call) because DeviceTelemetry has no
+ *   monthly/lifetime data yet — only today+yesterday have been bootstrapped
+ *   (see the telemetry foundation milestone) — not because they're
+ *   Category A.
+ */
 
 /**
  * Reflects ONLY the plant's configured export-control mode
@@ -102,6 +124,25 @@ export default async function DashboardPage() {
     },
   });
 
+  // Category B — DeviceTelemetry only, never depends on `connection`.
+  const telemetryEntries = await Promise.all(
+    plants.map(async (plant) => {
+      const { start: dayStart } = localDayBoundsUtc(
+        new Date(),
+        plant.timezone,
+      );
+      const metrics = await computePlantEnergyMetrics(
+        plant.id,
+        dayStart,
+        new Date(),
+      );
+
+      return [plant.id, metrics] as const;
+    }),
+  );
+  const telemetryByPlantId = new Map(telemetryEntries);
+
+  // Category A — real-time operational state, still a live Huawei read.
   const exportControlEntries = await Promise.all(
     plants.map(async (plant) => {
       if (!connection || !plant.plantCode) {
@@ -172,33 +213,39 @@ export default async function DashboardPage() {
 
   const exportThreshold = resolveExportThreshold(automationSettings);
 
-  const latestTelemetry = plants
+  // "This Month"/"Lifetime" still read PlantTelemetrySnapshot — DeviceTelemetry
+  // has no monthly/lifetime data yet (see the module doc comment above).
+  const latestSnapshots = plants
     .map((plant) => plant.telemetrySnapshots[0])
     .filter((telemetry) => telemetry !== undefined);
 
-  const totalLifetimeEnergy = latestTelemetry.reduce(
+  const totalLifetimeEnergy = latestSnapshots.reduce(
     (sum, telemetry) => sum + Number(telemetry.totalPower?.toString() ?? 0),
     0,
   );
 
-  const totalTodayEnergy = latestTelemetry.reduce(
-    (sum, telemetry) => sum + Number(telemetry.dayPower?.toString() ?? 0),
-    0,
-  );
-
-  const totalMonthEnergy = latestTelemetry.reduce(
+  const totalMonthEnergy = latestSnapshots.reduce(
     (sum, telemetry) => sum + Number(telemetry.monthPower?.toString() ?? 0),
     0,
   );
 
+  // "Energy Today" and "Last telemetry" now come from DeviceTelemetry —
+  // the fresher, device-level source of truth (see ADR-007).
+  const telemetryMetricsList = [...telemetryByPlantId.values()];
+
+  const totalTodayEnergy = telemetryMetricsList.reduce(
+    (sum, metrics) => sum + metrics.producedKwh,
+    0,
+  );
+
+  const latestSampleTimestamps = telemetryMetricsList
+    .map((metrics) => metrics.latestSampleAt)
+    .filter((timestamp): timestamp is Date => timestamp !== null);
+
   const latestUpdate =
-    latestTelemetry.length > 0
+    latestSampleTimestamps.length > 0
       ? new Date(
-          Math.max(
-            ...latestTelemetry.map((telemetry) =>
-              telemetry.collectedAt.getTime(),
-            ),
-          ),
+          Math.max(...latestSampleTimestamps.map((timestamp) => timestamp.getTime())),
         )
       : null;
 
@@ -380,8 +427,15 @@ export default async function DashboardPage() {
         <div className="space-y-4">
           {plants.map((plant) => {
             const telemetry = plant.telemetrySnapshots[0];
+            const metrics = telemetryByPlantId.get(plant.id);
             const exportControl = exportControlByPlantId.get(plant.id) ?? null;
             const exportBadge = getExportControlModeBadge(exportControl);
+
+            const lastUpdatedLabel = metrics?.latestSampleAt
+              ? metrics.latestSampleAt.toLocaleString()
+              : telemetry
+                ? telemetry.collectedAt.toLocaleString()
+                : "No telemetry available";
 
             return (
               <article
@@ -417,11 +471,11 @@ export default async function DashboardPage() {
 
                 <div className="grid gap-px bg-white/10 sm:grid-cols-2 xl:grid-cols-5">
                   {[
-                    ["Today", telemetry?.dayPower, "kWh"],
+                    ["Today", metrics?.available ? metrics.producedKwh : null, "kWh"],
                     ["This Month", telemetry?.monthPower, "kWh"],
                     ["Lifetime", telemetry?.totalPower, "kWh"],
-                    ["Exported Today", telemetry?.dayOnGridEnergy, "kWh"],
-                    ["Consumed Today", telemetry?.dayUseEnergy, "kWh"],
+                    ["Exported Today", metrics?.available ? metrics.exportedKwh : null, "kWh"],
+                    ["Imported Today", metrics?.available ? metrics.importedKwh : null, "kWh"],
                   ].map(([label, value, unit]) => (
                     <div key={label?.toString()} className="bg-[#080c1a] p-5">
                       <p className="text-xs uppercase tracking-wide text-slate-500">
@@ -441,10 +495,7 @@ export default async function DashboardPage() {
                 </div>
 
                 <div className="px-6 py-4 text-xs text-slate-500">
-                  Last updated:{" "}
-                  {telemetry
-                    ? telemetry.collectedAt.toLocaleString()
-                    : "No telemetry available"}
+                  Last updated: {lastUpdatedLabel}
                 </div>
               </article>
             );

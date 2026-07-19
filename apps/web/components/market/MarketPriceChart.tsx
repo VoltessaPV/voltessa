@@ -13,17 +13,31 @@ import {
 } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
+import type { PlantTelemetrySeriesPoint } from "@/lib/telemetry/energy-metrics";
 
 type MarketPriceChartProps = {
   series: MarketPricePoint[];
   thresholdPrice: number;
   /** Short, pre-formatted current production/grid-power text shown on the NOW marker. Omitted entirely when unavailable — never a placeholder. */
   nowAnnotation?: string;
+  /**
+   * Real, today-so-far DeviceTelemetry (5-minute resolution) — plotted as
+   * two additional lines on their own kW axis, using their own `time`
+   * values, never resampled onto the price series' grid. Omitted entirely
+   * (no line drawn) when empty, rather than a fabricated flat line.
+   */
+  telemetrySeries?: PlantTelemetrySeriesPoint[];
 };
 
 type ChartDatum = {
   time: number;
   price: number | null;
+};
+
+type TelemetryDatum = {
+  time: number;
+  productionKw: number | null;
+  exportKw: number | null;
 };
 
 function formatSofiaTime(time: number): string {
@@ -213,27 +227,46 @@ function NowLabel(props: {
 
 /**
  * The Market page's hero chart — real ENTSO-E day-ahead price (blue),
- * the export-profitability threshold (amber), a live NOW marker, and
- * elegant gradient-filled bands over export-enabled intervals. Gaps in
- * the price line are genuine missing intervals (`connectNulls={false}`),
- * never fabricated or interpolated.
+ * the export-profitability threshold (amber dashed line), a live NOW
+ * marker, and elegant gradient-filled bands over export-enabled intervals.
+ * Gaps in the price line are genuine missing intervals
+ * (`connectNulls={false}`), never fabricated or interpolated.
+ *
+ * When `telemetrySeries` is provided (real DeviceTelemetry, only ever
+ * "today so far" — see production-data.ts), two more lines overlay real
+ * production (amber) and real export (violet) on their own kW axis,
+ * plotted against their own real timestamps via recharts' per-`<Line>`
+ * `data` override rather than being resampled onto the price series'
+ * grid. Missing samples simply end the line early — never interpolated,
+ * never fabricated. Omitted entirely (no axis, no legend entries) when
+ * `telemetrySeries` is empty/absent.
  *
  * Visual language reserved for later, not implemented yet: a cyan dot
- * marker style is reserved for automation-engine decisions, a violet
- * accent for trader schedules, and Huawei command markers would sit as
- * point annotations along the same time axis — no code for any of that
- * exists here yet; only the color/marker vocabulary is established so
- * adding them later extends this file instead of restyling it.
+ * marker style is reserved for automation-engine decisions, and Huawei
+ * command markers would sit as point annotations along the same time
+ * axis — no code for any of that exists here yet; only the color/marker
+ * vocabulary is established so adding them later extends this file
+ * instead of restyling it.
  */
 export function MarketPriceChart({
   series,
   thresholdPrice,
   nowAnnotation,
+  telemetrySeries,
 }: MarketPriceChartProps) {
   const data: ChartDatum[] = series.map((point) => ({
     time: point.timestamp.getTime(),
     price: point.price,
   }));
+
+  const telemetryData: TelemetryDatum[] = (telemetrySeries ?? []).map(
+    (point) => ({
+      time: point.timestamp.getTime(),
+      productionKw: point.productionKw,
+      exportKw: point.exportKw,
+    }),
+  );
+  const hasTelemetry = telemetryData.length > 0;
 
   const bands = getExportBands(series);
   const now = Date.now();
@@ -264,6 +297,22 @@ export function MarketPriceChart({
           <span className="h-2.5 w-2.5 rounded-sm bg-gradient-to-b from-emerald-400/40 to-emerald-400/0" />
           Export window
         </span>
+
+        {hasTelemetry && (
+          <>
+            <span className="h-3 w-px bg-white/10" />
+
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-0.5 w-3 rounded-full bg-amber-400" />
+              Real production
+            </span>
+
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-0.5 w-3 rounded-full bg-violet-400" />
+              Real export
+            </span>
+          </>
+        )}
       </div>
 
       <div className="mt-2 min-h-0 flex-1">
@@ -307,6 +356,7 @@ export function MarketPriceChart({
             />
 
             <YAxis
+              yAxisId="price"
               tick={{ fill: "#64748b", fontSize: 11 }}
               tickLine={false}
               axisLine={false}
@@ -314,9 +364,23 @@ export function MarketPriceChart({
               tickMargin={8}
             />
 
+            {hasTelemetry && (
+              <YAxis
+                yAxisId="power"
+                orientation="right"
+                tick={{ fill: "#64748b", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+                width={44}
+                tickMargin={8}
+                unit=" kW"
+              />
+            )}
+
             <Tooltip content={<ChartTooltip />} />
 
             <ReferenceLine
+              yAxisId="price"
               y={thresholdPrice}
               stroke="#fbbf24"
               strokeOpacity={0.6}
@@ -336,6 +400,7 @@ export function MarketPriceChart({
             )}
 
             <Line
+              yAxisId="price"
               type="monotone"
               dataKey="price"
               stroke="#60a5fa"
@@ -346,6 +411,38 @@ export function MarketPriceChart({
               isAnimationActive
               animationDuration={700}
             />
+
+            {hasTelemetry && (
+              <Line
+                yAxisId="power"
+                data={telemetryData}
+                type="monotone"
+                dataKey="productionKw"
+                stroke="#fbbf24"
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, fill: "#fcd34d" }}
+                connectNulls={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+            )}
+
+            {hasTelemetry && (
+              <Line
+                yAxisId="power"
+                data={telemetryData}
+                type="monotone"
+                dataKey="exportKw"
+                stroke="#a78bfa"
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, fill: "#c4b5fd" }}
+                connectNulls={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
