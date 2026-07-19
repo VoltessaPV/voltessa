@@ -317,8 +317,10 @@ table's raw data.
 
 ### Consequences
 
-- Dashboard, Market, and automation are unaffected by this change — nothing reads from
-  `DeviceTelemetry` yet. Switching them over is separate, future work.
+- Dashboard and Market were migrated to consume `DeviceTelemetry` in the Telemetry Consumer
+  Migration milestone (commit `f444011`; see
+  `docs/research/telemetry-consumer-migration.md`) — no longer "future work." Automation still
+  reads neither table (unaffected, out of scope for that milestone too).
 - The historical-KPI request contract this importer relies on
   (`devIds`/`devTypeId`/`collectTime`) was confirmed, not assumed — a newer
   `devDn`/`startTime`/`endTime` contract exists in current Huawei documentation but was proven to
