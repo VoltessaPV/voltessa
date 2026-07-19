@@ -72,6 +72,16 @@ export type MarketPriceProvider = {
   getDayAheadPrices: (options?: {
     biddingZone?: string;
     referenceDate?: Date;
+    /**
+     * Local-day timezone the returned prices are windowed to. Defaults to
+     * `ENTSOE_MARKET_TIMEZONE` (CET/CEST) — the historical default every
+     * existing caller relies on. `MarketPrice.timestamp` rows are real,
+     * absolute UTC instants regardless of which CET market day originally
+     * fetched them, so windowing by a different zone here (e.g. the
+     * Market page passing "Europe/Sofia") is purely a query-boundary
+     * choice, never a reinterpretation of stored data.
+     */
+    timeZone?: string;
   }) => Promise<MarketPriceSeriesResult>;
   /** Placeholder — see module doc comment. Always returns `available: false`. */
   getIntradayPrices: (options?: {
@@ -133,15 +143,17 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
   async getDayAheadPrices(options = {}): Promise<MarketPriceSeriesResult> {
     const biddingZone = options.biddingZone ?? DEFAULT_BIDDING_ZONE;
     const referenceDate = options.referenceDate ?? new Date();
+    const timeZone = options.timeZone ?? ENTSOE_MARKET_TIMEZONE;
 
-    // Must use the same CET/CEST market-day boundary the importer persists
-    // against (see lib/market-price/timezone.ts) — a naive UTC calendar day
-    // would miss the early hours of the referenced day (which the importer
-    // stores under the previous UTC calendar date) and include hours that
-    // belong to a different market day.
+    // Windowed by `timeZone`'s own local-day boundary (a naive UTC
+    // calendar day would miss/include the wrong hours — see
+    // lib/market-price/timezone.ts). `MarketPrice.timestamp` rows are real
+    // absolute instants, so any correct zone works here regardless of
+    // which CET market day the importer originally fetched them under —
+    // see this method's `timeZone` doc comment.
     const { start: startOfDay, end: endOfDay } = localDayBoundsUtc(
       referenceDate,
-      ENTSOE_MARKET_TIMEZONE,
+      timeZone,
     );
 
     const rows = await prisma.marketPrice.findMany({

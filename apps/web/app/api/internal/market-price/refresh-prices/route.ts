@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { refreshMarketPrices } from "@/lib/market-price/refresh-market-prices";
+import {
+  backfillMarketPrices,
+  refreshMarketPrices,
+} from "@/lib/market-price/refresh-market-prices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +71,20 @@ async function handleRefresh(request: Request) {
   }
 
   try {
-    const result = await refreshMarketPrices();
+    const daysParam = new URL(request.url).searchParams.get("days");
+    const daysBack =
+      daysParam !== null && Number.isFinite(Number(daysParam)) && Number(daysParam) > 0
+        ? Number(daysParam)
+        : undefined;
+
+    // `?days=N`: backfill N complete Bulgaria-local days plus today (added
+    // for the Historical Backfill + Timeline Alignment milestone). Omitted
+    // entirely: unchanged single-day "today" refresh, the original
+    // behavior every existing scheduled caller relies on.
+    const result =
+      daysBack !== undefined
+        ? await backfillMarketPrices(daysBack)
+        : await refreshMarketPrices();
 
     return NextResponse.json({
       ok: true,

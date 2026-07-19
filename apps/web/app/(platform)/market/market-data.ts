@@ -19,11 +19,21 @@ import {
 } from "@/lib/automation/export-threshold-config";
 import { DEFAULT_RESOLUTION_MINUTES } from "@/lib/market-price/constants";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
-import {
-  ENTSOE_MARKET_TIMEZONE,
-  formatDateInZone,
-  localDayBoundsUtc,
-} from "@/lib/market-price/timezone";
+import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone";
+
+/**
+ * The Market page's displayed day is always a full Bulgaria calendar day
+ * (00:00–24:00 Europe/Sofia) — not ENTSO-E's own CET/CEST market-day
+ * convention (`ENTSOE_MARKET_TIMEZONE`), which is a fetch-boundary detail
+ * internal to the importer/`refresh-market-prices.ts`. Using it here (as
+ * an earlier version of this module did) made the chart start ~01:00
+ * Sofia time with an empty midnight gap, since Sofia is one hour ahead of
+ * CET/CEST. `MarketPrice.timestamp` rows are real absolute instants, so
+ * windowing the query by Sofia's own local day instead is purely a
+ * display-boundary fix — see `lib/market-price/provider.ts`'s
+ * `getDayAheadPrices` `timeZone` option.
+ */
+const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 export type MarketPricePoint = {
   timestamp: Date;
@@ -274,7 +284,7 @@ export async function getMarketPageData(params: {
     currency: string;
   } | null;
 }): Promise<MarketPageResult> {
-  const todayDateStr = formatDateInZone(new Date(), ENTSOE_MARKET_TIMEZONE);
+  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDate =
     params.selectedDateParam && isValidDateString(params.selectedDateParam)
       ? params.selectedDateParam
@@ -293,6 +303,7 @@ export async function getMarketPageData(params: {
 
   const dayAheadResult = await dbMarketPriceProvider.getDayAheadPrices({
     referenceDate: referenceInstant,
+    timeZone: BULGARIA_TIMEZONE,
   });
 
   if (!dayAheadResult.available) {
@@ -306,7 +317,7 @@ export async function getMarketPageData(params: {
 
   const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
     referenceInstant,
-    ENTSOE_MARKET_TIMEZONE,
+    BULGARIA_TIMEZONE,
   );
 
   const series = buildSeries(

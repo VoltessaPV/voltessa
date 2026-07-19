@@ -6,11 +6,17 @@ import { bootstrapDeviceTelemetry } from "@/lib/fusionsolar/bootstrap-device-tel
 
 /**
  * Manual/externally-triggered ingestion of the DeviceTelemetry table
- * (today + yesterday only) for every organization with a FusionSolar
+ * (today + yesterday by default) for every organization with a FusionSolar
  * connection. Bearer-token gated (`CRON_SECRET`), same convention as
  * `ingest-plant-telemetry`. Idempotent: `bootstrapDeviceTelemetry` ->
  * `importDeviceTelemetry` writes via `createMany({ skipDuplicates: true })`,
  * so calling this any number of times never duplicates a row.
+ *
+ * Accepts an optional `?days=N` query parameter (complete local
+ * Europe/Sofia calendar days to backfill, plus today) — added for the
+ * Historical Backfill + Timeline Alignment milestone, which needed a
+ * one-time 7-day-plus-today backfill without changing the default
+ * "yesterday + today" shape any other caller relies on.
  *
  * NOT wired to Vercel's native `crons` config. Confirmed (not assumed) via
  * a real deployment attempt in the Telemetry Reliability & Market Chart
@@ -77,7 +83,13 @@ async function handleBootstrap(request: Request) {
   }
 
   try {
-    const result = await bootstrapDeviceTelemetry();
+    const daysParam = new URL(request.url).searchParams.get("days");
+    const daysBack =
+      daysParam !== null && Number.isFinite(Number(daysParam)) && Number(daysParam) > 0
+        ? Number(daysParam)
+        : undefined;
+
+    const result = await bootstrapDeviceTelemetry(daysBack);
 
     return NextResponse.json({
       ok: result.organizationsFailed === 0,

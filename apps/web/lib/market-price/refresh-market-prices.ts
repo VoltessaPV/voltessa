@@ -37,18 +37,22 @@ export type MarketPriceRefreshResult = {
 };
 
 /**
- * Fetches and persists today's (CET/CEST market day) day-ahead prices for
- * the configured bidding zone. Idempotent: re-running for the same day
- * upserts existing `MarketPrice` rows rather than duplicating them, and
- * always records a fresh `MarketPriceImport` row describing the outcome.
+ * Fetches and persists one (CET/CEST market day) day-ahead prices for the
+ * configured bidding zone. Defaults to today; pass `referenceDate` to
+ * refresh/backfill a past day instead (see `backfillMarketPrices` below).
+ * Idempotent: re-running for the same day upserts existing `MarketPrice`
+ * rows rather than duplicating them, and always records a fresh
+ * `MarketPriceImport` row describing the outcome.
  *
  * Never fabricates or interpolates missing intervals — see
  * `lib/market-price/providers/entsoe.ts` for the validation/partial-import
  * policy this relies on.
  */
-export async function refreshMarketPrices(): Promise<MarketPriceRefreshResult> {
+export async function refreshMarketPrices(
+  referenceDate = new Date(),
+): Promise<MarketPriceRefreshResult> {
   const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
-    new Date(),
+    referenceDate,
     ENTSOE_MARKET_TIMEZONE,
   );
 
@@ -105,5 +109,71 @@ export async function refreshMarketPrices(): Promise<MarketPriceRefreshResult> {
     importedIntervals: series.points.length,
     missingIntervals: series.missingTimestamps.length,
     isPartial: series.isPartial,
+  };
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Bulgaria (Europe/Sofia) is always exactly one hour ahead of the CET/CEST
+ * reference zone this importer fetches against (both observe the same
+ * EU-wide DST transition dates, just from a different standard offset) —
+ * so Bulgaria's local midnight always falls at 23:00 CET/CEST the
+ * *previous* CET calendar day. Backfilling `daysBack` complete Bulgaria
+ * local days therefore requires fetching one additional CET day older
+ * than `daysBack` to cover that leading hour; the newest CET day already
+ * covers all of "today" (Bulgaria's local today never reaches into
+ * tomorrow's CET day). See `market-data.ts` / Goal 3 of the Historical
+ * Backfill + Timeline Alignment milestone for the Sofia-local display side
+ * of this same fact.
+ */
+const BULGARIA_CET_OVERLAP_DAYS = 1;
+
+export type MarketPriceBackfillResult = {
+  daysRequested: number;
+  daysFetched: number;
+  perDay: Array<MarketPriceRefreshResult & { reason?: string }>;
+  failures: Array<{ periodStart: string; reason: string }>;
+};
+
+/**
+ * Backfills `daysBack` complete local (Bulgaria) calendar days plus today,
+ * by refreshing each underlying CET/CEST market day one at a time (see
+ * `BULGARIA_CET_OVERLAP_DAYS`). Reuses `refreshMarketPrices`'s existing
+ * per-day upsert, so this is idempotent day-by-day exactly like a single
+ * `refreshMarketPrices()` call — re-running the backfill (or overlapping
+ * it with the periodic single-day refresh) never duplicates a row, only
+ * ever upserts the same real price.
+ */
+export async function backfillMarketPrices(
+  daysBack: number,
+): Promise<MarketPriceBackfillResult> {
+  const now = new Date();
+  const totalCetDays = daysBack + BULGARIA_CET_OVERLAP_DAYS;
+
+  const perDay: MarketPriceBackfillResult["perDay"] = [];
+  const failures: MarketPriceBackfillResult["failures"] = [];
+
+  for (let daysAgo = totalCetDays; daysAgo >= 0; daysAgo -= 1) {
+    const referenceDate = new Date(now.getTime() - daysAgo * ONE_DAY_MS);
+
+    try {
+      const result = await refreshMarketPrices(referenceDate);
+      perDay.push(result);
+    } catch (error) {
+      const { start } = localDayBoundsUtc(referenceDate, ENTSOE_MARKET_TIMEZONE);
+
+      failures.push({
+        periodStart: start.toISOString(),
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+    }
+  }
+
+  return {
+    daysRequested: totalCetDays + 1,
+    daysFetched: perDay.length,
+    perDay,
+    failures,
   };
 }
