@@ -17,10 +17,14 @@
  *   earlier milestones, no new direct API calls introduced here.
  * - **Category B — historical/trend data, now DeviceTelemetry-only**:
  *   `todaysProduction`, `peakProduction`, `exportedEnergyToday`,
- *   `importedEnergyToday`, `telemetryInsights`, and `settlementEnergySeries`
- *   all come from `lib/telemetry/energy-metrics.ts`, which only reads
- *   `DeviceTelemetry` — no Huawei call, no FusionSolar connection needed
- *   for any of these.
+ *   `telemetryInsights`, and `settlementEnergySeries` all come from
+ *   `lib/telemetry/energy-metrics.ts`, which only reads `DeviceTelemetry`
+ *   — no Huawei call, no FusionSolar connection needed for any of these.
+ *   Imported energy is deliberately NOT exposed here (Market Dashboard UX
+ *   Polish milestone): Market is about revenue from exported electricity,
+ *   never imported energy — that stays a Dashboard-only concern
+ *   (`dashboard/page.tsx` computes its own via `computePlantEnergyMetrics`
+ *   directly, untouched by this module).
  *
  * Read-only either way: nothing here ever writes to Huawei, changes an
  * export limit, or modifies plant configuration.
@@ -58,7 +62,6 @@ import {
   getPlantSettlementEnergySeries,
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
-import { getLatestMeterTelemetry } from "@/lib/telemetry/queries";
 
 /** Same Sofia local-day convention `market-data.ts` uses for the Market page's displayed day — duplicated intentionally, see this module's doc comment. */
 const BULGARIA_TIMEZONE = "Europe/Sofia";
@@ -92,7 +95,6 @@ export type ProductionPageData = {
   todaysProduction: TodaysProductionReading;
   peakProductionToday: PeakProductionReading;
   exportedEnergyToday: TodaysProductionReading;
-  importedEnergyToday: TodaysProductionReading;
   configuredExportMode: ConfiguredExportControlMode;
   configuredExportModeLabel: { label: string; colorClass: string };
   telemetryInsights: ProductionInsight[];
@@ -153,14 +155,18 @@ function sofiaTimeLabel(date: Date): string {
  * as a fabricated zero. Day-neutral wording ("Production: X kWh" rather
  * than always "Today's production") since these now describe whichever
  * day the Market toolbar has selected, not always today.
+ *
+ * Market Dashboard UX Polish milestone: deliberately production/peak/
+ * exported energy only — no imported energy (Market is about revenue from
+ * exported electricity, not imports) and no instantaneous current-export/
+ * import power reading (Market shows energy, not power; power stays a
+ * Dashboard concern — see ADR-007/the Mathematical Correctness milestone).
  */
 function buildTelemetryInsights(params: {
   isToday: boolean;
   todaysProduction: TodaysProductionReading;
   peakProductionToday: PeakProductionReading;
   exportedEnergyToday: TodaysProductionReading;
-  importedEnergyToday: TodaysProductionReading;
-  latestMeterKw: number | null;
 }): ProductionInsight[] {
   const insights: ProductionInsight[] = [];
   const dayPrefix = params.isToday ? "Today's" : "Selected day's";
@@ -170,22 +176,6 @@ function buildTelemetryInsights(params: {
       text: `${dayPrefix} production: ${params.todaysProduction.kwh} kWh`,
       tone: "neutral",
     });
-  }
-
-  if (params.isToday && params.latestMeterKw !== null) {
-    insights.push(
-      params.latestMeterKw > 0
-        ? {
-            text: `Current export: ${Math.round(params.latestMeterKw * 100) / 100} kW`,
-            tone: "positive",
-          }
-        : params.latestMeterKw < 0
-          ? {
-              text: `Current import: ${Math.round(Math.abs(params.latestMeterKw) * 100) / 100} kW`,
-              tone: "neutral",
-            }
-          : { text: "Current grid exchange: 0 kW", tone: "neutral" },
-    );
   }
 
   if (params.peakProductionToday.available) {
@@ -198,13 +188,6 @@ function buildTelemetryInsights(params: {
   if (params.exportedEnergyToday.available) {
     insights.push({
       text: `Exported energy: ${params.exportedEnergyToday.kwh} kWh`,
-      tone: "neutral",
-    });
-  }
-
-  if (params.importedEnergyToday.available) {
-    insights.push({
-      text: `Imported energy: ${params.importedEnergyToday.kwh} kWh`,
       tone: "neutral",
     });
   }
@@ -255,15 +238,12 @@ export async function getProductionPageData(
   let todaysProduction: TodaysProductionReading = UNAVAILABLE_NO_PLANT;
   let peakProductionToday: PeakProductionReading = UNAVAILABLE_NO_PLANT_PEAK;
   let exportedEnergyToday: TodaysProductionReading = UNAVAILABLE_NO_PLANT;
-  let importedEnergyToday: TodaysProductionReading = UNAVAILABLE_NO_PLANT;
-  let latestMeterKw: number | null = null;
   let settlementEnergySeries: SettlementEnergyPoint[] = [];
 
   if (plant) {
-    const [metrics, series, latestMeter] = await Promise.all([
+    const [metrics, series] = await Promise.all([
       computePlantEnergyMetrics(plant.id, dayStart, seriesEnd),
       getPlantSettlementEnergySeries(plant.id, dayStart, seriesEnd),
-      isToday ? getLatestMeterTelemetry(plant.id) : Promise.resolve(null),
     ]);
 
     settlementEnergySeries = series;
@@ -283,16 +263,6 @@ export async function getProductionPageData(
     exportedEnergyToday = metrics.available
       ? { available: true, kwh: metrics.exportedKwh, sampleCount: metrics.sampleCount }
       : { available: false, reason: "no_telemetry" };
-
-    importedEnergyToday = metrics.available
-      ? { available: true, kwh: metrics.importedKwh, sampleCount: metrics.sampleCount }
-      : { available: false, reason: "no_telemetry" };
-
-    latestMeterKw =
-      latestMeter?.meterActivePower !== null &&
-      latestMeter?.meterActivePower !== undefined
-        ? Number(latestMeter.meterActivePower)
-        : null;
   }
 
   const telemetryInsights = buildTelemetryInsights({
@@ -300,8 +270,6 @@ export async function getProductionPageData(
     todaysProduction,
     peakProductionToday,
     exportedEnergyToday,
-    importedEnergyToday,
-    latestMeterKw,
   });
 
   // Category A — real-time operational state, still a live Huawei read.
@@ -336,7 +304,6 @@ export async function getProductionPageData(
       todaysProduction,
       peakProductionToday,
       exportedEnergyToday,
-      importedEnergyToday,
       configuredExportMode: UNAVAILABLE_NO_CONNECTION_MODE,
       configuredExportModeLabel: describeConfiguredExportMode(
         UNAVAILABLE_NO_CONNECTION_MODE,
@@ -397,7 +364,6 @@ export async function getProductionPageData(
     todaysProduction,
     peakProductionToday,
     exportedEnergyToday,
-    importedEnergyToday,
     configuredExportMode,
     configuredExportModeLabel: describeConfiguredExportMode(configuredExportMode),
     telemetryInsights,

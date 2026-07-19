@@ -5,12 +5,18 @@
  * number shown on the Market page is either a real price or a plain,
  * disclosed statistic computed over real prices — nothing is fabricated.
  *
- * There is deliberately no revenue/production figure here: production
- * telemetry (FusionSolar) isn't connected to this page yet, and a prior
- * version of this module multiplied real prices by an illustrative
- * generation curve to produce a Euro figure. That looked like real money
- * and wasn't — removed entirely, not just hidden in the UI. See
- * `MarketRevenueCard`'s waiting state.
+ * Still no revenue figure computed *here*: revenue requires multiplying a
+ * real price by real exported energy (`production-data.ts`'s
+ * `settlementEnergySeries`, Mathematical Correctness milestone), and this
+ * module deliberately never imports that one (see the module independence
+ * note in `production-data.ts`). `page.tsx` composes both into the actual
+ * revenue figure — see its `computeExportRevenue`. An earlier version of
+ * this module multiplied real prices by an illustrative generation curve
+ * to produce a Euro figure; that looked like real money and wasn't,
+ * removed entirely rather than caveated. The current revenue figure is
+ * real, derived only from real per-interval exported energy × the real
+ * price for that same interval — never estimated, never integrated from
+ * power.
  */
 
 import {
@@ -185,12 +191,15 @@ function buildSeries(
 function buildDistribution(
   knownPoints: MarketPricePoint[],
 ): DistributionBucket[] {
+  // Three bands, High-to-Low (Market Dashboard UX Polish milestone) —
+  // deliberately not five: "Negative" collapses into Low (< 75) and "Peak"
+  // collapses into High (> 150), since the milestone's spec names exactly
+  // these three bands and colors (High=green, Mid=blue, Low=amber),
+  // ordered High first.
   const buckets = [
-    { label: "Negative", rangeLabel: "< 0", min: -Infinity, max: 0, colorClass: "bg-red-400" },
-    { label: "Low", rangeLabel: "0–75", min: 0, max: 75, colorClass: "bg-emerald-400" },
+    { label: "High", rangeLabel: "> 150", min: 150, max: Infinity, colorClass: "bg-emerald-400" },
     { label: "Mid", rangeLabel: "75–150", min: 75, max: 150, colorClass: "bg-blue-400" },
-    { label: "High", rangeLabel: "150–225", min: 150, max: 225, colorClass: "bg-amber-400" },
-    { label: "Peak", rangeLabel: "> 225", min: 225, max: Infinity, colorClass: "bg-red-400" },
+    { label: "Low", rangeLabel: "< 75", min: -Infinity, max: 75, colorClass: "bg-amber-400" },
   ];
 
   return buckets
@@ -220,10 +229,7 @@ function buildDistribution(
  * speculative ("expected", "predicted"). Each one is a statistic anyone
  * could recompute from the same series.
  */
-function buildInsights(
-  knownPoints: MarketPricePoint[],
-  resolutionMinutes: number,
-): MarketInsight[] {
+function buildInsights(knownPoints: MarketPricePoint[]): MarketInsight[] {
   const withPrice = knownPoints.filter(
     (point): point is MarketPricePoint & { price: number } =>
       point.price !== null,
@@ -245,12 +251,9 @@ function buildInsights(
   const stdDev = Math.sqrt(variance);
   const volatility = stdDev > 45 ? "High" : stdDev > 25 ? "Medium" : "Low";
 
-  const negativeHours =
-    Math.round(
-      withPrice.filter((point) => point.price < 0).length *
-        (resolutionMinutes / 60) *
-        10,
-    ) / 10;
+  const negativeIntervalCount = withPrice.filter(
+    (point) => point.price < 0,
+  ).length;
 
   let crossingCount = 0;
   let previousEnabled: boolean | null = null;
@@ -272,7 +275,7 @@ function buildInsights(
     },
     { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
     { text: `Volatility: ${volatility}`, tone: "neutral" },
-    { text: `Negative price hours: ${negativeHours} h`, tone: "neutral" },
+    { text: `Negative price intervals: ${negativeIntervalCount}`, tone: "neutral" },
     { text: `Threshold crossings: ${crossingCount}`, tone: "neutral" },
   ];
 }
@@ -417,7 +420,7 @@ export async function getMarketPageData(params: {
     // correct here, not a bug; see MarketEventLogEntry's doc comment.
     eventLog: [],
     distribution: buildDistribution(knownPoints),
-    insights: buildInsights(knownPoints, resolutionMinutes),
+    insights: buildInsights(knownPoints),
     ...toolbarState,
   };
 }

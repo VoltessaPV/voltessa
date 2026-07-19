@@ -1,22 +1,90 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
+import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
+import { MarketInfo } from "@/components/market/MarketInfo";
 import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
-import { MarketRevenueCard } from "@/components/market/MarketRevenueCard";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
 
-import { getMarketPageData } from "./market-data";
+import { getMarketPageData, type MarketPricePoint } from "./market-data";
 import { getProductionPageData } from "./production-data";
 
-const TREND_LABEL_PREFIX: Record<"up" | "down" | "flat", string> = {
-  up: "+",
-  down: "",
-  flat: "±",
-};
+type Trend = "up" | "down" | "flat";
+
+function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
+  const direction: Trend = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+  const sign = delta > 0 ? "+" : delta < 0 ? "-" : "±";
+
+  return { direction, label: `${sign}${Math.abs(delta).toFixed(2)} EUR/MWh` };
+}
+
+type RevenueSummary =
+  | {
+      available: true;
+      revenueEur: number;
+      exportedKwh: number;
+      averagePriceEurPerMwh: number | null;
+    }
+  | { available: false };
+
+/**
+ * Real revenue: sum, over every 15-minute settlement interval, of that
+ * interval's real exported energy (from the meter's cumulative counter —
+ * see energy-metrics.ts) times the real day-ahead price for that *same*
+ * interval. Never estimated, never integrated from power — both inputs
+ * are already proven-correct real values (Mathematical Correctness
+ * milestone); this only multiplies and sums them. An interval missing
+ * either value (no telemetry yet, or no price) simply doesn't contribute
+ * — never fabricated as zero or interpolated.
+ */
+function computeExportRevenue(
+  priceSeries: MarketPricePoint[],
+  settlementEnergySeries: SettlementEnergyPoint[],
+): RevenueSummary {
+  const priceByTime = new Map(
+    priceSeries
+      .filter((point): point is MarketPricePoint & { price: number } => point.price !== null)
+      .map((point) => [point.timestamp.getTime(), point.price]),
+  );
+
+  let revenueEur = 0;
+  let exportedKwh = 0;
+  let intervalsWithData = 0;
+
+  for (const point of settlementEnergySeries) {
+    if (point.exportedKwh === null) {
+      continue;
+    }
+
+    const price = priceByTime.get(point.intervalStart.getTime());
+
+    if (price === undefined) {
+      continue;
+    }
+
+    revenueEur += (point.exportedKwh * price) / 1000;
+    exportedKwh += point.exportedKwh;
+    intervalsWithData += 1;
+  }
+
+  if (intervalsWithData === 0) {
+    return { available: false };
+  }
+
+  return {
+    available: true,
+    revenueEur: Math.round(revenueEur * 100) / 100,
+    exportedKwh: Math.round(exportedKwh * 100) / 100,
+    averagePriceEurPerMwh:
+      exportedKwh > 0
+        ? Math.round((revenueEur / (exportedKwh / 1000)) * 100) / 100
+        : null,
+  };
+}
 
 type MarketPageProps = {
   searchParams: Promise<{ date?: string }>;
@@ -40,20 +108,21 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     getProductionPageData(user.organizationId, params.date),
   ]);
 
-  const currentPriceDelta = data.dataAvailable
-    ? data.summary.currentPrice?.deltaVsPrevious
-    : undefined;
-  const currentPriceDirection: "up" | "down" | "flat" =
-    currentPriceDelta === undefined
-      ? "flat"
-      : currentPriceDelta > 0
-        ? "up"
-        : currentPriceDelta < 0
-          ? "down"
-          : "flat";
+  const revenue: RevenueSummary = data.dataAvailable
+    ? computeExportRevenue(data.series, production.settlementEnergySeries)
+    : { available: false };
+  const revenueEyebrow =
+    data.dataAvailable && data.isToday ? "Today's Revenue" : "Revenue";
 
-  // Grid direction is derived once here so the card below stays simple —
-  // never inferred from configuration, only from the real meter reading.
+  const currentPriceTrend = data.dataAvailable && data.summary.currentPrice
+    ? priceDeltaTrend(data.summary.currentPrice.deltaVsPrevious)
+    : undefined;
+
+  // Grid direction is derived once here so the chart's NOW annotation
+  // stays simple — never inferred from configuration, only from the real
+  // meter reading. (Market's own top cards no longer show instantaneous
+  // grid power — see the Market Dashboard UX Polish milestone — but the
+  // chart's live annotation still legitimately wants it.)
   const gridDirection: "export" | "import" | "neutral" | "unavailable" =
     production.currentExport.available && production.currentExport.kw > 0
       ? "export"
@@ -62,15 +131,6 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
         : production.currentExport.available || production.currentImport.available
           ? "neutral"
           : "unavailable";
-
-  const gridValue =
-    gridDirection === "export" && production.currentExport.available
-      ? production.currentExport.kw.toString()
-      : gridDirection === "import" && production.currentImport.available
-        ? production.currentImport.kw.toString()
-        : gridDirection === "neutral"
-          ? "0"
-          : undefined;
 
   // Current production/grid power is a single real-time reading, never a
   // fabricated time series — only overlay it on the chart when viewing
@@ -130,19 +190,33 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
           <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
             <MarketSummaryCard
+              eyebrow={revenueEyebrow}
+              value={revenue.available ? revenue.revenueEur.toFixed(2) : undefined}
+              valueUnit={revenue.available ? "EUR" : undefined}
+              unavailableNote="Waiting for production telemetry"
+              rows={
+                revenue.available
+                  ? [
+                      { label: "Exported today", value: `${revenue.exportedKwh.toFixed(2)} kWh` },
+                      {
+                        label: "Average selling price",
+                        value:
+                          revenue.averagePriceEurPerMwh !== null
+                            ? `${revenue.averagePriceEurPerMwh.toFixed(2)} EUR/MWh`
+                            : "—",
+                      },
+                    ]
+                  : undefined
+              }
+            />
+
+            <MarketSummaryCard
               eyebrow="Current Price"
               value={data.summary.currentPrice?.value.toString()}
               valueUnit={data.summary.currentPrice ? "EUR/MWh" : undefined}
               caption={data.summary.currentPrice?.intervalLabel}
               unavailableNote="Live price only available for today"
-              trend={
-                data.summary.currentPrice
-                  ? {
-                      direction: currentPriceDirection,
-                      label: `${TREND_LABEL_PREFIX[currentPriceDirection]}${Math.abs(data.summary.currentPrice.deltaVsPrevious)}`,
-                    }
-                  : undefined
-              }
+              trend={currentPriceTrend}
             />
 
             <MarketSummaryCard
@@ -162,30 +236,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
 
             <MarketSummaryCard
-              eyebrow={gridDirection === "import" ? "Current Import" : "Current Export"}
-              value={gridValue}
-              valueUnit={gridValue !== undefined ? "kW" : undefined}
-              caption={
-                gridDirection === "export"
-                  ? "Exporting to grid"
-                  : gridDirection === "import"
-                    ? "Importing from grid"
-                    : gridDirection === "neutral"
-                      ? "No grid exchange"
-                      : undefined
-              }
-              unavailableNote="FusionSolar meter data unavailable"
-            />
-
-            <MarketSummaryCard
               eyebrow="Configured Mode"
               statusDot={{
                 colorClass: production.configuredExportModeLabel.colorClass,
                 label: production.configuredExportModeLabel.label,
               }}
-              rows={[
-                { label: "Source", value: "Huawei configuration endpoint" },
-              ]}
             />
 
             <MarketSummaryCard
@@ -199,18 +254,6 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                   : "bg-red-400",
                 label: data.summary.marketStatus.healthy ? "Healthy" : "Degraded",
               }}
-              rows={[
-                { label: "Country", value: data.summary.marketStatus.country },
-                { label: "Source", value: data.summary.marketStatus.source },
-                ...(data.summary.marketStatus.lastUpdateLabel
-                  ? [
-                      {
-                        label: "Last update",
-                        value: data.summary.marketStatus.lastUpdateLabel,
-                      },
-                    ]
-                  : []),
-              ]}
             />
           </section>
 
@@ -244,11 +287,15 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           </section>
 
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-            <MarketRevenueCard />
             <MarketEventLog entries={data.eventLog} />
-            <MarketDistribution buckets={data.distribution} />
             <MarketInsights
               insights={[...data.insights, ...production.telemetryInsights]}
+            />
+            <MarketDistribution buckets={data.distribution} />
+            <MarketInfo
+              country={data.summary.marketStatus.country}
+              source={data.summary.marketStatus.source}
+              lastUpdateLabel={data.summary.marketStatus.lastUpdateLabel}
             />
           </section>
         </>
