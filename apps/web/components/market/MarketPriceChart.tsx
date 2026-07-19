@@ -1,9 +1,10 @@
 "use client";
 
 import {
+  Bar,
   CartesianGrid,
+  ComposedChart,
   Line,
-  LineChart,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -13,39 +14,60 @@ import {
 } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
-import type { PlantTelemetrySeriesPoint } from "@/lib/telemetry/energy-metrics";
+import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
+/**
+ * Market vs. Dashboard architecture split (Mathematical Correctness
+ * milestone): Dashboard shows instantaneous power (kW) — production,
+ * export, import. Market shows what actually determines money: the price,
+ * and exported ENERGY (kWh) per real 15-minute settlement interval — never
+ * export *power*. This chart therefore only ever renders price + exported
+ * energy, not the production/export/import power lines earlier milestones
+ * added here.
+ */
 type MarketPriceChartProps = {
   series: MarketPricePoint[];
   thresholdPrice: number;
   /** Short, pre-formatted current production/grid-power text shown on the NOW marker. Omitted entirely when unavailable — never a placeholder. */
   nowAnnotation?: string;
   /**
-   * Real, today-so-far DeviceTelemetry (5-minute resolution). Merged with
-   * `series` into one shared, timestamp-aligned dataset (see
-   * `buildUnifiedData`) so every rendered series — including the tooltip —
-   * refers to the exact same row/timestamp. Omitted entirely (no axis, no
-   * lines, no legend entries) when empty.
+   * Real exported energy per 15-minute settlement interval — derived from
+   * the meter's cumulative energy counter (see energy-metrics.ts's doc
+   * comment for the empirical proof), never from power integration. Always
+   * on the exact same Europe/Sofia 15-minute grid as `series`'s price
+   * points (both come from `[dayStart, dayEnd)` in `production-data.ts` /
+   * `market-data.ts`), so merging by timestamp needs no resampling or
+   * forward-filling — unlike the previous power-based overlay, this can
+   * never distort the price line's shape. Omitted entirely (no axis, no
+   * bars, no legend entry) when empty.
    */
-  telemetrySeries?: PlantTelemetrySeriesPoint[];
+  settlementEnergySeries?: SettlementEnergyPoint[];
   /**
    * The plant's configured installed capacity (kW) — read from
-   * `Plant.capacityKw`, never hardcoded, never derived from the visible
-   * telemetry. The power axis is fixed at `[0, installedCapacityKw]`
-   * whenever this is known; when it's `null` (not configured), the power
-   * axis/telemetry lines are omitted entirely rather than guessing a
-   * scale from the data.
+   * `Plant.capacityKw`, never hardcoded, never derived from telemetry. The
+   * energy axis's fixed maximum (one interval's worth of energy at full
+   * capacity) is derived from this, never auto-scaled from the visible
+   * data. `null` (not configured) omits the energy axis/bars entirely
+   * rather than guessing a scale.
    */
   installedCapacityKw?: number | null;
 };
 
-/** One row per distinct timestamp across BOTH price and telemetry — the single source of truth for every Line and the Tooltip, so hovering any point always reflects one real, shared timestamp. */
+/**
+ * Matches `energy-metrics.ts`'s `SETTLEMENT_INTERVAL_MINUTES` — duplicated
+ * as a literal (not imported) because that module pulls in server-only
+ * Prisma code; this file only ever imports its *types*. Both this file and
+ * `production-data.ts` inherit the same "15 minutes = this bidding zone's
+ * real resolution" fact already established since the original ENTSO-E
+ * integration milestone, so the two are extremely unlikely to drift.
+ */
+const SETTLEMENT_INTERVAL_MINUTES = 15;
+
+/** One row per real price timestamp, carrying that same interval's exported energy (if any) — see `settlementEnergySeries`'s prop doc comment for why no resampling is needed. */
 type UnifiedDatum = {
   time: number;
   price: number | null;
-  productionKw: number | null;
-  exportKw: number | null;
-  importKw: number | null;
+  exportedKwh: number | null;
 };
 
 function formatSofiaTime(time: number): string {
@@ -90,71 +112,29 @@ function getExportBands(
 }
 
 /**
- * Merges the price series (native resolution, e.g. 15 minutes) and the
- * telemetry series (5-minute resolution) into one array keyed by the union
- * of both series' real timestamps.
- *
- * - `productionKw`/`exportKw`/`importKw` use exact-timestamp matches only
- *   — a telemetry gap stays `null` (a real gap), never interpolated.
- * - `price` is forward-filled across the intervening rows within its own
- *   native interval (e.g. the 5-min sub-rows between two 15-min price
- *   points repeat that block's real value) — this is not fabrication: a
- *   day-ahead price genuinely applies to its whole interval, not just its
- *   first instant. A genuinely missing price interval stays `null` across
- *   that entire interval, so the line still breaks there
- *   (`connectNulls={false}`), it just no longer breaks at every
- *   telemetry-only sub-row the way two independent per-Line `data` arrays
- *   previously did — which was the root cause of the tooltip showing
- *   mismatched timestamps across series.
+ * Zips the price series with the settlement-energy series by exact
+ * timestamp match — both are already on the identical Europe/Sofia
+ * 15-minute grid for the selected day (see `settlementEnergySeries`'s prop
+ * doc comment), so there is nothing to resample or forward-fill. This is
+ * the direct fix for the earlier milestone's price-curve distortion: that
+ * version forward-filled price across a denser 5-minute telemetry grid,
+ * which visually turned a smooth line into a stair-step. With both series
+ * sharing one grid, `price` here is always exactly the same value/
+ * timestamp pair as the original, un-merged price series.
  */
 function buildUnifiedData(
   priceSeries: MarketPricePoint[],
-  telemetrySeries: PlantTelemetrySeriesPoint[],
+  energySeries: SettlementEnergyPoint[],
 ): UnifiedDatum[] {
-  const firstPriceTime = priceSeries[0]?.timestamp.getTime();
-  const secondPriceTime = priceSeries[1]?.timestamp.getTime();
-  const priceIntervalMs =
-    firstPriceTime !== undefined && secondPriceTime !== undefined
-      ? secondPriceTime - firstPriceTime
-      : 0;
-
-  const priceByTime = new Map(
-    priceSeries.map((p) => [p.timestamp.getTime(), p.price]),
+  const energyByTime = new Map(
+    energySeries.map((e) => [e.intervalStart.getTime(), e.exportedKwh]),
   );
 
-  function priceAt(t: number): number | null {
-    if (firstPriceTime === undefined || priceIntervalMs <= 0) {
-      return priceByTime.get(t) ?? null;
-    }
-
-    const bucketStart =
-      firstPriceTime +
-      Math.floor((t - firstPriceTime) / priceIntervalMs) * priceIntervalMs;
-
-    return priceByTime.get(bucketStart) ?? null;
-  }
-
-  const telemetryByTime = new Map(
-    telemetrySeries.map((t) => [t.timestamp.getTime(), t]),
-  );
-
-  const allTimes = new Set<number>();
-  for (const p of priceSeries) allTimes.add(p.timestamp.getTime());
-  for (const t of telemetrySeries) allTimes.add(t.timestamp.getTime());
-
-  return [...allTimes]
-    .sort((a, b) => a - b)
-    .map((time) => {
-      const telemetry = telemetryByTime.get(time);
-
-      return {
-        time,
-        price: priceAt(time),
-        productionKw: telemetry?.productionKw ?? null,
-        exportKw: telemetry?.exportKw ?? null,
-        importKw: telemetry?.importKw ?? null,
-      };
-    });
+  return priceSeries.map((point) => ({
+    time: point.timestamp.getTime(),
+    price: point.price,
+    exportedKwh: energyByTime.get(point.timestamp.getTime()) ?? null,
+  }));
 }
 
 function ChartTooltip({
@@ -176,11 +156,8 @@ function ChartTooltip({
   };
 
   const price = get("price");
-  const production = get("productionKw");
-  const exportKw = get("exportKw");
-  const importKw = get("importKw");
-  const hasAnything =
-    price !== null || production !== null || exportKw !== null || importKw !== null;
+  const exportedKwh = get("exportedKwh");
+  const hasAnything = price !== null || exportedKwh !== null;
 
   return (
     <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-xs shadow-[0_12px_28px_-16px_rgba(0,0,0,0.7)]">
@@ -193,24 +170,10 @@ function ChartTooltip({
         </p>
       )}
 
-      {production !== null && (
-        <p className="mt-1 flex items-center gap-1.5 text-amber-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-          {production} kW production
-        </p>
-      )}
-
-      {exportKw !== null && exportKw > 0 && (
+      {exportedKwh !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-violet-400">
           <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
-          {exportKw} kW export
-        </p>
-      )}
-
-      {importKw !== null && importKw > 0 && (
-        <p className="mt-1 flex items-center gap-1.5 text-rose-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-          {importKw} kW import
+          {exportedKwh} kWh exported
         </p>
       )}
 
@@ -256,11 +219,10 @@ function ThresholdLabel(props: {
 /**
  * Custom label for the NOW marker — a small pill badge with a pulsing
  * dot, like a live terminal cursor. Optionally carries a short real-time
- * production/grid-power annotation (Part 4's "overlay current production
- * and current export power" — a point-in-time annotation on the current
- * moment, not a fabricated time series, since only a single current
- * reading exists, not historical production data at price-interval
- * resolution).
+ * production/grid-power annotation — a point-in-time annotation on the
+ * current moment, not a fabricated time series, since only a single
+ * current reading exists, not historical production data at price-
+ * interval resolution.
  */
 function NowLabel(props: {
   viewBox?: { x?: number; y?: number };
@@ -333,42 +295,50 @@ function NowLabel(props: {
 }
 
 /**
- * The Market page's hero chart — real ENTSO-E day-ahead price (blue, left
- * axis, EUR/MWh, auto-scaled) and, when telemetry + installed capacity are
- * both known, real production (amber), export (violet), and import (rose)
- * on a shared right axis (kW), fixed at `[0, installedCapacityKw]` —
- * never auto-scaled from the visible values, never negative.
+ * The Market page's hero chart — real ENTSO-E day-ahead price (blue line,
+ * left axis, EUR/MWh) and, when settlement energy + installed capacity are
+ * both known, real exported energy (violet bars, right axis, kWh per
+ * 15-minute interval) — never export *power*, per this file's top doc
+ * comment.
  *
- * Everything shares ONE unified, timestamp-merged dataset (see
- * `buildUnifiedData`) instead of separate per-series arrays, so hovering
- * any point on the chart always shows every series' value at that exact
- * same real timestamp — no cross-series misalignment.
- *
- * Gaps are always genuine: `connectNulls={false}` throughout, and the
- * merge never invents a telemetry sample or extends a price value past
- * its own real interval (see `buildUnifiedData`'s doc comment for exactly
- * what forward-filling price does and does not do).
+ * Both series share ONE unified, timestamp-merged dataset
+ * (`buildUnifiedData`) built from two arrays that are already on the same
+ * grid, so hovering any point shows both values at that exact same real
+ * timestamp with no cross-series misalignment, and the price line's shape
+ * is pixel-for-pixel what it would be if rendered alone.
  */
 export function MarketPriceChart({
   series,
   thresholdPrice,
   nowAnnotation,
-  telemetrySeries,
+  settlementEnergySeries,
   installedCapacityKw,
 }: MarketPriceChartProps) {
-  const hasTelemetry = Boolean(telemetrySeries && telemetrySeries.length > 0);
-  const hasPowerAxis =
-    hasTelemetry && installedCapacityKw !== null && installedCapacityKw !== undefined;
+  const hasEnergyData = Boolean(
+    settlementEnergySeries && settlementEnergySeries.length > 0,
+  );
+  const hasEnergyAxis =
+    hasEnergyData && installedCapacityKw !== null && installedCapacityKw !== undefined;
 
-  const data: UnifiedDatum[] = hasPowerAxis
-    ? buildUnifiedData(series, telemetrySeries ?? [])
+  const data: UnifiedDatum[] = hasEnergyData
+    ? buildUnifiedData(series, settlementEnergySeries ?? [])
     : series.map((point) => ({
         time: point.timestamp.getTime(),
         price: point.price,
-        productionKw: null,
-        exportKw: null,
-        importKw: null,
+        exportedKwh: null,
       }));
+
+  // Engineering scale for exported energy: the plant's real installed
+  // capacity applied for one whole settlement interval — the physical
+  // maximum a plant this size could export in 15 minutes. Never
+  // auto-scaled from the visible bars, never negative (a genuine exported-
+  // energy value is always >= 0, since it's a counter difference — see
+  // energy-metrics.ts).
+  const maxExportedKwhPerInterval = hasEnergyAxis
+    ? Math.round(
+        (installedCapacityKw as number) * (SETTLEMENT_INTERVAL_MINUTES / 60) * 100,
+      ) / 100
+    : 0;
 
   const bands = getExportBands(series);
   const now = Date.now();
@@ -400,23 +370,13 @@ export function MarketPriceChart({
           Export window
         </span>
 
-        {hasPowerAxis && (
+        {hasEnergyAxis && (
           <>
             <span className="h-3 w-px bg-white/10" />
 
             <span className="flex items-center gap-1.5 text-slate-500">
-              <span className="h-0.5 w-3 rounded-full bg-amber-400" />
-              Real production
-            </span>
-
-            <span className="flex items-center gap-1.5 text-slate-500">
-              <span className="h-0.5 w-3 rounded-full bg-violet-400" />
-              Real export
-            </span>
-
-            <span className="flex items-center gap-1.5 text-slate-500">
-              <span className="h-0.5 w-3 rounded-full bg-rose-400" />
-              Real import
+              <span className="h-2.5 w-2.5 rounded-sm bg-violet-400" />
+              Exported energy
             </span>
           </>
         )}
@@ -424,17 +384,10 @@ export function MarketPriceChart({
 
       <div className="mt-2 min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart
+          <ComposedChart
             data={data}
             margin={{ top: nowAnnotation ? 46 : 30, right: 12, bottom: 0, left: 0 }}
           >
-            <defs>
-              <linearGradient id="exportBandFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#34d399" stopOpacity={0.16} />
-                <stop offset="100%" stopColor="#34d399" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-
             <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
 
             {bands.map((band) => (
@@ -442,7 +395,7 @@ export function MarketPriceChart({
                 key={band.start}
                 x1={band.start}
                 x2={band.end}
-                fill="url(#exportBandFill)"
+                fill="rgba(52,211,153,0.12)"
                 stroke="#34d399"
                 strokeOpacity={0.25}
                 strokeWidth={1}
@@ -478,26 +431,19 @@ export function MarketPriceChart({
               }}
             />
 
-            {hasPowerAxis && (
+            {hasEnergyAxis && (
               <YAxis
-                yAxisId="power"
+                yAxisId="energy"
                 orientation="right"
                 tick={{ fill: "#64748b", fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
                 width={52}
                 tickMargin={8}
-                // Engineering scale, per the plant's own configured
-                // installed capacity — never auto-scaled from the
-                // visible telemetry, and never negative. A genuine
-                // production/export/import value is always >= 0 (see
-                // energy-metrics.ts's max(x, 0) clamps), so [0, capacity]
-                // is the physically correct fixed range, not a cosmetic
-                // choice.
-                domain={[0, installedCapacityKw]}
+                domain={[0, maxExportedKwhPerInterval]}
                 allowDataOverflow
                 label={{
-                  value: "kW",
+                  value: "kWh",
                   angle: -90,
                   position: "insideRight",
                   fill: "#64748b",
@@ -528,6 +474,18 @@ export function MarketPriceChart({
               />
             )}
 
+            {hasEnergyAxis && (
+              <Bar
+                yAxisId="energy"
+                dataKey="exportedKwh"
+                fill="#a78bfa"
+                fillOpacity={0.65}
+                radius={[2, 2, 0, 0]}
+                isAnimationActive
+                animationDuration={700}
+              />
+            )}
+
             <Line
               yAxisId="price"
               type="monotone"
@@ -540,52 +498,7 @@ export function MarketPriceChart({
               isAnimationActive
               animationDuration={700}
             />
-
-            {hasPowerAxis && (
-              <Line
-                yAxisId="power"
-                type="monotone"
-                dataKey="productionKw"
-                stroke="#fbbf24"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 3, fill: "#fcd34d" }}
-                connectNulls={false}
-                isAnimationActive
-                animationDuration={700}
-              />
-            )}
-
-            {hasPowerAxis && (
-              <Line
-                yAxisId="power"
-                type="monotone"
-                dataKey="exportKw"
-                stroke="#a78bfa"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 3, fill: "#c4b5fd" }}
-                connectNulls={false}
-                isAnimationActive
-                animationDuration={700}
-              />
-            )}
-
-            {hasPowerAxis && (
-              <Line
-                yAxisId="power"
-                type="monotone"
-                dataKey="importKw"
-                stroke="#fb7185"
-                strokeWidth={1.5}
-                dot={false}
-                activeDot={{ r: 3, fill: "#fda4af" }}
-                connectNulls={false}
-                isAnimationActive
-                animationDuration={700}
-              />
-            )}
-          </LineChart>
+          </ComposedChart>
         </ResponsiveContainer>
       </div>
     </div>

@@ -37,7 +37,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       selectedDateParam: params.date,
       automationSettings,
     }),
-    getProductionPageData(user.organizationId),
+    getProductionPageData(user.organizationId, params.date),
   ]);
 
   const currentPriceDelta = data.dataAvailable
@@ -231,11 +231,13 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 series={data.series}
                 thresholdPrice={data.threshold.minimumExportPrice}
                 nowAnnotation={nowAnnotation}
-                // Real telemetry only exists for "today so far" — never
-                // shown when browsing a past/future day via the toolbar,
-                // rather than fabricating or reusing today's data for a
-                // different date.
-                telemetrySeries={data.isToday ? production.telemetrySeries : undefined}
+                // production-data.ts computes this for whichever day is
+                // selected (the whole day if it's a past day, today-so-far
+                // if it's today) — historical days now render telemetry
+                // exactly like today, fixing the earlier "historical
+                // telemetry missing" bug (this used to be unconditionally
+                // suppressed for any non-today day).
+                settlementEnergySeries={production.settlementEnergySeries}
                 installedCapacityKw={production.installedCapacityKw}
               />
             </div>

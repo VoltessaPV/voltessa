@@ -1,3 +1,5 @@
+import type { DeviceTelemetry } from "@prisma/client";
+
 import {
   getPlantTelemetryRange,
   INVERTER_DEV_TYPE_ID,
@@ -13,6 +15,55 @@ import {
  * Deliberately does NOT compute revenue, profit, savings, or
  * self-consumption — those are excluded even from the telemetry table
  * itself (see ADR-007) and stay out of this module too.
+ *
+ * ## Meter counter fields — empirically confirmed meaning (Historical
+ * Backfill + Timeline Alignment / Mathematical Correctness milestone)
+ *
+ * `DeviceTelemetry.activeEnergy` (Huawei `dataItemMap.active_cap`) and
+ * `.reverseActiveEnergy` (`reverse_active_cap`) are real cumulative energy
+ * counters, not instantaneous readings — confirmed by querying every real
+ * meter row for this plant and checking monotonicity: across 2116 samples
+ * spanning 8 days, **zero** decreases were observed in either field (only
+ * increases or flat periods), which is exactly how a physical energy meter
+ * counter behaves and instantaneous power never does.
+ *
+ * Critically, **the schema's original doc comments had the two fields'
+ * real-world meaning backwards.** They were written assuming Huawei's
+ * "active"/"forward" naming meant grid import and "reverse" meant export —
+ * a plausible-sounding assumption that turned out to be wrong for this
+ * meter. Proven instead by correlating each counter's increments against
+ * the same row's `meterActivePower` sign:
+ *
+ * - `activeEnergy` increases essentially **only** while `meterActivePower`
+ *   is positive (verified: a 25-minute daytime window with power rising
+ *   from 39 kW to 60 kW moved `activeEnergy` by +19.38 kWh, matching a
+ *   left-Riemann integration of that same power window, 19.57 kWh, to
+ *   within 1%) — i.e. `activeEnergy` is the real cumulative **export**
+ *   counter.
+ * - `reverseActiveEnergy` increases essentially only while
+ *   `meterActivePower` is negative (verified similarly against overnight
+ *   standby-import windows) — i.e. `reverseActiveEnergy` is the real
+ *   cumulative **import** counter.
+ *
+ * This matches the existing, independently-derived power-sign convention
+ * already used elsewhere in this module (`exportKw = max(power, 0)`,
+ * `importKw = max(-power, 0)`) — that convention was correct; only the
+ * *counter field labels* were backwards. See
+ * `docs/research/telemetry-consumer-migration.md` §13 for the full
+ * investigation and cross-checks. `prisma/schema.prisma`'s doc comments
+ * have been corrected to match.
+ *
+ * Because real counters exist for export/import energy, this module now
+ * derives `exportedKwh`/`importedKwh` from counter *differences*
+ * (`getPlantSettlementEnergySeries`/`sumSettlementEnergy` below) instead of
+ * integrating instantaneous power — a counter difference is what a human
+ * reading the meter twice would get, strictly more accurate than
+ * numerically integrating 5-minute power samples. Power integration is
+ * kept only for `producedKwh`/`peakProduction`, since inverters have no
+ * equivalent typed cumulative-energy column in this table (Huawei's
+ * `day_cap`/`total_cap` fields exist only in `rawPayload`, not backfilled
+ * into a typed column — building that out is explicit future work, not
+ * done here).
  */
 
 /**
@@ -40,6 +91,22 @@ export type PlantEnergyMetrics = {
   producedKwh: number;
   exportedKwh: number;
   importedKwh: number;
+  peakProduction: { kw: number; timestamp: Date } | null;
+  latestSampleAt: Date | null;
+  sampleCount: number;
+};
+
+/**
+ * Production-only subset of `PlantEnergyMetrics` — what
+ * `computeEnergyMetricsFromSeries` can honestly derive from the power
+ * series alone. Deliberately excludes `exportedKwh`/`importedKwh`: those
+ * are no longer computed by integrating power (see this module's doc
+ * comment) — only `computePlantEnergyMetrics` produces the full,
+ * counter-corrected `PlantEnergyMetrics`.
+ */
+export type PlantProductionSeriesMetrics = {
+  available: boolean;
+  producedKwh: number;
   peakProduction: { kw: number; timestamp: Date } | null;
   latestSampleAt: Date | null;
   sampleCount: number;
@@ -121,20 +188,22 @@ export async function getPlantTelemetrySeries(
 }
 
 /**
- * Pure computation over an already-fetched series — no I/O. Split out so
- * callers that also need the raw series (e.g. the Market chart overlay)
- * can fetch it once via `getPlantTelemetrySeries` and derive both the
- * series and the aggregated metrics from that single query.
+ * Pure computation over an already-fetched series — no I/O. Produces only
+ * production-side metrics (see `PlantProductionSeriesMetrics`) — this
+ * function used to also integrate `exportKw`/`importKw` into
+ * `exportedKwh`/`importedKwh`, which this module's doc comment now proves
+ * was less accurate than the real meter counters. Callers that need
+ * export/import energy use `getPlantSettlementEnergySeries`/
+ * `sumSettlementEnergy` (or `computePlantEnergyMetrics`, which combines
+ * both) instead.
  */
 export function computeEnergyMetricsFromSeries(
   series: PlantTelemetrySeriesPoint[],
-): PlantEnergyMetrics {
+): PlantProductionSeriesMetrics {
   if (series.length === 0) {
     return {
       available: false,
       producedKwh: 0,
-      exportedKwh: 0,
-      importedKwh: 0,
       peakProduction: null,
       latestSampleAt: null,
       sampleCount: 0,
@@ -143,12 +212,6 @@ export function computeEnergyMetricsFromSeries(
 
   const producedKwh = integrateKwh(
     series.map((p) => ({ timestamp: p.timestamp, kw: p.productionKw })),
-  );
-  const exportedKwh = integrateKwh(
-    series.map((p) => ({ timestamp: p.timestamp, kw: p.exportKw })),
-  );
-  const importedKwh = integrateKwh(
-    series.map((p) => ({ timestamp: p.timestamp, kw: p.importKw })),
   );
 
   const withProduction = series.filter(
@@ -168,8 +231,6 @@ export function computeEnergyMetricsFromSeries(
   return {
     available: true,
     producedKwh: Math.round(producedKwh * 100) / 100,
-    exportedKwh: Math.round(exportedKwh * 100) / 100,
-    importedKwh: Math.round(importedKwh * 100) / 100,
     peakProduction: peakPoint
       ? { kw: peakPoint.productionKw, timestamp: peakPoint.timestamp }
       : null,
@@ -179,17 +240,202 @@ export function computeEnergyMetricsFromSeries(
 }
 
 /**
- * Produced/exported/imported energy (kWh) and peak production for a plant
- * over `[start, end)`, numerically integrated from real power samples —
- * never a stored or estimated total. Fetches the series itself; use
- * `computeEnergyMetricsFromSeries` directly if the caller already has one.
+ * A settlement interval's energy (kWh), for one plant, aligned to a fixed
+ * grid starting at the query's own `start` boundary — always the SAME
+ * boundaries the Market page's price series uses (Sofia local-day bounds,
+ * 15-minute steps), so a chart merging this with `MarketPricePoint[]` by
+ * timestamp needs no resampling or forward-filling (see
+ * `MarketPriceChart.tsx`).
+ */
+export type SettlementEnergyPoint = {
+  intervalStart: Date;
+  /**
+   * Real exported energy for this interval, derived from the meter's
+   * `activeEnergy` counter's value at the interval's end minus its value
+   * at the interval's start (both the nearest real reading at or before
+   * that boundary — never interpolated). `null` when no real counter
+   * reading spans the interval, or when the two readings would imply a
+   * negative delta (a genuine counter reset/replacement) — never a
+   * fabricated or negative energy value.
+   */
+  exportedKwh: number | null;
+  /** Same derivation, using the meter's `reverseActiveEnergy` counter (the real cumulative import counter — see this module's doc comment). */
+  importedKwh: number | null;
+};
+
+/**
+ * ENTSO-E's real resolution for this bidding zone (confirmed since the
+ * original ENTSO-E integration milestone) — settlement intervals are
+ * deliberately the same size so exported/imported energy always aligns
+ * with a real price interval, never a resampled approximation of one.
+ */
+export const SETTLEMENT_INTERVAL_MINUTES = 15;
+
+/**
+ * How far before `start` to look for a baseline counter reading, so the
+ * very first settlement interval of a query still has a real "before"
+ * value to diff against (e.g. the last reading from just before a day
+ * boundary). Generous relative to the confirmed 5-minute sample grid —
+ * covers a multi-hour reporting gap without ever needing to fabricate a
+ * baseline.
+ */
+const COUNTER_BASELINE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+
+type MeterCounterField = "activeEnergy" | "reverseActiveEnergy";
+
+/**
+ * Builds a forward-only "real counter value at or before instant t"
+ * lookup from an ascending-by-timestamp row array. Requires `t` to be
+ * called in non-decreasing order (true for how `getPlantSettlementEnergySeries`
+ * walks its interval grid) — never interpolates between two real readings,
+ * only ever returns an actual stored value.
+ */
+function makeForwardCounterLookup(
+  rows: DeviceTelemetry[],
+  field: MeterCounterField,
+): (t: number) => number | null {
+  let index = 0;
+  let lastKnownValue: number | null = null;
+
+  return (t: number): number | null => {
+    let row = rows[index];
+
+    while (row !== undefined && row.timestamp.getTime() <= t) {
+      const value = row[field];
+
+      if (value !== null) {
+        lastKnownValue = Number(value);
+      }
+
+      index += 1;
+      row = rows[index];
+    }
+
+    return lastKnownValue;
+  };
+}
+
+/**
+ * Real exported/imported energy (kWh) per settlement interval over
+ * `[start, end)`, derived from the meter's cumulative counters — see this
+ * module's doc comment for the empirical proof of which counter is which.
+ * Never fabricates: an interval with no real counter reading spanning it
+ * (or an apparent counter decrease) is `null`, not zero, not interpolated.
+ */
+export async function getPlantSettlementEnergySeries(
+  plantId: string,
+  start: Date,
+  end: Date,
+  intervalMinutes: number = SETTLEMENT_INTERVAL_MINUTES,
+): Promise<SettlementEnergyPoint[]> {
+  const lookbackStart = new Date(start.getTime() - COUNTER_BASELINE_LOOKBACK_MS);
+  const rows = await getPlantTelemetryRange({
+    plantId,
+    start: lookbackStart,
+    end,
+    devTypeId: METER_DEV_TYPE_ID,
+  });
+
+  const exportAt = makeForwardCounterLookup(rows, "activeEnergy");
+  const importAt = makeForwardCounterLookup(rows, "reverseActiveEnergy");
+
+  const stepMs = intervalMinutes * 60 * 1000;
+  const points: SettlementEnergyPoint[] = [];
+
+  for (let t = start.getTime(); t < end.getTime(); t += stepMs) {
+    const intervalEndMs = t + stepMs;
+
+    const exportStart = exportAt(t);
+    const exportEnd = exportAt(intervalEndMs);
+    const importStart = importAt(t);
+    const importEnd = importAt(intervalEndMs);
+
+    const exportedKwh =
+      exportStart !== null && exportEnd !== null && exportEnd >= exportStart
+        ? Math.round((exportEnd - exportStart) * 1000) / 1000
+        : null;
+
+    const importedKwh =
+      importStart !== null && importEnd !== null && importEnd >= importStart
+        ? Math.round((importEnd - importStart) * 1000) / 1000
+        : null;
+
+    points.push({ intervalStart: new Date(t), exportedKwh, importedKwh });
+  }
+
+  return points;
+}
+
+/**
+ * Sums a settlement-energy series into totals — always the same value a
+ * single first-to-last counter diff over the whole window would give,
+ * since consecutive intervals telescope exactly (interval N's end reading
+ * is interval N+1's start reading). `available` reflects whether at least
+ * one interval had real data, not whether every interval did.
+ */
+export function sumSettlementEnergy(points: SettlementEnergyPoint[]): {
+  available: boolean;
+  exportedKwh: number;
+  importedKwh: number;
+  intervalsWithExportData: number;
+  intervalsWithImportData: number;
+  totalIntervals: number;
+} {
+  let exportedKwh = 0;
+  let importedKwh = 0;
+  let intervalsWithExportData = 0;
+  let intervalsWithImportData = 0;
+
+  for (const point of points) {
+    if (point.exportedKwh !== null) {
+      exportedKwh += point.exportedKwh;
+      intervalsWithExportData += 1;
+    }
+
+    if (point.importedKwh !== null) {
+      importedKwh += point.importedKwh;
+      intervalsWithImportData += 1;
+    }
+  }
+
+  return {
+    available: intervalsWithExportData > 0 || intervalsWithImportData > 0,
+    exportedKwh: Math.round(exportedKwh * 100) / 100,
+    importedKwh: Math.round(importedKwh * 100) / 100,
+    intervalsWithExportData,
+    intervalsWithImportData,
+    totalIntervals: points.length,
+  };
+}
+
+/**
+ * Full plant energy metrics for `[start, end)`: production (numerically
+ * integrated from inverter power — no cumulative production counter
+ * exists in this table, see this module's doc comment) plus exported/
+ * imported energy (derived from the meter's real cumulative counters via
+ * `getPlantSettlementEnergySeries`/`sumSettlementEnergy` — never power
+ * integration, now that a real counter is confirmed to exist).
  */
 export async function computePlantEnergyMetrics(
   plantId: string,
   start: Date,
   end: Date,
 ): Promise<PlantEnergyMetrics> {
-  const series = await getPlantTelemetrySeries(plantId, start, end);
+  const [series, settlementPoints] = await Promise.all([
+    getPlantTelemetrySeries(plantId, start, end),
+    getPlantSettlementEnergySeries(plantId, start, end),
+  ]);
 
-  return computeEnergyMetricsFromSeries(series);
+  const productionMetrics = computeEnergyMetricsFromSeries(series);
+  const settlementTotals = sumSettlementEnergy(settlementPoints);
+
+  return {
+    available: productionMetrics.available || settlementTotals.available,
+    producedKwh: productionMetrics.producedKwh,
+    exportedKwh: settlementTotals.exportedKwh,
+    importedKwh: settlementTotals.importedKwh,
+    peakProduction: productionMetrics.peakProduction,
+    latestSampleAt: productionMetrics.latestSampleAt,
+    sampleCount: productionMetrics.sampleCount,
+  };
 }

@@ -374,15 +374,35 @@ model DeviceTelemetry {
   meterActivePower Decimal? @db.Decimal(12, 3)
   /// Meter status (Huawei dataItemMap.meter_status). Null for inverter rows.
   meterStatus Int?
-  /// Cumulative forward/active energy counter, kWh (Huawei
-  /// dataItemMap.active_cap on the meter device type). Null for inverter
-  /// rows — inverters report day/lifetime cumulative production under
-  /// different, non-equivalent fields (day_cap/total_cap), preserved only
-  /// in `rawPayload`, not conflated with this column.
+  /// Cumulative EXPORT energy counter, kWh (Huawei dataItemMap.active_cap
+  /// on the meter device type). Null for inverter rows — inverters report
+  /// day/lifetime cumulative production under different, non-equivalent
+  /// fields (day_cap/total_cap), preserved only in `rawPayload`, not
+  /// conflated with this column.
+  ///
+  /// CORRECTED (Historical Backfill + Timeline Alignment / Mathematical
+  /// Correctness milestone): this field's real meaning is the OPPOSITE of
+  /// what its original doc comment claimed ("forward/active" was assumed
+  /// to mean grid import). Proven empirically against real stored data,
+  /// not Huawei's naming convention: across every real meter sample for
+  /// this plant, this counter increases almost exclusively while
+  /// `meterActivePower` is positive, and a 25-minute daytime window where
+  /// power rose from 39 kW to 60 kW moved this counter by +19.38 kWh,
+  /// matching a left-Riemann integration of that same window (19.57 kWh)
+  /// to within 1% — i.e. this is the real cumulative EXPORT counter. See
+  /// `lib/telemetry/energy-metrics.ts`'s module doc comment and
+  /// `docs/research/telemetry-consumer-migration.md` §13 for the full
+  /// investigation.
   activeEnergy Decimal? @db.Decimal(14, 3)
-  /// Cumulative reverse/export energy counter, kWh (Huawei
+  /// Cumulative IMPORT energy counter, kWh (Huawei
   /// dataItemMap.reverse_active_cap on the meter device type). Null for
   /// inverter rows.
+  ///
+  /// CORRECTED (same investigation as `activeEnergy` above): despite the
+  /// "reverse/export" name Huawei's field suggests, this counter increases
+  /// almost exclusively while `meterActivePower` is NEGATIVE (confirmed
+  /// against real overnight standby-import windows) — i.e. this is the
+  /// real cumulative IMPORT counter, not export.
   reverseActiveEnergy Decimal? @db.Decimal(14, 3)
 
   /// The complete, unmodified Huawei response item for this sample
