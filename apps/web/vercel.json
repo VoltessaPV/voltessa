@@ -7,5 +7,11 @@
     "app/api/diag/fusionsolar-dns/route.ts": {
       "regions": ["fra1"]
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/internal/fusionsolar/bootstrap-device-telemetry",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }

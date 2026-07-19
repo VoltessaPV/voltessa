@@ -5,10 +5,26 @@ import { NextResponse } from "next/server";
 import { bootstrapDeviceTelemetry } from "@/lib/fusionsolar/bootstrap-device-telemetry";
 
 /**
- * Manual, one-off bootstrap of the DeviceTelemetry table (today + yesterday
- * only) for every organization with a FusionSolar connection. Not wired to
- * any cron/scheduler — see the telemetry platform foundation milestone.
- * Same bearer-token convention as `ingest-plant-telemetry`.
+ * Continuous ingestion of the DeviceTelemetry table (today + yesterday
+ * only) for every organization with a FusionSolar connection. Scheduled via
+ * `vercel.json`'s `crons` entry (every 15 minutes) — Vercel automatically
+ * sends `Authorization: Bearer $CRON_SECRET` for cron-triggered requests,
+ * so no separate cron-specific auth path is needed. Still callable
+ * manually with the same bearer token (e.g. for a one-off bootstrap or
+ * backfill) — same bearer-token convention as `ingest-plant-telemetry`.
+ *
+ * Idempotent: `bootstrapDeviceTelemetry` -> `importDeviceTelemetry` writes
+ * via `createMany({ skipDuplicates: true })`, so re-running every 15
+ * minutes never duplicates a row — each run only ever inserts whatever is
+ * genuinely new since the last run.
+ *
+ * A previous attempt at this exact schedule (commit `6643255`) was
+ * reverted (`853893d`) with no recorded reason. Re-attempted here per an
+ * explicit milestone requirement ("DeviceTelemetry must always stay within
+ * approximately one telemetry interval of the current local time") —
+ * verify the deployment succeeds; if Vercel rejects this specific cron
+ * frequency (a plan-tier limit, not a code issue), that will surface as a
+ * deployment/build error, not a runtime one.
  */
 
 export const runtime = "nodejs";
