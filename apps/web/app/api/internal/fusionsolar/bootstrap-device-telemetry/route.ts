@@ -82,6 +82,12 @@ async function handleBootstrap(request: Request) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
   }
 
+  const startedAt = new Date();
+
+  console.log("[FusionSolar Device Telemetry Bootstrap] Starting scheduled execution", {
+    startedAt: startedAt.toISOString(),
+  });
+
   try {
     const daysParam = new URL(request.url).searchParams.get("days");
     const daysBack =
@@ -91,12 +97,30 @@ async function handleBootstrap(request: Request) {
 
     const result = await bootstrapDeviceTelemetry(daysBack);
 
+    console.log("[FusionSolar Device Telemetry Bootstrap] Completed", {
+      startedAt: startedAt.toISOString(),
+      durationMs: Date.now() - startedAt.getTime(),
+      organizationsProcessed: result.organizationsProcessed,
+      organizationsSucceeded: result.organizationsSucceeded,
+      organizationsFailed: result.organizationsFailed,
+      plantsProcessed: result.plantsProcessed,
+      samplesFetched: result.samplesFetched,
+      samplesInserted: result.samplesInserted,
+      duplicatesSkipped: result.duplicatesSkipped,
+      unmatchedSamples: result.unmatchedSamples,
+      failures: result.failures,
+    });
+
     return NextResponse.json({
       ok: result.organizationsFailed === 0,
       ...result,
     });
   } catch (error) {
-    console.error("[FusionSolar Device Telemetry Bootstrap] Failed", { error });
+    console.error("[FusionSolar Device Telemetry Bootstrap] Failed", {
+      startedAt: startedAt.toISOString(),
+      durationMs: Date.now() - startedAt.getTime(),
+      error,
+    });
 
     return NextResponse.json(
       {

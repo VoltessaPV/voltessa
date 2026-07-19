@@ -115,6 +115,16 @@ export async function bootstrapDeviceTelemetry(
         duplicatesSkipped += plantResult.duplicatesSkipped;
         unmatchedSamples += plantResult.unmatchedSamples;
 
+        console.log("[FusionSolar Device Telemetry Bootstrap] Plant processed", {
+          organizationId: connection.organizationId,
+          plantId: plant.id,
+          samplesFetched: plantResult.samplesFetched,
+          samplesInserted: plantResult.samplesInserted,
+          duplicatesSkipped: plantResult.duplicatesSkipped,
+          unmatchedSamples: plantResult.unmatchedSamples,
+          errors: plantResult.errors,
+        });
+
         perPlant.push({
           organizationId: connection.organizationId,
           plantId: plant.id,
