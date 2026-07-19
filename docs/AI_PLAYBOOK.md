@@ -106,3 +106,38 @@ for this repo, that means: don't add abstraction layers "for the future" beyond 
 scaffolded (`domains/`, `services/`), don't introduce a new state-management/data-fetching library
 when a Server Component + Prisma call already does the job, and don't refactor unrelated code while
 fixing something else — flag it instead and let the user decide.
+
+## Autonomous milestone execution
+
+When the user frames a task as a **milestone** with an explicit spec (goal, constraints, a
+deliverable/validation checklist), execute it end-to-end without pausing for confirmation between
+steps — editing files, running shell commands, Prisma/migrations, Playwright, lint/typecheck/build,
+local verification, `git add`/`commit`/`push`, waiting on GitHub Actions, waiting on Vercel, and
+production verification are all routine parts of *finishing* a milestone the user already scoped,
+not separate decisions each requiring a check-in. Report progress as you go; don't ask "should I
+continue?" between steps that were already specified.
+
+This applies specifically to scoped milestone work, not to every interaction — a one-off question,
+an ambiguous request, or exploratory back-and-forth still gets the normal judgment calls described
+elsewhere in this playbook.
+
+Stop and ask only when one of these is genuinely true:
+
+- User input is required (an ambiguous requirement the spec doesn't resolve, a design choice the
+  user should make, not you).
+- Credentials or secrets are missing and unobtainable in this environment (e.g. this sandbox
+  redacts real secret values used by local dev — see `git log` on the FusionSolar diagnostic
+  milestones for the established pattern: push and verify against production instead, or ask the
+  user to run one command with the real secret and paste back the result).
+- A cloud resource must be created or deleted manually (a new Vercel project, rotating a
+  production secret, deleting a database) — these are exactly the "hard to reverse, affects shared
+  systems" actions the top-level system instructions already gate on explicit confirmation.
+- The milestone specification is genuinely ambiguous in a way that changes the implementation, not
+  just a stylistic judgment call.
+
+Everything else in the "Working Rules" / "Never" sections of `CLAUDE.md` — reuse existing patterns,
+preserve multi-tenancy/RBAC/vendor abstraction, don't invent APIs/env vars, don't modify unrelated
+files, run the full validation suite before calling anything done — still applies at full strength.
+Autonomy is about not pausing for permission on steps already implied by the milestone spec; it is
+not permission to skip validation, expand scope, or take a destructive/hard-to-reverse action
+without the confirmation that action would otherwise require.
