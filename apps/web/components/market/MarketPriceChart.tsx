@@ -38,6 +38,7 @@ type TelemetryDatum = {
   time: number;
   productionKw: number | null;
   exportKw: number | null;
+  importKw: number | null;
 };
 
 function formatSofiaTime(time: number): string {
@@ -233,13 +234,13 @@ function NowLabel(props: {
  * (`connectNulls={false}`), never fabricated or interpolated.
  *
  * When `telemetrySeries` is provided (real DeviceTelemetry, only ever
- * "today so far" — see production-data.ts), two more lines overlay real
- * production (amber) and real export (violet) on their own kW axis,
- * plotted against their own real timestamps via recharts' per-`<Line>`
- * `data` override rather than being resampled onto the price series'
- * grid. Missing samples simply end the line early — never interpolated,
- * never fabricated. Omitted entirely (no axis, no legend entries) when
- * `telemetrySeries` is empty/absent.
+ * "today so far" — see production-data.ts), three more lines overlay real
+ * production (amber), real export (violet), and real import (rose) on
+ * their own kW axis, plotted against their own real timestamps via
+ * recharts' per-`<Line>` `data` override rather than being resampled onto
+ * the price series' grid. Missing samples simply end the line early —
+ * never interpolated, never fabricated. Omitted entirely (no axis, no
+ * legend entries) when `telemetrySeries` is empty/absent.
  *
  * Visual language reserved for later, not implemented yet: a cyan dot
  * marker style is reserved for automation-engine decisions, and Huawei
@@ -264,6 +265,7 @@ export function MarketPriceChart({
       time: point.timestamp.getTime(),
       productionKw: point.productionKw,
       exportKw: point.exportKw,
+      importKw: point.importKw,
     }),
   );
   const hasTelemetry = telemetryData.length > 0;
@@ -310,6 +312,11 @@ export function MarketPriceChart({
             <span className="flex items-center gap-1.5 text-slate-500">
               <span className="h-0.5 w-3 rounded-full bg-violet-400" />
               Real export
+            </span>
+
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-0.5 w-3 rounded-full bg-rose-400" />
+              Real import
             </span>
           </>
         )}
@@ -451,6 +458,22 @@ export function MarketPriceChart({
                 strokeWidth={1.5}
                 dot={false}
                 activeDot={{ r: 3, fill: "#c4b5fd" }}
+                connectNulls={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+            )}
+
+            {hasTelemetry && (
+              <Line
+                yAxisId="power"
+                data={telemetryData}
+                type="monotone"
+                dataKey="importKw"
+                stroke="#fb7185"
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, fill: "#fda4af" }}
                 connectNulls={false}
                 isAnimationActive
                 animationDuration={700}

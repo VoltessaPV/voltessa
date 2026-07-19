@@ -162,3 +162,72 @@ first `meterActivePower` `-1.83`.
 `PlantTelemetrySnapshot`-backed "This Month"/"Lifetime" will need either a real backfill into
 `DeviceTelemetry` or an explicit decision to keep them on a separate rollup path once monthly/
 lifetime aggregation is designed — tracked here, not solved here.
+
+## 10. Telemetry Consumer Completion (follow-up milestone)
+
+A second pass re-verified the entire pipeline end-to-end (Huawei → `DeviceTelemetry` → query layer
+→ `energy-metrics` → page loader → React props → rendered component) and closed the remaining gaps
+found. Nothing in the pipeline itself was broken — every gap was in the UI layer.
+
+### Pipeline trace (fresh, this milestone)
+
+| Stage | Result |
+|---|---|
+| Raw `DeviceTelemetry` (all time) | 1378 rows, `2026-07-17T21:20:00.000Z` → `2026-07-19T01:10:00.000Z` |
+| Query layer (today's window, Sofia local midnight → now) | 141 rows, first `activePower` sample `0` at `2026-07-18T21:20:00.000Z`, first `meterActivePower` sample `-1.89` |
+| `energy-metrics` layer | 47 timestamp-aligned series points, `producedKwh: 0`, `exportedKwh: 0`, `importedKwh: 7.96`, `peakProduction: 0 kW at 2026-07-18T21:20:00.000Z` |
+| Page loader → props → rendered component | Verified via live local render (Playwright) — see below |
+
+No stage discarded a value that existed in the stage before it. Every "0" reflects real nighttime
+production, not a fabrication or a bug.
+
+### Root causes found and fixed
+
+1. **Chart missing the import series.** `MarketPriceChart` plotted `productionKw`/`exportKw` but
+   never `importKw`, even though it was already flowing through `telemetrySeries` correctly. Added
+   a third line (rose, `#fb7185`) using the same per-`<Line>` `data` override pattern as the other
+   two — no query or data-layer change needed, the value was already there, just never rendered.
+2. **Dashboard's "Telemetry available" badge was hardcoded.** It read `<span
+   className="... bg-cyan-400" />Telemetry available` unconditionally, regardless of whether
+   `metrics?.available` was actually `true` — a plant with zero `DeviceTelemetry` rows would still
+   show a green "Telemetry available" badge. This directly violated "every card must show either a
+   real value or an explicitly documented empty state." Fixed to branch on `metrics?.available`,
+   showing "No telemetry for today yet" (slate dot) when false.
+3. **Dashboard was missing two cards the milestone's checklist explicitly required**: "Peak
+   Production" and "Current Power." Both were zero-new-infrastructure additions — Peak Production
+   reads the same `PlantEnergyMetrics.peakProduction` already computed for Market's insights;
+   Current Power reuses `getPlantCurrentPowerStatus` verbatim (the same Category A function
+   Market's `production-data.ts` already calls), now also called per-plant on the Dashboard. Grid
+   widened from 5 to 7 columns (`sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7`) to fit both.
+
+### Verified, no fix needed
+
+Timezone conversion, 5-minute alignment, device/meter filtering, query range construction, empty-
+array handling, null filtering, and series mapping were all re-traced against fresh production data
+this milestone and found correct — matching the prior milestone's findings, not a regression.
+
+### Screenshots (local, Playwright)
+
+- Market: chart now shows all three telemetry lines (amber production, violet export, rose import)
+  alongside the ENTSO-E price line; legend lists all three; Insights panel shows all five
+  telemetry-derived entries.
+- Dashboard: "Telemetry available" (cyan) correctly shown for the plant with real telemetry;
+  7-column grid shows Today/This Month/Lifetime/Exported Today/Imported Today/Peak Production/
+  Current Power; "Current Power" correctly shows "— kW / FusionSolar data unavailable" in local
+  dev, where the live gateway credentials are unavailable (the established, pre-existing sandbox
+  limitation — not a regression from this change).
+
+### Category A / Category B — unchanged from the prior milestone, now complete
+
+**Still live Huawei reads (Category A)**: Market's Current Production/Export/Import, both pages'
+Configured Mode, and the Dashboard's new Current Power card (reusing the identical function).
+
+**Now DeviceTelemetry-only (Category B)**: everything historical on both pages — today's
+production/export/import totals, peak production, the chart overlay, and telemetry-derived
+insights. "This Month"/"Lifetime" remain on `PlantTelemetrySnapshot` (see §9 — unchanged, still
+future work, not this milestone's scope).
+
+### What was explicitly not touched (in addition to §8)
+
+No importer changes, no schema changes, no revenue calculations — the Market Revenue card remains
+the honest placeholder from the prior UI-polish milestone, untouched.

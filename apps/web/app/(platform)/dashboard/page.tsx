@@ -4,6 +4,10 @@ import {
   getPlantConfiguredExportControlMode,
   type ConfiguredExportControlMode,
 } from "@/lib/fusionsolar/get-export-control-status";
+import {
+  getPlantCurrentPowerStatus,
+  type PlantPowerStatus,
+} from "@/lib/fusionsolar/get-plant-power-status";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { getMarketPriceStatus } from "@/lib/market-price/status";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
@@ -17,8 +21,10 @@ import { computePlantEnergyMetrics } from "@/lib/telemetry/energy-metrics";
  *
  * - **Category A — real-time operational state, still a live Huawei
  *   read**: `getPlantConfiguredExportControlMode` (the configured
- *   export-control badge below). No historical equivalent exists to read
- *   instead — this describes "right now."
+ *   export-control badge) and `getPlantCurrentPowerStatus` (the "Current
+ *   Power" card — reused as-is from `market/production-data.ts`, no new
+ *   Huawei call introduced). No historical equivalent exists to read
+ *   instead — both describe "right now."
  * - **Category B — historical/trend data, now DeviceTelemetry-only**:
  *   Today's production/exported/imported energy, and the "Last telemetry"
  *   timestamp, all come from `lib/telemetry/energy-metrics.ts` — no
@@ -69,6 +75,14 @@ function getExportControlModeBadge(
     default:
       return { label: "Export Mode: Other", colorClass: "bg-slate-400" };
   }
+}
+
+function sofiaTimeLabel(date: Date): string {
+  return date.toLocaleTimeString("en-GB", {
+    timeZone: "Europe/Sofia",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatEnergy(value: { toString(): string } | null | undefined) {
@@ -177,6 +191,55 @@ export default async function DashboardPage() {
   );
 
   const exportControlByPlantId = new Map(exportControlEntries);
+
+  // Category A — real-time operational state, still a live Huawei read.
+  // Same function Market's production-data.ts uses; degrades to an
+  // explicit unavailable state per device type rather than ever falling
+  // back to a stale DeviceTelemetry sample ("current power" must mean now).
+  const powerStatusEntries = await Promise.all(
+    plants.map(async (plant) => {
+      if (!connection) {
+        return [plant.id, null] as const;
+      }
+
+      const [inverters, meters] = await Promise.all([
+        prisma.device.findMany({
+          where: { plantId: plant.id, devTypeId: 1 },
+          select: { huaweiDeviceId: true },
+        }),
+        prisma.device.findMany({
+          where: { plantId: plant.id, devTypeId: 47 },
+          select: { huaweiDeviceId: true },
+        }),
+      ]);
+
+      try {
+        const status = await getPlantCurrentPowerStatus(connection, {
+          inverters,
+          meters,
+        });
+
+        return [plant.id, status] as const;
+      } catch (error) {
+        console.error(
+          "[Dashboard] Current power status failed unexpectedly",
+          {
+            plantId: plant.id,
+            error:
+              error instanceof Error
+                ? { name: error.name, message: error.message }
+                : String(error),
+          },
+        );
+
+        return [plant.id, null] as const;
+      }
+    }),
+  );
+
+  const powerStatusByPlantId = new Map<string, PlantPowerStatus | null>(
+    powerStatusEntries,
+  );
 
   const [currentMarketPrice, dayAheadMarketPrices, marketImportStatus, automationSettings] =
     await Promise.all([
@@ -430,6 +493,7 @@ export default async function DashboardPage() {
             const metrics = telemetryByPlantId.get(plant.id);
             const exportControl = exportControlByPlantId.get(plant.id) ?? null;
             const exportBadge = getExportControlModeBadge(exportControl);
+            const powerStatus = powerStatusByPlantId.get(plant.id) ?? null;
 
             const lastUpdatedLabel = metrics?.latestSampleAt
               ? metrics.latestSampleAt.toLocaleString()
@@ -456,8 +520,12 @@ export default async function DashboardPage() {
 
                   <div className="flex flex-col items-start gap-1 sm:items-end">
                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                      <span className="h-2 w-2 rounded-full bg-cyan-400" />
-                      Telemetry available
+                      <span
+                        className={`h-2 w-2 rounded-full ${metrics?.available ? "bg-cyan-400" : "bg-slate-500"}`}
+                      />
+                      {metrics?.available
+                        ? "Telemetry available"
+                        : "No telemetry for today yet"}
                     </div>
 
                     <div className="flex items-center gap-2 text-sm text-slate-300">
@@ -469,7 +537,7 @@ export default async function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="grid gap-px bg-white/10 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-px bg-white/10 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
                   {[
                     ["Today", metrics?.available ? metrics.producedKwh : null, "kWh"],
                     ["This Month", telemetry?.monthPower, "kWh"],
@@ -492,6 +560,50 @@ export default async function DashboardPage() {
                       </p>
                     </div>
                   ))}
+
+                  <div className="bg-[#080c1a] p-5">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Peak Production
+                    </p>
+                    <p className="mt-3 text-lg font-medium text-white">
+                      {metrics?.available && metrics.peakProduction
+                        ? metrics.peakProduction.kw
+                        : "—"}{" "}
+                      <span className="text-xs font-normal text-slate-500">
+                        kW
+                      </span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {metrics?.available && metrics.peakProduction
+                        ? `at ${sofiaTimeLabel(metrics.peakProduction.timestamp)}`
+                        : "No production yet today"}
+                    </p>
+                  </div>
+
+                  <div className="bg-[#080c1a] p-5">
+                    <p className="text-xs uppercase tracking-wide text-slate-500">
+                      Current Power
+                    </p>
+                    <p className="mt-3 text-lg font-medium text-white">
+                      {powerStatus?.currentProduction.available
+                        ? powerStatus.currentProduction.kw
+                        : "—"}{" "}
+                      <span className="text-xs font-normal text-slate-500">
+                        kW
+                      </span>
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {powerStatus?.currentExport.available &&
+                      powerStatus.currentExport.kw > 0
+                        ? `Exporting ${powerStatus.currentExport.kw} kW`
+                        : powerStatus?.currentImport.available &&
+                            powerStatus.currentImport.kw > 0
+                          ? `Importing ${powerStatus.currentImport.kw} kW`
+                          : powerStatus?.currentProduction.available
+                            ? "No grid exchange"
+                            : "FusionSolar data unavailable"}
+                    </p>
+                  </div>
                 </div>
 
                 <div className="px-6 py-4 text-xs text-slate-500">
