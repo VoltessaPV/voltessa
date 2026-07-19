@@ -339,3 +339,152 @@ correctly reflected everywhere, not swallowed or fabricated at any layer.
    non-zero value, since the plant hasn't exported during any bootstrapped window so far.
 3. §9's "This Month"/"Lifetime" gap (still on `PlantTelemetrySnapshot`) is unchanged, still future
    work.
+
+## 12. Historical Backfill + Timeline Alignment (follow-up milestone)
+
+Three goals: backfill seven complete local days plus today into `DeviceTelemetry`, backfill the
+matching range into `MarketPrice`, and fix the Market chart's timeline (it was displaying the wrong
+window entirely — not just missing data). All three verified against real production data.
+
+### Goal 1 — DeviceTelemetry backfill
+
+`bootstrapDeviceTelemetry`'s window was a rolling `now - 24h` instant, not anchored to any calendar
+day. Added an optional `daysBack` parameter (`?days=N` on the route) and switched the window to
+`daysBack` complete Europe/Sofia calendar days plus today, re-deriving each boundary's own true
+local midnight (handles DST correctly, same technique `localDayBoundsUtc` already uses). `daysBack`
+defaulting to `1` exactly reproduces the original "yesterday + today" shape for any existing caller.
+
+Triggered against production (`app.voltessa.ai` — the only environment with real
+`FUSIONSOLAR_GATEWAY_*` credentials; local dev has none) with `?days=7`:
+
+- **First call**: `samplesFetched: 9292`, `samplesInserted: 7914`, `duplicatesSkipped: 1378`
+  (exactly the row count from the original one-time bootstrap — confirming the unique constraint
+  correctly recognized every previously-imported row), `unmatchedSamples: 0`, zero errors.
+- **Second, identical call** (idempotency proof): `samplesFetched: 9292`, `samplesInserted: 0`,
+  `duplicatesSkipped: 9292` — every single row skipped, nothing re-inserted.
+
+Post-backfill database state (`DeviceTelemetry`, queried directly):
+
+- **Oldest timestamp**: `2026-07-11T21:20:00.000Z` (= `2026-07-12T00:20` Sofia — one 5-minute
+  interval past local midnight, i.e. the true start of the oldest complete day).
+- **Newest timestamp**: `2026-07-19T09:40:00.000Z` (= `2026-07-19T12:40` Sofia — 7 minutes behind
+  the moment the backfill finished, well within one telemetry interval).
+- **Total rows**: 9292 (7914 new + 1378 pre-existing).
+- **Samples per Sofia-local day**: 1237–1241 per complete day (2026-07-12 through 2026-07-18), 405
+  for today-so-far (2026-07-19), 217 for the partial oldest boundary day (2026-07-11, correctly
+  partial — that day is outside the requested 7-day range and only exists because the window's
+  start instant falls a few hours into it in UTC terms).
+- **Samples per device**: 5 devices (4 inverters, `devTypeId 1`; 1 meter, `devTypeId 47`). Three
+  devices (two inverters + the meter) span the full range (2116 rows each, from
+  `2026-07-11T21:20Z`); two inverters only start from `2026-07-12T02:25Z`/`02:30Z` (1474/1470 rows)
+  — a real gap in what Huawei's history endpoint returned for those two specific inverters in the
+  oldest partial day, not a bug in this importer (every other device/day pair is complete).
+- **Duplicate `(deviceId, timestamp, resolution)` groups**: 0.
+
+### Goal 2 — MarketPrice backfill
+
+Added `backfillMarketPrices(daysBack)` to `refresh-market-prices.ts`, looping the existing
+per-day `refreshMarketPrices()` (already idempotent via `upsert` on
+`(biddingZone, timestamp, source)`) over `daysBack + 1` CET/CEST market days — the `+1` because
+Bulgaria (Europe/Sofia) is always exactly one hour ahead of CET/CEST (both zones share the EU's DST
+transition dates, just different standard offsets), so Sofia's local midnight always falls at23:00
+CET/CEST the *previous* CET calendar day; backfilling `daysBack` complete Sofia days needs that one
+extra, older CET day to cover the leading hour.
+
+Triggered against production with `?days=7`: `daysRequested: 9`, `daysFetched: 9`, zero failures,
+every one of the 9 CET days returning `expectedIntervals: 96`, `importedIntervals: 96`,
+`missingIntervals: 0`, `isPartial: false`.
+
+Verified directly against the database, per Sofia-local day (not per CET day — this is what the
+Market chart actually displays):
+
+| Sofia day | Intervals | Distinct hours | Duplicates |
+|---|---|---|---|
+| 2026-07-12 | 96 | 24 | 0 |
+| 2026-07-13 | 96 | 24 | 0 |
+| 2026-07-14 | 96 | 24 | 0 |
+| 2026-07-15 | 96 | 24 | 0 |
+| 2026-07-16 | 96 | 24 | 0 |
+| 2026-07-17 | 96 | 24 | 0 |
+| 2026-07-18 | 96 | 24 | 0 |
+| 2026-07-19 (today) | 96 | 24 | 0 |
+
+Every complete Sofia day has all 96 of its real 15-minute intervals (the plant's actual resolution
+— "24 hourly prices" in the milestone's own wording is satisfied as 24 complete hours, each made up
+of 4 real 15-minute intervals, not literally hourly rows, since ENTSO-E's real resolution for this
+zone is 15 minutes, confirmed since the original ENTSO-E integration milestone). Today already has
+its full 96 intervals too, since ENTSO-E publishes the whole day-ahead auction result before the day
+begins. Zero duplicate `(biddingZone, timestamp, source)` groups database-wide.
+
+### Goal 3 — Market chart timeline fix
+
+**Root cause**: `market-data.ts`'s `getMarketPageData` and `lib/market-price/provider.ts`'s
+`getDayAheadPrices` both windowed the *displayed* day using `ENTSOE_MARKET_TIMEZONE` (CET/CEST) —
+the importer's own fetch-boundary convention, never meant to be the display boundary. Since
+Bulgaria is one hour ahead of CET/CEST, this made the chart start at Sofia ~01:00 (CET midnight)
+with an empty gap for Sofia's first hour, and cut off one hour before Sofia's real midnight.
+
+**Fix**: `MarketPrice.timestamp` rows are real, absolute UTC instants — which CET calendar day
+originally fetched them is irrelevant to querying them by any other correct time window. Added an
+optional `timeZone` parameter to `getDayAheadPrices` (default unchanged, so Dashboard/Settings —
+which only want "today" for simple stats — keep their existing CET-anchored behavior untouched), and
+changed `market-data.ts` to pass `"Europe/Sofia"` for both its `todayDateStr`/toolbar-default
+computation and the displayed `periodStart`/`periodEnd`. No importer change, no
+`MarketPriceChart.tsx` change — the component already renders whatever full-day range
+`buildSeries` hands it; once fed the correct Sofia bounds, it just works.
+
+Verified with Playwright, both locally and in production:
+
+- Chart's leftmost point is exactly Sofia `00:00`/`00:30` (no gap) and its rightmost tick is
+  `23:45` (no bleed into the next day) — screenshotted and hand-checked against the X-axis ticks
+  (`01:10` through `23:45` visible, price line starts flush at the left edge).
+- Tooltip synchronization intact after the timeline change: hovering `00:30` showed
+  `147.35 EUR/MWh` / `0 kW production` / `1.85 kW import` together (one real timestamp); hovering
+  near the current moment (`12:45`) showed only price (telemetry's newest sample was `12:40`,
+  correctly not fabricated past that point); hovering `23:30` showed `148.52 EUR/MWh` alone
+  (telemetry naturally has no data that far ahead of "now").
+- Left axis labelled `EUR/MWh`, right axis labelled `kW`, fixed at `0`–`200` (the plant's real
+  `Plant.capacityKw`), matching the prior milestone's engineering-axis requirement — unchanged and
+  re-verified, not re-implemented.
+- With the Goal 1 backfill in place, the chart now also shows real, non-flat **export** data for
+  the first time (a visible violet peak around 08:00–10:00, up to several dozen kW) — resolving
+  §11's remaining limitation #2 ("export series has no real non-zero data yet").
+
+### Same-local-day validation (proof, not assumption)
+
+Printed together, all four referring to the same Sofia calendar day (`2026-07-19`):
+
+- Current Sofia local time: `19/07/2026, 12:48:23`
+- Newest `DeviceTelemetry` sample (Sofia): `19/07/2026, 12:40:00`
+- Newest `MarketPrice` sample (Sofia): `19/07/2026, 23:45:00` (expected — day-ahead prices for the
+  rest of today are already published)
+- Newest plotted chart timestamp (Sofia): `19/07/2026, 23:45:00` (the price series defines the
+  chart's full-day domain; telemetry is a subset of it, not a separate domain)
+
+### Quality
+
+`pnpm lint` / `turbo check-types` / `turbo build` all pass cleanly. Verified locally (dev server,
+temporary session, Playwright) before pushing; verified again in production (commit `66482f3`,
+deployment `dpl_ETsriNWzbHFgW4zMyqi6VzKyH94j`, `READY`, `app.voltessa.ai`) after deploy — zero
+console errors, zero failed network requests, identical rendering and tooltip behavior to local.
+All temporary diagnostic scripts, sessions, and screenshots deleted after use.
+
+### What was explicitly not touched
+
+No export-control changes, no UI redesign (only the underlying data window changed — the chart
+component, its styling, and its axis logic are exactly as the prior milestone left them), no Revenue
+Engine work, no changes to Dashboard's or Settings' own `getDayAheadPrices()` calls (both keep the
+CET-anchored default).
+
+### Remaining known limitations
+
+1. Continuous ingestion (§11's primary open item — Vercel Cron Jobs plan-tier restriction) is
+   unchanged by this milestone. This backfill was a one-time historical catch-up, triggered
+   manually against production; `DeviceTelemetry` will again drift stale without either a Vercel
+   plan upgrade or an external scheduler, exactly as flagged in §11.
+2. The oldest boundary day (2026-07-11) is intentionally partial (217 rows) — it exists only
+   because the backfill window's start instant falls a few hours into that day in UTC/device-history
+   terms; it is outside the requested 7-complete-days range and is not meant to be complete.
+3. Two of five devices are missing data for the first few hours of the oldest complete day
+   (2026-07-12) — a real gap in what Huawei's history endpoint returned for those two inverters,
+   not an importer bug (confirmed: every other device/day combination in the range is complete).
