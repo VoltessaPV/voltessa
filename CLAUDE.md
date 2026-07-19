@@ -169,9 +169,12 @@ these two:
 
 - `voltessa-telemetry-ingestion.timer` — every 5 minutes, calls
   `app/api/internal/fusionsolar/bootstrap-device-telemetry` (writes `DeviceTelemetry`). See ADR-008.
-- `voltessa-market-price-scheduler.timer` — once daily (`23:15 UTC`), calls
-  `app/api/internal/market-price/refresh-prices` (writes `MarketPrice`/`MarketPriceImport`). See
-  ADR-009.
+- `voltessa-market-price-scheduler.timer` — triggers once daily at `14:00 Europe/Sofia` (shortly
+  after ENTSO-E's real day-ahead publication window), running a script that polls
+  `app/api/internal/market-price/refresh-prices?target=tomorrow` (writes
+  `MarketPrice`/`MarketPriceImport`) every 30 minutes until a complete import succeeds or a bounded
+  number of attempts is exhausted — all retry/stop logic lives in that script, not in application
+  code. See ADR-009.
 
 These two schedulers are deliberately independent (different cadence, different unit files,
 different env files) — operational telemetry and market prices are different kinds of data with

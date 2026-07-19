@@ -410,7 +410,10 @@ Concretely:
 ### Status
 
 Accepted (Continuous ENTSO-E Daily Price Refresh milestone; see
-`docs/research/entsoe-price-scheduler.md` for the full investigation).
+`docs/research/entsoe-price-scheduler.md` for the full investigation). The "two separate
+schedulers" decision below is unchanged; the ENTSO-E scheduler's specific trigger time and retry
+mechanism were refined by the Scheduler refinement milestone (`docs/research/entsoe-price-scheduler.md`
+§9) — see the updated `voltessa-market-price-scheduler.timer` bullet under Decision.
 
 ### Context
 
@@ -443,14 +446,22 @@ data on genuinely different real-world cadences:
 - `voltessa-telemetry-ingestion.timer` — every 5 minutes (ADR-008). Operational data: how much the
   plant is producing/exporting right now, needed frequently so future automation can react within a
   financial settlement interval.
-- `voltessa-market-price-scheduler.timer` — once daily, fixed at `23:15 UTC`. Market data: ENTSO-E
-  publishes a full day's day-ahead prices once, the afternoon before delivery — there is nothing new
-  to fetch more than once a day, and calling more often would just be redundant idempotent no-ops.
-  `23:15 UTC` is deliberately fixed in UTC (not a local-time cron expression) so it is unambiguous
-  across DST: it falls safely after `Europe/Brussels` (the CET/CEST zone ENTSO-E's own market day is
-  anchored to, `lib/market-price/timezone.ts`) midnight in both DST states (22:00 UTC winter, 21:00
-  UTC summer), so the importer's "today" always resolves to the correct, already-published delivery
-  day.
+- `voltessa-market-price-scheduler.timer` — triggers once daily at `*-*-* 14:00:00 Europe/Sofia`
+  (systemd resolves this IANA zone name, and its DST transitions, natively — confirmed via
+  `systemd-analyze calendar` on the host). This is a refinement (Scheduler refinement milestone) of
+  the original design, which fired once at a fixed `23:15 UTC` — safely after ENTSO-E's data had
+  already become "today," but many hours after ENTSO-E's real midday-CET publication, meaning
+  correct data sat unused for most of the afternoon/evening. `14:00 Europe/Sofia` instead starts
+  polling shortly after the real publication window, requesting **tomorrow's** delivery day
+  explicitly (`?target=tomorrow` on the route — the only code change, since `refreshMarketPrices`
+  already accepted an arbitrary reference date) rather than waiting for it to become "today." All
+  retry/stop policy lives in the Scaleway service script, not application code, per that milestone's
+  explicit preference: "not yet published" is logged and retried every 30 minutes (not an error);
+  the loop stops the instant a complete (`isPartial: false`) import succeeds; it gives up (a real,
+  alertable failure) after 16 attempts (~8h headroom) if a day never publishes, well before the next
+  day's trigger. Market data still fundamentally needs at most one *successful* import per day —
+  polling is about *when within the day* that success happens, not about fetching more often than
+  once a day.
 - Each timer has its own unit files and its own `/etc/voltessa-*.env` file (both currently hold the
   same shared `CRON_SECRET` value, since every `app/api/internal/**` route uses that one secret) —
   kept as separate systemd units regardless, so failure, logging, and any future re-cadence of one
