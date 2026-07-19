@@ -88,6 +88,7 @@ model Organization {
   fusionSolarConnections FusionSolarConnection[]
 
   automationSettings AutomationSettings?
+  deviceTelemetry    DeviceTelemetry[]
 }
 
 model Plant {
@@ -121,6 +122,7 @@ model Plant {
   devices Device[]
 
   telemetrySnapshots PlantTelemetrySnapshot[]
+  deviceTelemetry    DeviceTelemetry[]
 
   @@unique([organizationId, stationCode])
 }
@@ -179,6 +181,8 @@ model Device {
   updatedAt DateTime @updatedAt
 
   plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  deviceTelemetry DeviceTelemetry[]
 
   @@unique([plantId, devDn])
   @@index([plantId])
@@ -303,4 +307,97 @@ model PlantTelemetrySnapshot {
   plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
 
   @@index([plantId, collectedAt])
+}
+
+/// Resolution of a `DeviceTelemetry` sample. Only "5m" is populated as of the
+/// telemetry bootstrap milestone (Huawei getDevFiveMinutes); "1h"/"1d" exist
+/// so future aggregation/rollup jobs can write into the same table instead
+/// of requiring a schema change.
+enum TelemetryResolution {
+  FIVE_MIN @map("5m")
+  HOURLY   @map("1h")
+  DAILY    @map("1d")
+}
+
+/// Voltessa's own telemetry store: a single, device-level, multi-resolution
+/// table that every future consumer (Dashboard, Market, AI, Automation,
+/// Revenue) reads from instead of importing from Huawei directly.
+///
+/// One row = one device's reading at one timestamp, at one resolution.
+/// Deliberately not split per device type (inverter/meter) or per
+/// resolution (5m/1h/1d) — see docs/AI_TASK_TEMPLATE.md task for this
+/// milestone for the reasoning. Only the handful of KPIs actually queried
+/// across every future layer (produced/exported/imported energy) are typed
+/// columns; everything else Huawei returns is preserved unmodified in
+/// `rawPayload` so no KPI is ever silently unavailable to future analytics.
+///
+/// Never store derived/business values here (revenue, profit, savings,
+/// self-consumption, export decisions) — those belong to higher layers and
+/// must always be computable from this table's raw data, never baked in.
+model DeviceTelemetry {
+  id String @id @default(cuid())
+
+  organizationId String
+  plantId        String
+  deviceId       String
+
+  /// Huawei's own numeric device identifier — denormalized from
+  /// `Device.huaweiDeviceId` so this table is self-describing even if a
+  /// device is later re-synced/re-mapped.
+  huaweiDeviceId BigInt
+  /// Huawei's device type (1 = inverter, 47 = meter, ...) — denormalized
+  /// for the same reason.
+  devTypeId Int
+
+  timestamp  DateTime
+  resolution TelemetryResolution
+
+  ingestedAt DateTime @default(now())
+  /// Always "HuaweiFusionSolar" today; stored explicitly (not assumed) so a
+  /// future second vendor never has to backfill this column.
+  source String @default("HuaweiFusionSolar")
+
+  /// Instantaneous inverter production, kW (Huawei dataItemMap.active_power
+  /// on the inverter device type). Null for meter rows.
+  activePower Decimal? @db.Decimal(12, 3)
+  /// Inverter operating state (Huawei dataItemMap.inverter_state). Null for
+  /// meter rows.
+  inverterState Int?
+  /// Inverter temperature, °C (Huawei dataItemMap.temperature). Null for
+  /// meter rows.
+  temperature Decimal? @db.Decimal(6, 2)
+
+  /// Instantaneous grid exchange power, kW (Huawei dataItemMap.active_power
+  /// on the meter device type — same Huawei field name as `activePower`
+  /// above, but a different physical quantity, hence a separate column).
+  /// Null for inverter rows.
+  meterActivePower Decimal? @db.Decimal(12, 3)
+  /// Meter status (Huawei dataItemMap.meter_status). Null for inverter rows.
+  meterStatus Int?
+  /// Cumulative forward/active energy counter, kWh (Huawei
+  /// dataItemMap.active_cap on the meter device type). Null for inverter
+  /// rows — inverters report day/lifetime cumulative production under
+  /// different, non-equivalent fields (day_cap/total_cap), preserved only
+  /// in `rawPayload`, not conflated with this column.
+  activeEnergy Decimal? @db.Decimal(14, 3)
+  /// Cumulative reverse/export energy counter, kWh (Huawei
+  /// dataItemMap.reverse_active_cap on the meter device type). Null for
+  /// inverter rows.
+  reverseActiveEnergy Decimal? @db.Decimal(14, 3)
+
+  /// The complete, unmodified Huawei response item for this sample
+  /// (devId/sn/collectTime/dataItemMap) — every KPI Huawei returns, not
+  /// just the typed columns above. Future analytics reads this instead of
+  /// re-importing from Huawei.
+  rawPayload Json
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plant        Plant        @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  device       Device       @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, timestamp, resolution])
+  @@index([organizationId, plantId, timestamp])
+  @@index([plantId, timestamp])
 }
