@@ -123,13 +123,18 @@ One migration is committed under `prisma/migrations/` alongside routine `db push
 
 Env vars declared in root `turbo.json` `globalEnv`: `DATABASE_URL`, `AUTH_GOOGLE_ID`,
 `AUTH_GOOGLE_SECRET`, `AUTH_SECRET`, `AUTH_URL`, `FUSIONSOLAR_CLIENT_ID`,
-`FUSIONSOLAR_CLIENT_SECRET`, `FUSIONSOLAR_REDIRECT_URI`.
-
-Additional env vars used in `apps/web` but **not currently declared** in `turbo.json` `globalEnv`
-(known gap — add them if you touch this area): `NEXTAUTH_URL`, `FUSIONSOLAR_GATEWAY_URL`,
+`FUSIONSOLAR_CLIENT_SECRET`, `FUSIONSOLAR_REDIRECT_URI`, `FUSIONSOLAR_GATEWAY_URL` /
 `FUSIONSOLAR_GATEWAY_SECRET` (a proxy/gateway service in front of the FusionSolar API — see
 `lib/fusionsolar/api-client.ts` and `get-valid-access-token.ts`), `CRON_SECRET` (bearer-token guard
-on `app/api/internal/fusionsolar/ingest-plant-telemetry`).
+shared by every `app/api/internal/**` route — FusionSolar telemetry ingestion and the ENTSO-E price
+refresh alike), and `ENTSOE_API_TOKEN` (ENTSO-E Transparency Platform `securityToken` — see
+`lib/market-price/providers/entsoe.ts`; provisioned in Vercel Production/Preview only as of the
+Continuous ENTSO-E Daily Price Refresh milestone — it was declared here and in `turbo.json` well
+before that, but was never actually set as a Vercel value, so the price importer had silently never
+worked in production until then).
+
+Additional env var used in `apps/web` but **not currently declared** in `turbo.json` `globalEnv`
+(known gap — add it if you touch this area): `NEXTAUTH_URL`.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 
@@ -154,11 +159,28 @@ In `apps/web`, the equivalent integration is vendor-specific today and lives dir
 `lib/fusionsolar/*` — there is no `PlantDriver`-style abstraction there yet. FusionSolar API calls
 are not made directly from `apps/web`; they go through a gateway service (`FUSIONSOLAR_GATEWAY_URL`
 + `FUSIONSOLAR_GATEWAY_SECRET`), and FusionSolar-related Vercel functions are pinned to the `fra1`
-region (see `apps/web/vercel.json`) — consistent with FusionSolar's EU-hosted API. Telemetry
-ingestion (`app/api/internal/fusionsolar/ingest-plant-telemetry`) is invoked externally with a
-`CRON_SECRET` bearer token; Vercel's built-in cron scheduling was tried once and reverted (commits
-`6643255` / `853893d`), so ingestion is **not** currently on an automatic schedule — check why
-before re-enabling it.
+region (see `apps/web/vercel.json`) — consistent with FusionSolar's EU-hosted API.
+
+Production scheduling is **not** Vercel Cron — it was tried once for telemetry ingestion and
+reverted (commits `6643255` / `853893d`, blocked on this Vercel plan tier). Instead, a Scaleway VM
+that already existed for the FusionSolar gateway proxy (`voltessa-fusionsolar-proxy`, ADR-004) runs
+two independent, `CRON_SECRET`-guarded `systemd` timers — no GitHub Actions, no Vercel Cron, exactly
+these two:
+
+- `voltessa-telemetry-ingestion.timer` — every 5 minutes, calls
+  `app/api/internal/fusionsolar/bootstrap-device-telemetry` (writes `DeviceTelemetry`). See ADR-008.
+- `voltessa-market-price-scheduler.timer` — once daily (`23:15 UTC`), calls
+  `app/api/internal/market-price/refresh-prices` (writes `MarketPrice`/`MarketPriceImport`). See
+  ADR-009.
+
+These two schedulers are deliberately independent (different cadence, different unit files,
+different env files) — operational telemetry and market prices are different kinds of data with
+different real-world refresh rates, not one problem with two speeds. Both live outside this
+repository (the VM's `/etc/systemd/system/*` and `/etc/voltessa-*.env` are not version-controlled);
+`docs/research/telemetry-platform-foundation.md` §8 and `docs/research/entsoe-price-scheduler.md`
+are their authoritative record. The legacy `app/api/internal/fusionsolar/ingest-plant-telemetry`
+route still exists but is no longer invoked by anything scheduled (superseded by
+`bootstrap-device-telemetry`, ADR-008).
 
 ## Known gaps / tech debt (don't silently "fix" these — see `docs/AI_PLAYBOOK.md`)
 

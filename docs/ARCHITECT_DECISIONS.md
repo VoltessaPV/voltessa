@@ -404,3 +404,76 @@ Concretely:
   comparison/diagnosis, only rotated; if the Scaleway host's copy and Vercel's copy ever drift again
   (e.g. a future rotation done in only one place), the symptom will be the same silent HTTP 401 this
   milestone found — worth checking first if ingestion ever goes stale again.
+
+## ADR-009: A second, independent Scaleway scheduler for ENTSO-E market prices
+
+### Status
+
+Accepted (Continuous ENTSO-E Daily Price Refresh milestone; see
+`docs/research/entsoe-price-scheduler.md` for the full investigation).
+
+### Context
+
+`app/api/internal/market-price/refresh-prices` (fetches ENTSO-E day-ahead prices into
+`MarketPrice`/`MarketPriceImport`, per the original ENTSO-E integration milestones) had never had a
+scheduler either — the same shape of gap ADR-008 found and fixed for telemetry, investigated here
+independently rather than assumed to be identical. It was not: two distinct, real production bugs
+were found, not one.
+
+1. **No scheduler existed at all** — confirmed by exhaustively checking every mechanism this
+   codebase or its production infrastructure could use: no `.github/workflows/*` entry, no Scaleway
+   `cron.d` entry, no root `crontab`, no `systemd` timer. Identical in kind to telemetry's gap
+   (ADR-008), but for a completely separate pipeline.
+2. **`ENTSOE_API_TOKEN` was never actually set in Vercel Production/Preview** — a deeper bug than
+   "no scheduler," found by tracing the pipeline rather than assuming the scheduler gap was the only
+   problem: calling `refresh-prices` manually against production reproduced a hard `HTTP 500`
+   (`"ENTSOE_API_TOKEN is not configured"`) on every attempt, even though the token has been declared
+   in `turbo.json`'s `globalEnv` since the original ENTSO-E integration milestone. The real token
+   existed only in local `.env`/`.env.local` — meaning every `MarketPrice` row already in production
+   was written by someone running the importer from local development against the production
+   database, and production itself had never once successfully imported prices on its own. Fixed by
+   provisioning the same, real (not fabricated) token into Vercel Production and Preview.
+
+### Decision
+
+Telemetry ingestion (ADR-008) and ENTSO-E price refresh get **two separate** Scaleway `systemd`
+timer/service pairs on the same VM, not one merged scheduler, because they are different kinds of
+data on genuinely different real-world cadences:
+
+- `voltessa-telemetry-ingestion.timer` — every 5 minutes (ADR-008). Operational data: how much the
+  plant is producing/exporting right now, needed frequently so future automation can react within a
+  financial settlement interval.
+- `voltessa-market-price-scheduler.timer` — once daily, fixed at `23:15 UTC`. Market data: ENTSO-E
+  publishes a full day's day-ahead prices once, the afternoon before delivery — there is nothing new
+  to fetch more than once a day, and calling more often would just be redundant idempotent no-ops.
+  `23:15 UTC` is deliberately fixed in UTC (not a local-time cron expression) so it is unambiguous
+  across DST: it falls safely after `Europe/Brussels` (the CET/CEST zone ENTSO-E's own market day is
+  anchored to, `lib/market-price/timezone.ts`) midnight in both DST states (22:00 UTC winter, 21:00
+  UTC summer), so the importer's "today" always resolves to the correct, already-published delivery
+  day.
+- Each timer has its own unit files and its own `/etc/voltessa-*.env` file (both currently hold the
+  same shared `CRON_SECRET` value, since every `app/api/internal/**` route uses that one secret) —
+  kept as separate systemd units regardless, so failure, logging, and any future re-cadence of one
+  scheduler can never accidentally affect the other.
+- `refreshMarketPrices` now distinguishes "ENTSO-E has nothing published yet for the requested
+  period" (`EntsoeNoDataAvailableError`, ENTSO-E's own documented `Acknowledgement_MarketDocument`
+  response) from a genuine failure (bad XML, wrong zone, non-2xx HTTP) — the former logs and returns
+  a normal `unavailable: true` result instead of throwing, so a scheduled run hitting this condition
+  succeeds gracefully rather than paging as a failure.
+
+### Consequences
+
+- Exactly two production schedulers exist, both on infrastructure that already existed for the
+  FusionSolar gateway proxy — no new vendor/service, no GitHub Actions, no Vercel Cron.
+- `docs/ROADMAP.md`'s and `CLAUDE.md`'s prior "not currently on an automatic schedule" framing for
+  telemetry was already stale before this milestone (fixed by ADR-008); this ADR's own claim about
+  market prices was true until this milestone fixed it too — both should be treated as fixed going
+  forward, not re-investigated from scratch next time this area is touched.
+- Because `ENTSOE_API_TOKEN` (like `CRON_SECRET`, ADR-008) is a Vercel "Sensitive" variable, it can
+  only be rotated, never read back for comparison — if the price importer ever silently stops
+  working again in production only (while local development keeps working), a missing/rotated
+  Vercel value is the first thing to check, not the scheduler.
+- `MarketPrice`'s per-point write is still `upsert` (unchanged) — `refreshMarketPrices` now pre-checks
+  which timestamps already exist purely to log accurate "records inserted" vs. "duplicates skipped"
+  counts; it does not change write behavior, so ENTSO-E revising an already-published value (rare,
+  not observed, but not ruled out) still self-heals on the next scheduled run exactly as before.
