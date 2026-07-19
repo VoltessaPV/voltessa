@@ -488,3 +488,159 @@ CET-anchored default).
 3. Two of five devices are missing data for the first few hours of the oldest complete day
    (2026-07-12) — a real gap in what Huawei's history endpoint returned for those two inverters,
    not an importer bug (confirmed: every other device/day combination in the range is complete).
+
+## 14. Mathematical Correctness (follow-up milestone)
+
+Full diagnostic pass before any code changed, per the milestone's own instruction. Traced every
+"telemetry is interpreted incorrectly" symptom to its exact root cause; no guessing. Three
+architecture-level fixes and one permanent freshness fix.
+
+### Diagnostic 1: historical telemetry missing — traced database → query → chart
+
+`DeviceTelemetry` genuinely contained a full backfilled week (confirmed in §12) and
+`getPlantTelemetryRange`/`getPlantTelemetrySeries` already accepted arbitrary `[start, end)`
+windows — the query layer was never the problem. Traced upward instead:
+
+- `production-data.ts`'s `getProductionPageData` computed its telemetry window as
+  `localDayBoundsUtc(new Date(), plant.timezone)` to `new Date()` — **always today**, regardless
+  of which day the Market toolbar had selected.
+- `market/page.tsx` additionally passed `telemetrySeries={data.isToday ? production.telemetrySeries
+  : undefined}` — hard-suppressing the chart's telemetry overlay outright for any non-today day.
+
+Both were real code paths, not database gaps — once `DeviceTelemetry` held real historical data,
+there was no route left that would ever display it for a past day. Fixed by making
+`production-data.ts` compute the exact same `selectedDate`/`isToday`/Europe-Sofia-day-bounds logic
+`market-data.ts` already used (duplicated on purpose — the two modules stay independent, see both
+files' doc comments) and removing the `isToday` gate in `page.tsx` entirely. A past day now returns
+its whole day (`dayEnd`, not `new Date()`); today still correctly stops at "now" (can't show future
+telemetry).
+
+### Diagnostic 2: freshness — traced Huawei → importer → database → query → page → chart
+
+Checked every stage against real production state, not assumption:
+
+| Stage | Result |
+|---|---|
+| Huawei / importer | `bootstrapDeviceTelemetry` is correct and idempotent (proven in §12) |
+| Database | Newest row was `2026-07-19T09:40:00Z` (12:40 Sofia) — genuinely the newest real sample |
+| Query / page / chart | All three correctly reflect exactly what's in the database — no bug found downstream |
+
+**First (and only) stage where freshness was lost**: nothing between Huawei and the database ever
+runs on a schedule. This is the same root cause §11 already identified (Vercel's native `crons`
+config is blocked on this plan tier) — re-confirmed, not re-guessed: `newestDeviceTelemetry` was 43
+minutes behind wall-clock time at the moment of this check, consistent with the bootstrap only ever
+running when manually triggered.
+
+**Fix, not another workaround**: added `.github/workflows/telemetry-ingest.yml`, a GitHub Actions
+schedule (`*/15 * * * *`) that calls the already-idempotent `bootstrap-device-telemetry` route with
+`CRON_SECRET` (set as a repository secret via `gh secret set`) as the bearer token — no Vercel plan
+change needed. Verified by manually dispatching the workflow: HTTP 200, `samplesInserted: 77` (real
+new rows), `duplicatesSkipped: 1861`. Re-checked the database immediately after: newest sample moved
+to `2026-07-19T14:00:00Z` with wall-clock at `14:05:37` — a **6-minute** gap, down from 43. This is a
+permanent fix, not a one-time backfill: the schedule keeps running independently of this session.
+
+### Diagnostic 3: meter counter fields — proven empirically against real data, not documentation
+
+`DeviceTelemetry.activeEnergy`/`.reverseActiveEnergy` (Huawei `active_cap`/`reverse_active_cap`)
+were assumed, in the schema's original doc comments, to mean "forward/import" and "reverse/export"
+respectively — a plausible-sounding reading of Huawei's field names that was never checked against
+real data. Queried every real meter row for this plant (2116 samples, 8 days) and checked:
+
+1. **Monotonicity**: both counters showed **zero decreases** across the entire range — exactly how
+   a real cumulative meter counter behaves, and instantaneous power never does.
+2. **Sign correlation**: `activeEnergy` increases almost exclusively while `meterActivePower > 0`;
+   `reverseActiveEnergy` increases almost exclusively while `meterActivePower < 0`.
+3. **Magnitude cross-check**: a 25-minute real daytime window (power rising 39 → 60 kW) moved
+   `activeEnergy` by +19.38 kWh; a left-Riemann integration of that same window's power gives
+   19.57 kWh — within 1%.
+
+Conclusion, opposite of the original assumption: **`activeEnergy` is the real cumulative EXPORT
+counter; `reverseActiveEnergy` is the real cumulative IMPORT counter.** This matches the
+already-correct power-sign convention elsewhere in the codebase (`exportKw = max(power, 0)`) — only
+the *counter field labels* were backwards, not the power-sign logic. `prisma/schema.prisma`'s doc
+comments corrected to state this, with the investigation referenced inline.
+
+Since real counters exist, exported/imported energy is now derived from **counter differences**
+(`getPlantSettlementEnergySeries`/`sumSettlementEnergy` in `lib/telemetry/energy-metrics.ts`) instead
+of integrating instantaneous power — strictly more accurate, exactly what reading a physical meter
+twice would give. `computePlantEnergyMetrics`'s public return shape is unchanged (both Dashboard and
+Market still get `exportedKwh`/`importedKwh` the same way), only its internal correctness changed.
+`producedKwh`/`peakProduction` still come from power integration, since no cumulative production
+counter exists in this table for inverters (Huawei's `day_cap`/`total_cap` live only in
+`rawPayload`) — documented as explicit future work, not solved here.
+
+### Diagnostic 4 / architecture correction: Market shows energy, Dashboard shows power
+
+Re-examined the Market chart's purpose: it represents financial settlement, and money is earned
+from *energy* traded at a price, not from instantaneous power. `MarketPriceChart.tsx` previously
+plotted production/export/import **power** (kW) alongside price — the same live/telemetry
+distinction Dashboard already correctly makes, just misapplied to the wrong page. Removed the three
+power lines entirely; the chart now renders exactly price (EUR/MWh, left axis) and exported
+**energy** (kWh per real 15-minute settlement interval, right axis, violet bars) — nothing else.
+Dashboard is untouched and keeps all three power widgets, since instantaneous power is genuinely
+what an operational overview needs.
+
+The right (energy) axis is fixed at `[0, installedCapacityKw * 0.25]` — one settlement interval's
+worth of energy at full installed capacity, read from `Plant.capacityKw`, never hardcoded, never
+auto-scaled from the visible bars.
+
+### Diagnostic 4b: price-curve distortion — root cause and fix (turned out to be the same fix)
+
+The previous milestone's unified chart dataset forward-filled each 15-minute price value across the
+denser 5-minute telemetry sub-rows so every row had *some* price to show in a shared tooltip. Visual
+side effect: a genuinely smooth price line rendered with visible steps wherever telemetry existed,
+because recharts drew through several repeated-value points before jumping, instead of interpolating
+directly between two distinct real price points.
+
+Once exported energy moved to 15-minute settlement intervals (Diagnostic 4), it landed on **the
+exact same grid** the price series already uses (both built from the same `[dayStart, dayEnd)`
+Europe/Sofia bounds, same 15-minute step). The unified dataset (`buildUnifiedData` in
+`MarketPriceChart.tsx`) is now a plain 1:1 zip by timestamp — no forward-filling, no resampling.
+The price line is therefore pixel-for-pixel what it would be rendered alone again, and the tooltip
+stays perfectly synchronized (same row, same timestamp, by construction) with no distortion
+trade-off needed.
+
+### Diagnostic 5: settlement interval alignment
+
+Verified directly: `getPlantSettlementEnergySeries` is called with the identical `dayStart`/
+`seriesEnd` bounds `market-data.ts` computes for the price series, and both step in fixed
+15-minute (`SETTLEMENT_INTERVAL_MINUTES`) increments from the same Europe/Sofia day start. Exported
+and imported energy, telemetry aggregation, and price all therefore share exactly the same 96 (or
+fewer, for today-so-far) interval boundaries per day — confirmed by the merge requiring no
+resampling (Diagnostic 4b) and by every rendered tooltip showing one real timestamp shared across
+both series.
+
+### Validation — three real days, mathematically consistent
+
+Verified locally and in production (identical results), for today (2026-07-19), yesterday
+(2026-07-18), and two days ago (2026-07-17):
+
+- **Today**: chart bars span 06:15–09:45 (the day's real export window so far); tooltip at 06:45
+  shows `106.08 EUR/MWh` + `2.97 kWh exported`, same timestamp. Insights: `Exported energy: 84.69
+  kWh` / `Imported energy: 13.86 kWh` — identical to Dashboard's own figures for the same plant/day
+  (both now read the same corrected `computePlantEnergyMetrics`).
+- **Yesterday**: full day of bars (00:00–23:45, not just "up to now") — the direct fix for
+  Diagnostic 1. Tooltip at 06:45 shows `123.49 EUR/MWh` + `1.37 kWh exported`. Insights:
+  `Exported energy: 500.46 kWh` / `Imported energy: 21.55 kWh`.
+- **Two days ago**: also a full day of bars, a visibly different real export pattern (multiple
+  peaks across the day). Tooltip at 06:45 shows `158.7 EUR/MWh` + `1.52 kWh exported`. Insights:
+  `Exported energy: 384.1 kWh` / `Imported energy: 200.45 kWh`.
+
+Zero console or network errors on any of the three days, locally or in production. Right axis
+stayed fixed at `0`–`50 kWh` across all three days regardless of each day's different price range
+(left axis, unaffected, auto-scaled per day as before) — confirming the energy axis is genuinely
+capacity-derived, not auto-scaled from the visible bars.
+
+### What was explicitly not touched
+
+No changes to `lib/fusionsolar/import-device-telemetry.ts` (the importer itself), no changes to
+`lib/market-price/*` (ENTSO-E integration), no export-control changes, no Revenue Engine work, no
+UI redesign beyond the Market chart's own data series (layout/styling otherwise unchanged).
+
+### Remaining known limitations
+
+1. `producedKwh`/`peakProduction` still use power integration (no cumulative production counter
+   exists for inverters in this table) — unchanged, documented future work.
+2. Two of five devices are missing their first few hours of the oldest complete backfilled day
+   (§12, unchanged, a real Huawei data gap, not a bug here).
+3. §9's "This Month"/"Lifetime" gap (still on `PlantTelemetrySnapshot`) is unchanged.
