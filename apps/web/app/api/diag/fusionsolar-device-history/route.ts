@@ -1,7 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import { auth } from "@/auth";
-import { FusionSolarApiError } from "@/lib/fusionsolar/api-client";
+import {
+  FusionSolarApiError,
+  type FusionSolarConnection,
+} from "@/lib/fusionsolar/api-client";
 import { getFusionSolarDeviceFiveMinuteHistory } from "@/lib/fusionsolar/device-history-kpi";
 import { prisma } from "@/lib/prisma";
 
@@ -14,6 +17,12 @@ import { prisma } from "@/lib/prisma";
  * non-destructive `validation` analysis — never merges the two, never
  * renames or filters a single field of the raw payload.
  *
+ * Two request contracts are supported side by side (`?mode=old` /
+ * `?mode=new`) since it is not yet confirmed which one this plant's
+ * Huawei tenant currently expects — see
+ * `lib/fusionsolar/device-history-kpi.ts` for the exact shapes. Neither
+ * mode is assumed correct in advance; both are exercised and reported.
+ *
  * Read-only: only ever calls the documented historical query endpoint.
  * Never writes anything to Huawei.
  */
@@ -25,6 +34,15 @@ export const dynamic = "force-dynamic";
 const INVERTER_DEV_TYPE_ID = 1;
 const METER_DEV_TYPE_ID = 47;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+type Mode = "old" | "new";
+
+type DeviceRow = {
+  id: string;
+  devName: string;
+  devDn: string;
+  huaweiDeviceId: string | null;
+};
 
 type RawHistoryItem = {
   devId?: unknown;
@@ -147,62 +165,111 @@ function analyzeHistoryResponse(raw: unknown) {
   };
 }
 
-async function queryDeviceHistory(
-  connection: Parameters<typeof getFusionSolarDeviceFiveMinuteHistory>[0],
+function upstreamErrorShape(error: unknown) {
+  if (error instanceof FusionSolarApiError) {
+    return {
+      upstream: {
+        httpStatus: error.httpStatus,
+        failCode: error.failCode,
+        message: error.message,
+        responseBody: error.response,
+      },
+    };
+  }
+
+  return {
+    reason: error instanceof Error ? error.message : String(error),
+  };
+}
+
+async function queryDeviceHistoryOld(
+  connection: FusionSolarConnection,
   devTypeId: number,
   devIds: string,
   collectTime: number,
-  devices: Array<{ id: string; devName: string; huaweiDeviceId: string | null }>,
+  devices: DeviceRow[],
 ) {
+  const base = {
+    mode: "old" as const,
+    devTypeId,
+    devIds,
+    collectTime,
+    collectTimeIso: new Date(collectTime).toISOString(),
+    devices,
+  };
+
   try {
-    const raw = await getFusionSolarDeviceFiveMinuteHistory(
-      connection,
+    const raw = await getFusionSolarDeviceFiveMinuteHistory(connection, {
+      mode: "old",
       devTypeId,
       devIds,
       collectTime,
-    );
+    });
 
     return {
       ok: true as const,
-      devTypeId,
-      devIds,
-      collectTime,
-      collectTimeIso: new Date(collectTime).toISOString(),
-      devices,
+      ...base,
       raw,
       validation: analyzeHistoryResponse(raw),
     };
   } catch (error) {
-    if (error instanceof FusionSolarApiError) {
-      return {
-        ok: false as const,
-        devTypeId,
-        devIds,
-        collectTime,
-        collectTimeIso: new Date(collectTime).toISOString(),
-        devices,
-        upstream: {
-          httpStatus: error.httpStatus,
-          failCode: error.failCode,
-          message: error.message,
-          responseBody: error.response,
-        },
-      };
-    }
-
-    return {
-      ok: false as const,
-      devTypeId,
-      devIds,
-      collectTime,
-      collectTimeIso: new Date(collectTime).toISOString(),
-      devices,
-      reason: error instanceof Error ? error.message : String(error),
-    };
+    return { ok: false as const, ...base, ...upstreamErrorShape(error) };
   }
 }
 
-export async function GET() {
+async function queryDeviceHistoryNew(
+  connection: FusionSolarConnection,
+  devTypeId: number,
+  startTime: number,
+  endTime: number,
+  device: DeviceRow,
+) {
+  const base = {
+    mode: "new" as const,
+    devTypeId,
+    devDn: device.devDn,
+    startTime,
+    startTimeIso: new Date(startTime).toISOString(),
+    endTime,
+    endTimeIso: new Date(endTime).toISOString(),
+    device,
+  };
+
+  try {
+    const raw = await getFusionSolarDeviceFiveMinuteHistory(connection, {
+      mode: "new",
+      devTypeId,
+      devDn: device.devDn,
+      startTime,
+      endTime,
+    });
+
+    return {
+      ok: true as const,
+      ...base,
+      raw,
+      validation: analyzeHistoryResponse(raw),
+    };
+  } catch (error) {
+    return { ok: false as const, ...base, ...upstreamErrorShape(error) };
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const modeParam = request.nextUrl.searchParams.get("mode");
+
+  if (modeParam !== "old" && modeParam !== "new") {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "invalid_mode",
+        message: "Query parameter `mode` must be exactly `old` or `new`.",
+      },
+      { status: 400 },
+    );
+  }
+  const mode: Mode = modeParam;
+
   const session = await auth();
 
   if (!session?.user?.email) {
@@ -253,84 +320,155 @@ export async function GET() {
     select: {
       id: true,
       devName: true,
+      devDn: true,
       devTypeId: true,
       huaweiDeviceId: true,
     },
   });
 
-  const inverterDevices = devices
-    .filter((d) => d.devTypeId === INVERTER_DEV_TYPE_ID && d.huaweiDeviceId !== null)
+  const inverterDevices: DeviceRow[] = devices
+    .filter((d) => d.devTypeId === INVERTER_DEV_TYPE_ID)
     .map((d) => ({
       id: d.id,
       devName: d.devName,
+      devDn: d.devDn,
       huaweiDeviceId: d.huaweiDeviceId?.toString() ?? null,
     }));
 
-  const meterDevices = devices
-    .filter((d) => d.devTypeId === METER_DEV_TYPE_ID && d.huaweiDeviceId !== null)
+  const meterDevices: DeviceRow[] = devices
+    .filter((d) => d.devTypeId === METER_DEV_TYPE_ID)
     .map((d) => ({
       id: d.id,
       devName: d.devName,
+      devDn: d.devDn,
       huaweiDeviceId: d.huaweiDeviceId?.toString() ?? null,
     }));
-
-  const inverterDevIds = inverterDevices
-    .map((d) => d.huaweiDeviceId)
-    .filter((id): id is string => Boolean(id))
-    .join(",");
-  const meterDevIds = meterDevices
-    .map((d) => d.huaweiDeviceId)
-    .filter((id): id is string => Boolean(id))
-    .join(",");
 
   const now = Date.now();
-  const todayCollectTime = now;
-  const yesterdayCollectTime = now - ONE_DAY_MS;
-
   const results: Record<string, unknown> = {};
 
-  if (inverterDevIds) {
-    results.inverters_today = await queryDeviceHistory(
-      connection,
-      INVERTER_DEV_TYPE_ID,
-      inverterDevIds,
-      todayCollectTime,
-      inverterDevices,
-    );
-    results.inverters_yesterday = await queryDeviceHistory(
-      connection,
-      INVERTER_DEV_TYPE_ID,
-      inverterDevIds,
-      yesterdayCollectTime,
-      inverterDevices,
-    );
-  } else {
-    results.inverters_today = { ok: false, error: "no_inverter_devices" };
-    results.inverters_yesterday = { ok: false, error: "no_inverter_devices" };
-  }
+  if (mode === "old") {
+    const inverterDevIds = inverterDevices
+      .map((d) => d.huaweiDeviceId)
+      .filter((id): id is string => Boolean(id))
+      .join(",");
+    const meterDevIds = meterDevices
+      .map((d) => d.huaweiDeviceId)
+      .filter((id): id is string => Boolean(id))
+      .join(",");
 
-  if (meterDevIds) {
-    results.meter_today = await queryDeviceHistory(
-      connection,
-      METER_DEV_TYPE_ID,
-      meterDevIds,
-      todayCollectTime,
-      meterDevices,
-    );
-    results.meter_yesterday = await queryDeviceHistory(
-      connection,
-      METER_DEV_TYPE_ID,
-      meterDevIds,
-      yesterdayCollectTime,
-      meterDevices,
-    );
+    const todayCollectTime = now;
+    const yesterdayCollectTime = now - ONE_DAY_MS;
+
+    results.inverters_today = inverterDevIds
+      ? await queryDeviceHistoryOld(
+          connection,
+          INVERTER_DEV_TYPE_ID,
+          inverterDevIds,
+          todayCollectTime,
+          inverterDevices,
+        )
+      : { ok: false, error: "no_inverter_devices" };
+
+    results.inverters_yesterday = inverterDevIds
+      ? await queryDeviceHistoryOld(
+          connection,
+          INVERTER_DEV_TYPE_ID,
+          inverterDevIds,
+          yesterdayCollectTime,
+          inverterDevices,
+        )
+      : { ok: false, error: "no_inverter_devices" };
+
+    results.meter_today = meterDevIds
+      ? await queryDeviceHistoryOld(
+          connection,
+          METER_DEV_TYPE_ID,
+          meterDevIds,
+          todayCollectTime,
+          meterDevices,
+        )
+      : { ok: false, error: "no_meter_devices" };
+
+    results.meter_yesterday = meterDevIds
+      ? await queryDeviceHistoryOld(
+          connection,
+          METER_DEV_TYPE_ID,
+          meterDevIds,
+          yesterdayCollectTime,
+          meterDevices,
+        )
+      : { ok: false, error: "no_meter_devices" };
   } else {
-    results.meter_today = { ok: false, error: "no_meter_devices" };
-    results.meter_yesterday = { ok: false, error: "no_meter_devices" };
+    // "new" contract: one device per call, capped at a 24h span — so each
+    // group becomes an array of one result per device instead of one
+    // grouped call.
+    const todayWindow = { startTime: now - ONE_DAY_MS, endTime: now };
+    const yesterdayWindow = {
+      startTime: now - 2 * ONE_DAY_MS,
+      endTime: now - ONE_DAY_MS,
+    };
+
+    results.inverters_today = inverterDevices.length
+      ? await Promise.all(
+          inverterDevices.map((device) =>
+            queryDeviceHistoryNew(
+              connection,
+              INVERTER_DEV_TYPE_ID,
+              todayWindow.startTime,
+              todayWindow.endTime,
+              device,
+            ),
+          ),
+        )
+      : { ok: false, error: "no_inverter_devices" };
+
+    results.inverters_yesterday = inverterDevices.length
+      ? await Promise.all(
+          inverterDevices.map((device) =>
+            queryDeviceHistoryNew(
+              connection,
+              INVERTER_DEV_TYPE_ID,
+              yesterdayWindow.startTime,
+              yesterdayWindow.endTime,
+              device,
+            ),
+          ),
+        )
+      : { ok: false, error: "no_inverter_devices" };
+
+    results.meter_today = meterDevices.length
+      ? await Promise.all(
+          meterDevices.map((device) =>
+            queryDeviceHistoryNew(
+              connection,
+              METER_DEV_TYPE_ID,
+              todayWindow.startTime,
+              todayWindow.endTime,
+              device,
+            ),
+          ),
+        )
+      : { ok: false, error: "no_meter_devices" };
+
+    results.meter_yesterday = meterDevices.length
+      ? await Promise.all(
+          meterDevices.map((device) =>
+            queryDeviceHistoryNew(
+              connection,
+              METER_DEV_TYPE_ID,
+              yesterdayWindow.startTime,
+              yesterdayWindow.endTime,
+              device,
+            ),
+          ),
+        )
+      : { ok: false, error: "no_meter_devices" };
   }
 
   return NextResponse.json({
     ok: true,
+    mode,
     organizationId: user.organizationId,
     requestedAt: new Date(now).toISOString(),
     results,
