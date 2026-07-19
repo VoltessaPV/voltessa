@@ -135,6 +135,15 @@ function sofiaTimeLabel(date: Date): string {
   });
 }
 
+/**
+ * Full date+time, always in Europe/Sofia — never the bare
+ * `.toLocaleString()` default, which would render in the server's own
+ * timezone (UTC on Vercel) rather than the plant's real local time.
+ */
+function sofiaDateTimeLabel(date: Date): string {
+  return date.toLocaleString("en-GB", { timeZone: "Europe/Sofia" });
+}
+
 function buildSeries(
   prices: Array<{ timestamp: Date; price: number }>,
   periodStart: Date,
@@ -381,7 +390,7 @@ export async function getMarketPageData(params: {
       healthy: importStatus.available ? !importStatus.isPartial : false,
       lastUpdateLabel:
         isToday && importStatus.available
-          ? importStatus.importedAt.toLocaleString()
+          ? sofiaDateTimeLabel(importStatus.importedAt)
           : null,
     },
   };

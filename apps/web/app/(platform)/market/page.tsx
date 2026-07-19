@@ -236,6 +236,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 // rather than fabricating or reusing today's data for a
                 // different date.
                 telemetrySeries={data.isToday ? production.telemetrySeries : undefined}
+                installedCapacityKw={production.installedCapacityKw}
               />
             </div>
           </section>

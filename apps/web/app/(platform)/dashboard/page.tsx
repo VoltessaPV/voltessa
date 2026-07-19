@@ -85,6 +85,15 @@ function sofiaTimeLabel(date: Date): string {
   });
 }
 
+/**
+ * Full date+time, always in Europe/Sofia — never the bare
+ * `.toLocaleString()` default, which would render in the server's own
+ * timezone (UTC on Vercel) rather than the plant's real local time.
+ */
+function sofiaDateTimeLabel(date: Date): string {
+  return date.toLocaleString("en-GB", { timeZone: "Europe/Sofia" });
+}
+
 function formatEnergy(value: { toString(): string } | null | undefined) {
   if (value == null) {
     return "—";
@@ -354,7 +363,7 @@ export default async function DashboardPage() {
           <p className="text-sm text-slate-500">
             Last telemetry:{" "}
             <span className="text-slate-300">
-              {latestUpdate ? latestUpdate.toLocaleString() : "No data"}
+              {latestUpdate ? sofiaDateTimeLabel(latestUpdate) : "No data"}
             </span>
           </p>
         </div>
@@ -473,7 +482,7 @@ export default async function DashboardPage() {
         <p className="mt-4 text-xs text-slate-500">
           Last successful update:{" "}
           {marketImportStatus.available
-            ? marketImportStatus.importedAt.toLocaleString()
+            ? sofiaDateTimeLabel(marketImportStatus.importedAt)
             : "No import has run yet"}
         </p>
       </section>
@@ -496,9 +505,9 @@ export default async function DashboardPage() {
             const powerStatus = powerStatusByPlantId.get(plant.id) ?? null;
 
             const lastUpdatedLabel = metrics?.latestSampleAt
-              ? metrics.latestSampleAt.toLocaleString()
+              ? sofiaDateTimeLabel(metrics.latestSampleAt)
               : telemetry
-                ? telemetry.collectedAt.toLocaleString()
+                ? sofiaDateTimeLabel(telemetry.collectedAt)
                 : "No telemetry available";
 
             return (

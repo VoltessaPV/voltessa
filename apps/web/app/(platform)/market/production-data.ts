@@ -71,6 +71,14 @@ export type ProductionPageData = {
   telemetryInsights: ProductionInsight[];
   /** Real, today-so-far production/export series for the Market chart overlay — empty when no plant/telemetry exists, never fabricated. */
   telemetrySeries: PlantTelemetrySeriesPoint[];
+  /**
+   * The plant's configured installed capacity (`Plant.capacityKw`), read
+   * directly from the database — never hardcoded, never derived from
+   * telemetry. `null` only when the plant has no `capacityKw` configured
+   * or doesn't exist; the chart must not fabricate an engineering scale
+   * when this is unknown.
+   */
+  installedCapacityKw: number | null;
 };
 
 const UNAVAILABLE_NO_CONNECTION: ProductionReading = {
@@ -174,8 +182,14 @@ export async function getProductionPageData(
       stationCode: { not: null },
       plantCode: { not: null },
     },
-    select: { id: true, plantCode: true, timezone: true },
+    select: { id: true, plantCode: true, timezone: true, capacityKw: true },
   });
+
+  // Read directly from the plant's own configuration — never hardcoded,
+  // never derived from telemetry. `null` only when genuinely unconfigured.
+  const installedCapacityKw = plant?.capacityKw
+    ? Number(plant.capacityKw.toString())
+    : null;
 
   // Category B — DeviceTelemetry only, needs a plant but never a live
   // FusionSolar connection. Computed unconditionally: historical telemetry
@@ -269,6 +283,7 @@ export async function getProductionPageData(
       ),
       telemetryInsights,
       telemetrySeries,
+      installedCapacityKw,
     };
   }
 
@@ -327,5 +342,6 @@ export async function getProductionPageData(
     configuredExportModeLabel: describeConfiguredExportMode(configuredExportMode),
     telemetryInsights,
     telemetrySeries,
+    installedCapacityKw,
   };
 }

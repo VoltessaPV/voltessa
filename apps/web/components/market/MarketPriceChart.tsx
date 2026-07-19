@@ -21,21 +21,28 @@ type MarketPriceChartProps = {
   /** Short, pre-formatted current production/grid-power text shown on the NOW marker. Omitted entirely when unavailable — never a placeholder. */
   nowAnnotation?: string;
   /**
-   * Real, today-so-far DeviceTelemetry (5-minute resolution) — plotted as
-   * two additional lines on their own kW axis, using their own `time`
-   * values, never resampled onto the price series' grid. Omitted entirely
-   * (no line drawn) when empty, rather than a fabricated flat line.
+   * Real, today-so-far DeviceTelemetry (5-minute resolution). Merged with
+   * `series` into one shared, timestamp-aligned dataset (see
+   * `buildUnifiedData`) so every rendered series — including the tooltip —
+   * refers to the exact same row/timestamp. Omitted entirely (no axis, no
+   * lines, no legend entries) when empty.
    */
   telemetrySeries?: PlantTelemetrySeriesPoint[];
+  /**
+   * The plant's configured installed capacity (kW) — read from
+   * `Plant.capacityKw`, never hardcoded, never derived from the visible
+   * telemetry. The power axis is fixed at `[0, installedCapacityKw]`
+   * whenever this is known; when it's `null` (not configured), the power
+   * axis/telemetry lines are omitted entirely rather than guessing a
+   * scale from the data.
+   */
+  installedCapacityKw?: number | null;
 };
 
-type ChartDatum = {
+/** One row per distinct timestamp across BOTH price and telemetry — the single source of truth for every Line and the Tooltip, so hovering any point always reflects one real, shared timestamp. */
+type UnifiedDatum = {
   time: number;
   price: number | null;
-};
-
-type TelemetryDatum = {
-  time: number;
   productionKw: number | null;
   exportKw: number | null;
   importKw: number | null;
@@ -82,6 +89,74 @@ function getExportBands(
   return bands;
 }
 
+/**
+ * Merges the price series (native resolution, e.g. 15 minutes) and the
+ * telemetry series (5-minute resolution) into one array keyed by the union
+ * of both series' real timestamps.
+ *
+ * - `productionKw`/`exportKw`/`importKw` use exact-timestamp matches only
+ *   — a telemetry gap stays `null` (a real gap), never interpolated.
+ * - `price` is forward-filled across the intervening rows within its own
+ *   native interval (e.g. the 5-min sub-rows between two 15-min price
+ *   points repeat that block's real value) — this is not fabrication: a
+ *   day-ahead price genuinely applies to its whole interval, not just its
+ *   first instant. A genuinely missing price interval stays `null` across
+ *   that entire interval, so the line still breaks there
+ *   (`connectNulls={false}`), it just no longer breaks at every
+ *   telemetry-only sub-row the way two independent per-Line `data` arrays
+ *   previously did — which was the root cause of the tooltip showing
+ *   mismatched timestamps across series.
+ */
+function buildUnifiedData(
+  priceSeries: MarketPricePoint[],
+  telemetrySeries: PlantTelemetrySeriesPoint[],
+): UnifiedDatum[] {
+  const firstPriceTime = priceSeries[0]?.timestamp.getTime();
+  const secondPriceTime = priceSeries[1]?.timestamp.getTime();
+  const priceIntervalMs =
+    firstPriceTime !== undefined && secondPriceTime !== undefined
+      ? secondPriceTime - firstPriceTime
+      : 0;
+
+  const priceByTime = new Map(
+    priceSeries.map((p) => [p.timestamp.getTime(), p.price]),
+  );
+
+  function priceAt(t: number): number | null {
+    if (firstPriceTime === undefined || priceIntervalMs <= 0) {
+      return priceByTime.get(t) ?? null;
+    }
+
+    const bucketStart =
+      firstPriceTime +
+      Math.floor((t - firstPriceTime) / priceIntervalMs) * priceIntervalMs;
+
+    return priceByTime.get(bucketStart) ?? null;
+  }
+
+  const telemetryByTime = new Map(
+    telemetrySeries.map((t) => [t.timestamp.getTime(), t]),
+  );
+
+  const allTimes = new Set<number>();
+  for (const p of priceSeries) allTimes.add(p.timestamp.getTime());
+  for (const t of telemetrySeries) allTimes.add(t.timestamp.getTime());
+
+  return [...allTimes]
+    .sort((a, b) => a - b)
+    .map((time) => {
+      const telemetry = telemetryByTime.get(time);
+
+      return {
+        time,
+        price: priceAt(time),
+        productionKw: telemetry?.productionKw ?? null,
+        exportKw: telemetry?.exportKw ?? null,
+        importKw: telemetry?.importKw ?? null,
+      };
+    });
+}
+
 function ChartTooltip({
   active,
   payload,
@@ -95,20 +170,51 @@ function ChartTooltip({
     return null;
   }
 
-  const price = payload.find((entry) => entry.dataKey === "price")?.value;
+  const get = (key: string): number | null => {
+    const value = payload.find((entry) => entry.dataKey === key)?.value;
+    return value === undefined ? null : value;
+  };
+
+  const price = get("price");
+  const production = get("productionKw");
+  const exportKw = get("exportKw");
+  const importKw = get("importKw");
+  const hasAnything =
+    price !== null || production !== null || exportKw !== null || importKw !== null;
 
   return (
     <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-xs shadow-[0_12px_28px_-16px_rgba(0,0,0,0.7)]">
       <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
 
-      {price !== undefined && price !== null ? (
+      {price !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-blue-400">
           <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
           {price} EUR/MWh
         </p>
-      ) : (
-        <p className="mt-1 text-slate-500">No price data</p>
       )}
+
+      {production !== null && (
+        <p className="mt-1 flex items-center gap-1.5 text-amber-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+          {production} kW production
+        </p>
+      )}
+
+      {exportKw !== null && exportKw > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-violet-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-violet-400" />
+          {exportKw} kW export
+        </p>
+      )}
+
+      {importKw !== null && importKw > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-rose-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+          {importKw} kW import
+        </p>
+      )}
+
+      {!hasAnything && <p className="mt-1 text-slate-500">No data</p>}
     </div>
   );
 }
@@ -227,48 +333,42 @@ function NowLabel(props: {
 }
 
 /**
- * The Market page's hero chart — real ENTSO-E day-ahead price (blue),
- * the export-profitability threshold (amber dashed line), a live NOW
- * marker, and elegant gradient-filled bands over export-enabled intervals.
- * Gaps in the price line are genuine missing intervals
- * (`connectNulls={false}`), never fabricated or interpolated.
+ * The Market page's hero chart — real ENTSO-E day-ahead price (blue, left
+ * axis, EUR/MWh, auto-scaled) and, when telemetry + installed capacity are
+ * both known, real production (amber), export (violet), and import (rose)
+ * on a shared right axis (kW), fixed at `[0, installedCapacityKw]` —
+ * never auto-scaled from the visible values, never negative.
  *
- * When `telemetrySeries` is provided (real DeviceTelemetry, only ever
- * "today so far" — see production-data.ts), three more lines overlay real
- * production (amber), real export (violet), and real import (rose) on
- * their own kW axis, plotted against their own real timestamps via
- * recharts' per-`<Line>` `data` override rather than being resampled onto
- * the price series' grid. Missing samples simply end the line early —
- * never interpolated, never fabricated. Omitted entirely (no axis, no
- * legend entries) when `telemetrySeries` is empty/absent.
+ * Everything shares ONE unified, timestamp-merged dataset (see
+ * `buildUnifiedData`) instead of separate per-series arrays, so hovering
+ * any point on the chart always shows every series' value at that exact
+ * same real timestamp — no cross-series misalignment.
  *
- * Visual language reserved for later, not implemented yet: a cyan dot
- * marker style is reserved for automation-engine decisions, and Huawei
- * command markers would sit as point annotations along the same time
- * axis — no code for any of that exists here yet; only the color/marker
- * vocabulary is established so adding them later extends this file
- * instead of restyling it.
+ * Gaps are always genuine: `connectNulls={false}` throughout, and the
+ * merge never invents a telemetry sample or extends a price value past
+ * its own real interval (see `buildUnifiedData`'s doc comment for exactly
+ * what forward-filling price does and does not do).
  */
 export function MarketPriceChart({
   series,
   thresholdPrice,
   nowAnnotation,
   telemetrySeries,
+  installedCapacityKw,
 }: MarketPriceChartProps) {
-  const data: ChartDatum[] = series.map((point) => ({
-    time: point.timestamp.getTime(),
-    price: point.price,
-  }));
+  const hasTelemetry = Boolean(telemetrySeries && telemetrySeries.length > 0);
+  const hasPowerAxis =
+    hasTelemetry && installedCapacityKw !== null && installedCapacityKw !== undefined;
 
-  const telemetryData: TelemetryDatum[] = (telemetrySeries ?? []).map(
-    (point) => ({
-      time: point.timestamp.getTime(),
-      productionKw: point.productionKw,
-      exportKw: point.exportKw,
-      importKw: point.importKw,
-    }),
-  );
-  const hasTelemetry = telemetryData.length > 0;
+  const data: UnifiedDatum[] = hasPowerAxis
+    ? buildUnifiedData(series, telemetrySeries ?? [])
+    : series.map((point) => ({
+        time: point.timestamp.getTime(),
+        price: point.price,
+        productionKw: null,
+        exportKw: null,
+        importKw: null,
+      }));
 
   const bands = getExportBands(series);
   const now = Date.now();
@@ -300,7 +400,7 @@ export function MarketPriceChart({
           Export window
         </span>
 
-        {hasTelemetry && (
+        {hasPowerAxis && (
           <>
             <span className="h-3 w-px bg-white/10" />
 
@@ -367,33 +467,42 @@ export function MarketPriceChart({
               tick={{ fill: "#64748b", fontSize: 11 }}
               tickLine={false}
               axisLine={false}
-              width={44}
+              width={52}
               tickMargin={8}
+              label={{
+                value: "EUR/MWh",
+                angle: -90,
+                position: "insideLeft",
+                fill: "#64748b",
+                fontSize: 10,
+              }}
             />
 
-            {hasTelemetry && (
+            {hasPowerAxis && (
               <YAxis
                 yAxisId="power"
                 orientation="right"
                 tick={{ fill: "#64748b", fontSize: 11 }}
                 tickLine={false}
                 axisLine={false}
-                width={44}
+                width={52}
                 tickMargin={8}
-                unit=" kW"
-                // A genuinely flat 0 kW line (e.g. nighttime, before
-                // sunrise — real, not fabricated) would otherwise sit
-                // exactly on the plot's top or bottom edge (both "auto"
-                // bounds collapse to 0 when every value is 0) and be
-                // visually indistinguishable from an empty chart. Forcing
-                // headroom on both sides of the real data range — not
-                // just a fixed floor — keeps a flat-zero line visible in
-                // the middle of the axis regardless of what the real
-                // min/max happen to be.
-                domain={[
-                  (dataMin: number) => Math.min(dataMin - 0.5, -0.5),
-                  (dataMax: number) => Math.max(dataMax + 0.5, 1),
-                ]}
+                // Engineering scale, per the plant's own configured
+                // installed capacity — never auto-scaled from the
+                // visible telemetry, and never negative. A genuine
+                // production/export/import value is always >= 0 (see
+                // energy-metrics.ts's max(x, 0) clamps), so [0, capacity]
+                // is the physically correct fixed range, not a cosmetic
+                // choice.
+                domain={[0, installedCapacityKw]}
+                allowDataOverflow
+                label={{
+                  value: "kW",
+                  angle: -90,
+                  position: "insideRight",
+                  fill: "#64748b",
+                  fontSize: 10,
+                }}
               />
             )}
 
@@ -432,10 +541,9 @@ export function MarketPriceChart({
               animationDuration={700}
             />
 
-            {hasTelemetry && (
+            {hasPowerAxis && (
               <Line
                 yAxisId="power"
-                data={telemetryData}
                 type="monotone"
                 dataKey="productionKw"
                 stroke="#fbbf24"
@@ -448,10 +556,9 @@ export function MarketPriceChart({
               />
             )}
 
-            {hasTelemetry && (
+            {hasPowerAxis && (
               <Line
                 yAxisId="power"
-                data={telemetryData}
                 type="monotone"
                 dataKey="exportKw"
                 stroke="#a78bfa"
@@ -464,10 +571,9 @@ export function MarketPriceChart({
               />
             )}
 
-            {hasTelemetry && (
+            {hasPowerAxis && (
               <Line
                 yAxisId="power"
-                data={telemetryData}
                 type="monotone"
                 dataKey="importKw"
                 stroke="#fb7185"
