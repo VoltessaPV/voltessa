@@ -231,3 +231,111 @@ future work, not this milestone's scope).
 
 No importer changes, no schema changes, no revenue calculations — the Market Revenue card remains
 the honest placeholder from the prior UI-polish milestone, untouched.
+
+## 11. Telemetry Reliability & Market Chart Completion (follow-up milestone)
+
+Investigated three observed symptoms against real production behavior — telemetry stopping ~04:00
+local, production/export missing during daylight hours, and tooltip cross-series misalignment —
+and fixed each at its root cause rather than its symptom.
+
+### Root cause 1: telemetry stops updating after the manual bootstrap
+
+Traced with a fresh diagnostic script (`diag-full-trace.cjs`, since deleted): the plant's latest
+`DeviceTelemetry` row and the `bootstrapDeviceTelemetry` route's own `ingestedAt` were only ~4
+minutes apart, and both were **446 minutes stale** at the time of measurement. `DeviceTelemetry` has
+never been re-populated since the one-time manual bootstrap performed in the telemetry foundation
+milestone — there is no periodic ingestion. This is a continuity gap, not a query, timezone, or
+chart bug: `lib/telemetry/queries.ts` and `energy-metrics.ts` were re-checked and are unchanged from
+the already-verified pipeline in §10 — they correctly return whatever rows actually exist, and the
+newest row genuinely is from ~04:00 local.
+
+**Attempted fix**: add `bootstrap-device-telemetry` to Vercel's native `crons` config
+(`*/15 * * * *`). This **failed** — it broke the real "voltessa-web" production deployment outright.
+Confirmed, not assumed: the failed GitHub commit status Vercel posted carried a shortlink
+(`https://vercel.link/3Fpeeb1`) that 301-redirects directly to
+`vercel.com/docs/cron-jobs/usage-and-pricing` — a plan-tier restriction on Vercel Cron Jobs. This is
+almost certainly the same cause behind an earlier, unexplained revert from before this session's own
+history (commits `6643255`/`853893d`). Reverted `vercel.json` immediately (commit `ea84f16`) to
+restore deployability, and updated the route's doc comment with this confirmed finding.
+
+**This is a genuine "manual cloud configuration required" stop condition**, not something the
+codebase can resolve alone: continuous DeviceTelemetry ingestion needs either a Vercel plan upgrade
+(to unlock native Cron Jobs) or an external scheduler (e.g. a GitHub Actions cron workflow calling
+`bootstrap-device-telemetry` with `CRON_SECRET` as a repository secret). Both require a decision and
+manual account setup outside what this milestone can perform. **Flagged here as the primary
+remaining known limitation** — until resolved, the chart and all Category B cards will continue to
+show data no fresher than the last manual bootstrap run, growing progressively more stale.
+
+### Root cause 2: tooltip showed values from different timestamps across series
+
+`MarketPriceChart` gave each `<Line>` its own `data` override (§5, §10) — the price line read the
+15-minute ENTSO-E array, the telemetry lines read the 5-minute `DeviceTelemetry` array. Recharts'
+shared-tooltip/shared-hover-index guarantee only holds when every `<Line>` under one `<LineChart>`
+reads from the *same* array — with per-Line overrides of different lengths and resolutions, hovering
+one index highlighted whatever happened to sit at that same array position in each series, not the
+same real-world timestamp.
+
+**Fix**: replaced the per-Line arrays with one unified, timestamp-keyed dataset (`UnifiedDatum[]`,
+built by a new `buildUnifiedData()`) that merges every distinct timestamp from both the price and
+telemetry series into a single sorted array, carrying `price`/`productionKw`/`exportKw`/`importKw`
+per row. The day-ahead price is forward-filled across the 5-minute sub-rows *within its own real
+15-minute interval* (a real block price genuinely applies for its whole interval — not fabrication);
+telemetry values remain `null` on exact-timestamp mismatch only, never interpolated. `<LineChart
+data={...}>` now supplies this single array to the chart, and no `<Line>` overrides it — this is what
+makes recharts' shared hover index correct by construction. Verified visually: hovering shows one
+timestamp (e.g. `03:15`) with price/production/import all reading from that same row; hovering a
+time outside telemetry's range correctly shows price only, never a mismatched or fabricated
+telemetry value.
+
+### Root cause 3 / new requirement: engineering axes
+
+The right-hand power axis previously auto-scaled per §7a's padding-function hack (built specifically
+to make flat-zero lines visible). This milestone requires a real engineering scale instead: fixed
+`domain={[0, installedCapacityKw]}` with `allowDataOverflow`, never negative, never derived from the
+visible telemetry range. `installedCapacityKw` is read directly from `Plant.capacityKw` (added to the
+`select` in `production-data.ts`, threaded through `ProductionPageData` → `market/page.tsx` →
+`MarketPriceChart` props) — confirmed `= 200` for the one real plant ("Atlanta") — never hardcoded.
+Left axis labelled "EUR/MWh", right axis labelled "kW", both via recharts' `<YAxis label>`.
+
+### Time: five UTC-leakage sites fixed
+
+Grepped for bare `.toLocaleString()` calls (no `timeZone` argument) across the affected files —
+these render in the server's default timezone (UTC on Vercel), not Europe/Sofia. Found and fixed
+five: one in `market-data.ts` (`marketStatus.lastUpdateLabel`) and four in `dashboard/page.tsx`
+("Last telemetry", market's "Last successful update", and the two branches of `lastUpdatedLabel`).
+Added a small `sofiaDateTimeLabel` helper to each file (following the existing convention of
+duplicating simple formatting helpers rather than sharing a module) and replaced all five call
+sites. Re-grepped afterward to confirm no bare calls remain.
+
+### Verified, no fix needed
+
+Re-traced the full pipeline (Huawei → `DeviceTelemetry` → query layer → `energy-metrics` → page
+loader → props → chart) and confirmed timestamps match at every stage except where the ingestion
+gap (root cause 1) makes the newest available row genuinely old — that staleness is real and
+correctly reflected everywhere, not swallowed or fabricated at any layer.
+
+### Validation
+
+- `pnpm lint` / `turbo check-types` / `turbo build` — all pass cleanly for `apps/web`.
+- **Local** (Playwright, temporary session): Market chart renders with both axis labels
+  (`EUR/MWh` left, `kW` right), right axis fixed at `0`–`200`; hovering at `03:15` shows
+  `122.31 EUR/MWh` / `0 kW production` / `1.84 kW import` all together; hovering at `22:00` (outside
+  telemetry's range) shows only the price, confirming no fabricated telemetry values. Dashboard's
+  "Last telemetry" correctly reads `19/07/2026, 04:10:00` (Sofia time, not UTC).
+- **Production** (commit `6caf5a2`, deployment `dpl_G5Z8v7P3gtQZxU3JMQPotA3bvJ9S`, `READY`, aliased
+  to `app.voltessa.ai`): re-verified with a fresh temporary session — identical rendering, identical
+  tooltip behavior at `03:15`, zero console or network errors. Session and all screenshots deleted
+  after verification.
+
+### Remaining known limitations
+
+1. **Continuous ingestion is still unresolved** (see root cause 1) — this is the primary open item.
+   Requires a user decision: upgrade the Vercel plan to unlock native Cron Jobs, or wire an external
+   scheduler (e.g. GitHub Actions) with `CRON_SECRET` as a secret. Until then, `DeviceTelemetry` (and
+   therefore every Category B value on both pages) will keep drifting further from "now" — currently
+   frozen at the last manual bootstrap's data (ending ~04:10 local on 2026-07-19).
+2. Export series (`exportKw`) has no real non-zero data yet in the available window — it renders
+   correctly (empty/flat, never fabricated) but hasn't been visually confirmed with a genuinely
+   non-zero value, since the plant hasn't exported during any bootstrapped window so far.
+3. §9's "This Month"/"Lifetime" gap (still on `PlantTelemetrySnapshot`) is unchanged, still future
+   work.
