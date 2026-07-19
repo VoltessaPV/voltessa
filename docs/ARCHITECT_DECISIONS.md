@@ -282,3 +282,51 @@ way this app already relies on Next's built-in 404 fallback for `notFound()` wit
   follow-up in `docs/ROADMAP.md`, not solved by this ADR.
 - **No new UI for the 403 state.** Next's default fallback is generic ("This page could not be
   accessed"); a custom `forbidden.tsx` with Voltessa's own styling is future work, not done here.
+
+## ADR-007: A single `DeviceTelemetry` table is Voltessa's own telemetry store
+
+### Status
+
+Accepted (Telemetry Platform Foundation milestone, commit `4e79e6f`). See
+`docs/research/telemetry-platform-foundation.md` for the full engineering report and production
+validation.
+
+### Context
+
+Every prior FusionSolar milestone read Huawei live, per request, with no persisted historical
+record. Every future analytics feature (production curves, export/import totals, revenue,
+historical charts) would otherwise require its own Huawei call and its own re-derivation of the
+same raw KPIs, each with independent rate-limit exposure.
+
+### Decision
+
+`DeviceTelemetry` is one model — not split per device type (inverter/meter) or per resolution
+(5m/1h/1d/future) — scoped by `organizationId`/`plantId`/`deviceId`, keyed on
+`(deviceId, timestamp, resolution)` for idempotent writes (`createMany` +
+`skipDuplicates: true`). Only the KPIs needed to derive produced/exported/imported energy are
+typed columns (`activePower`, `inverterState`, `temperature` for inverters;
+`meterActivePower`, `meterStatus`, `activeEnergy`, `reverseActiveEnergy` for meters); the complete
+Huawei response item is preserved unmodified in a `rawPayload` JSON column so no KPI is ever
+silently unavailable to a future analytics need. Huawei becomes one *producer* into this table via
+a pure importer (`lib/fusionsolar/import-device-telemetry.ts`) with no HTTP awareness — matching
+this codebase's existing Controller/Service split (`docs/CONVENTIONS.md`).
+
+Revenue, profit, savings, self-consumption, and export decisions are explicitly never stored here
+— they are derived values that belong to a higher layer and must always be computable from this
+table's raw data.
+
+### Consequences
+
+- Dashboard, Market, and automation are unaffected by this change — nothing reads from
+  `DeviceTelemetry` yet. Switching them over is separate, future work.
+- The historical-KPI request contract this importer relies on
+  (`devIds`/`devTypeId`/`collectTime`) was confirmed, not assumed — a newer
+  `devDn`/`startTime`/`endTime` contract exists in current Huawei documentation but was proven to
+  fail against this production tenant (`failCode 20011`); see the research doc for the diagnostic
+  evidence.
+- Schema was applied via `prisma db push`, matching the database's actual, already-diverged
+  migration state (see the research doc §2) rather than adding a second out-of-sync migration
+  file.
+- The bootstrap importer (today + yesterday only, manual `CRON_SECRET`-gated trigger, no cron) is
+  intentionally narrow — backfilling older history and populating `HOURLY`/`DAILY` resolutions are
+  both future work the schema already accommodates but does not yet perform.
