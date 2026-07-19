@@ -67,6 +67,23 @@ export class EntsoeApiError extends Error {
   }
 }
 
+/**
+ * ENTSO-E's documented behavior for "the request is valid but no data
+ * matches it" (its API user guide: an `Acknowledgement_MarketDocument` is
+ * returned instead of a `Publication_MarketDocument` whenever nothing
+ * matches the query) — most commonly hit here when today's day-ahead
+ * prices haven't been published yet. Distinguished from `EntsoeApiError`
+ * so callers can treat "not published yet" as an expected, loggable
+ * condition rather than a hard failure — genuine errors (bad XML, wrong
+ * zone, non-2xx HTTP status) stay plain `EntsoeApiError`.
+ */
+export class EntsoeNoDataAvailableError extends EntsoeApiError {
+  constructor(message: string) {
+    super(message);
+    this.name = "EntsoeNoDataAvailableError";
+  }
+}
+
 export type EntsoeDayAheadPricePoint = {
   timestamp: Date;
   price: number;
@@ -149,7 +166,9 @@ export function parseEntsoeDayAheadPricesXml(
       parsed.Acknowledgement_MarketDocument.Reason?.text ??
       "Unknown ENTSO-E error";
 
-    throw new EntsoeApiError(`ENTSO-E returned an error: ${reasonText}`);
+    throw new EntsoeNoDataAvailableError(
+      `ENTSO-E has no data available for the requested period: ${reasonText}`,
+    );
   }
 
   const document = parsed.Publication_MarketDocument;

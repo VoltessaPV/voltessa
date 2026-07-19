@@ -70,6 +70,12 @@ async function handleRefresh(request: Request) {
     );
   }
 
+  const startedAt = new Date();
+
+  console.log("[Market Price Refresh] Starting scheduled execution", {
+    startedAt: startedAt.toISOString(),
+  });
+
   try {
     const daysParam = new URL(request.url).searchParams.get("days");
     const daysBack =
@@ -86,12 +92,22 @@ async function handleRefresh(request: Request) {
         ? await backfillMarketPrices(daysBack)
         : await refreshMarketPrices();
 
+    console.log("[Market Price Refresh] Completed", {
+      startedAt: startedAt.toISOString(),
+      durationMs: Date.now() - startedAt.getTime(),
+      ...result,
+    });
+
     return NextResponse.json({
       ok: true,
       ...result,
     });
   } catch (error) {
-    console.error("[Market Price Refresh] Failed", { error });
+    console.error("[Market Price Refresh] Failed", {
+      startedAt: startedAt.toISOString(),
+      durationMs: Date.now() - startedAt.getTime(),
+      error,
+    });
 
     return NextResponse.json(
       {

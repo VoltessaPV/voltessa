@@ -19,9 +19,13 @@ import {
   DEFAULT_BIDDING_ZONE,
   MARKET_PRICE_SOURCE_ENTSOE,
 } from "@/lib/market-price/constants";
-import { fetchEntsoeDayAheadPrices } from "@/lib/market-price/providers/entsoe";
+import {
+  EntsoeNoDataAvailableError,
+  fetchEntsoeDayAheadPrices,
+} from "@/lib/market-price/providers/entsoe";
 import {
   ENTSOE_MARKET_TIMEZONE,
+  formatDateInZone,
   localDayBoundsUtc,
 } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
@@ -34,6 +38,10 @@ export type MarketPriceRefreshResult = {
   importedIntervals: number;
   missingIntervals: number;
   isPartial: boolean;
+  recordsInserted: number;
+  duplicatesSkipped: number;
+  /** True when ENTSO-E has not published this period yet (see `EntsoeNoDataAvailableError`). */
+  unavailable: boolean;
 };
 
 /**
@@ -55,14 +63,66 @@ export async function refreshMarketPrices(
     referenceDate,
     ENTSOE_MARKET_TIMEZONE,
   );
+  const targetDeliveryDay = formatDateInZone(periodStart, ENTSOE_MARKET_TIMEZONE);
 
-  const series = await fetchEntsoeDayAheadPrices({
-    biddingZone: DEFAULT_BIDDING_ZONE,
-    periodStart,
-    periodEnd,
+  let series;
+
+  try {
+    series = await fetchEntsoeDayAheadPrices({
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      periodStart,
+      periodEnd,
+    });
+  } catch (error) {
+    if (error instanceof EntsoeNoDataAvailableError) {
+      console.log("[Market Price Refresh] No ENTSO-E data available yet", {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        targetDeliveryDay,
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        reason: error.message,
+      });
+
+      return {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        periodStart,
+        periodEnd,
+        expectedIntervals: 0,
+        importedIntervals: 0,
+        missingIntervals: 0,
+        isPartial: true,
+        recordsInserted: 0,
+        duplicatesSkipped: 0,
+        unavailable: true,
+      };
+    }
+
+    throw error;
+  }
+
+  // Determined before writing, purely for accurate "inserted vs
+  // duplicate" logging (see step 4/6 of the Continuous ENTSO-E Daily
+  // Price Refresh milestone) - does not change write behavior below,
+  // which still upserts every point exactly as before (self-healing if
+  // ENTSO-E ever revises an already-published value).
+  const existing = await prisma.marketPrice.findMany({
+    where: {
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      source: MARKET_PRICE_SOURCE_ENTSOE,
+      timestamp: { gte: periodStart, lt: periodEnd },
+    },
+    select: { timestamp: true },
   });
+  const existingTimestamps = new Set(
+    existing.map((row) => row.timestamp.getTime()),
+  );
+
+  let recordsInserted = 0;
+  let duplicatesSkipped = 0;
 
   for (const point of series.points) {
+    const alreadyExists = existingTimestamps.has(point.timestamp.getTime());
+
     await prisma.marketPrice.upsert({
       where: {
         biddingZone_timestamp_source: {
@@ -83,6 +143,12 @@ export async function refreshMarketPrices(
         currency: point.currency,
       },
     });
+
+    if (alreadyExists) {
+      duplicatesSkipped += 1;
+    } else {
+      recordsInserted += 1;
+    }
   }
 
   await prisma.marketPriceImport.create({
@@ -101,6 +167,16 @@ export async function refreshMarketPrices(
     },
   });
 
+  console.log("[Market Price Refresh] Delivery day processed", {
+    biddingZone: DEFAULT_BIDDING_ZONE,
+    targetDeliveryDay,
+    recordsDownloaded: series.points.length,
+    recordsInserted,
+    duplicatesSkipped,
+    missingIntervals: series.missingTimestamps.length,
+    isPartial: series.isPartial,
+  });
+
   return {
     biddingZone: DEFAULT_BIDDING_ZONE,
     periodStart,
@@ -109,6 +185,9 @@ export async function refreshMarketPrices(
     importedIntervals: series.points.length,
     missingIntervals: series.missingTimestamps.length,
     isPartial: series.isPartial,
+    recordsInserted,
+    duplicatesSkipped,
+    unavailable: false,
   };
 }
 
