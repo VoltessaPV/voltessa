@@ -8,32 +8,40 @@ type EnergyFlowDiagramProps = {
 };
 
 /**
- * Huawei-style PV / Load / Grid diagram (Dashboard visual refinement, FINAL
- * PASS). Topology, per this milestone's explicit geometry requirement: a
- * double vertical line drops straight down from PV to a single junction,
- * which then splits exactly once into a horizontal bus — Load at its left
- * end, Grid at its right end, no further vertical drops after the split.
- * Same domain input as every prior iteration
+ * Huawei-style PV / Load / Grid diagram (Dashboard visual refinement,
+ * final pass). Same domain input as every prior iteration
  * (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`, unchanged) — this
- * component still only decides how to color/animate the two halves of the
- * bus, never a new calculation.
+ * component only decides how to color/animate lines, never a new
+ * calculation.
  *
- * - **Exporting**: the trunk and both bus halves are green — PV's output
- *   splits at the junction, part staying left to Load, part continuing
- *   right to Grid.
- * - **Importing**: the trunk stays green (PV is still contributing what it
- *   can), but the whole bus turns red/orange and animates right-to-left
- *   (Grid, through the junction, to Load) — Grid supplying the shortfall.
- *   Never both colors on the bus at once.
- * - Whenever `gridKw` is genuinely `0` (no real export or import
- *   happening), the bus renders as a plain, static, light-grey line
- *   instead of inventing a direction for a flow that isn't there.
+ * Topology (three genuinely independent lines, never a chain):
+ * - A double vertical line drops from PV straight down to a single split
+ *   point, which then turns exactly once — one branch running left to
+ *   Load, one running right to Grid. No further vertical drops after the
+ *   split; each branch ends directly at its node.
+ * - A completely separate horizontal line connects Load and Grid, drawn
+ *   below the PV branches — this is the ONLY line ever used for
+ *   Grid -> Load. It never coincides with, and is never the same segment
+ *   as, the PV -> Load / PV -> Grid branches above it.
  *
- * Nodes are deliberately light — small, thin low-opacity borders, no glow —
- * so the flow lines (not the nodes) read as the dominant visual element,
- * per this milestone's explicit ask. Icons are custom energy-asset
- * illustrations (`energy-icons.tsx`): a solar panel, a building, a
- * transmission tower — never a generic sun/lightning-bolt/home glyph.
+ * Both nodes sit between their own PV branch (above) and the Load-Grid
+ * line (below) — centered on the same x as both, per this milestone's
+ * explicit alignment requirement.
+ *
+ * - **Exporting** (PV > Load): PV -> Load and PV -> Grid are the two
+ *   active, green, particled flows (both originating from the PV split).
+ *   The Load-Grid line stays a static, very light grey, dashed, never
+ *   animated — there is no Load/Grid interaction while exporting.
+ * - **Importing** (Load > PV): PV -> Load stays active (green) — PV's own
+ *   contribution still reaches Load. PV -> Grid disappears (very light
+ *   grey, no animation) — PV isn't exporting anything. The Load-Grid line
+ *   becomes the active one: orange/red, particles animating Grid -> Load
+ *   (right to left). This is the only place Grid and Load are ever
+ *   connected.
+ *
+ * Every line is gated on the real magnitude it represents (`pvKw`/
+ * `gridKw` > 0) — never shown active for a flow that isn't actually
+ * happening, matching this codebase's "never fabricate" rule.
  */
 export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   if (!flow.available) {
@@ -48,81 +56,111 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   const importing = direction === "importing";
   const loadKw = consumption.consistent ? consumption.kw : null;
 
-  // Coordinates share the same 0-100 x / 0-90 y space as the SVG viewBox
+  // Coordinates share the same 0-100 x / 0-100 y space as the SVG viewBox
   // below, so the HTML icon nodes (positioned by percentage) and the SVG
   // lines/particles (positioned by these same numbers) always line up.
-  const PV = { x: 50, y: 10 };
-  const JUNCTION = { x: 50, y: 55 };
-  const LOAD = { x: 12, y: 55 };
-  const GRID = { x: 88, y: 55 };
+  const PV = { x: 50, y: 12 };
+  // The horizontal branches run at exactly the same y as the Load/Grid
+  // icons themselves, so each branch terminates directly at its node with
+  // zero additional vertical drop. The Load-Grid line is a distinctly
+  // separate, lower line — never the same segment as the branches above.
+  const NODE_Y = 55;
+  const LOAD = { x: 22, y: NODE_Y };
+  const GRID = { x: 78, y: NODE_Y };
+  const LOWER_LINE_Y = 72;
 
-  const trunkActive = pvKw > 0;
-  const busActive = gridKw > 0;
+  const INACTIVE_STROKE = "rgba(255,255,255,0.12)";
+  const INACTIVE_DASH = "2 2";
 
-  const leftBusPath = `M${JUNCTION.x},${JUNCTION.y} L${LOAD.x},${LOAD.y}`;
-  const rightBusPath = `M${JUNCTION.x},${JUNCTION.y} L${GRID.x},${GRID.y}`;
-  const wholeBusPath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+  const pvActive = pvKw > 0;
+  const exportingActive = !importing && gridKw > 0;
+  const importingActive = importing && gridKw > 0;
 
-  const busColor = !busActive ? "rgba(255,255,255,0.1)" : importing ? "#fb923c" : "#34d399";
-  const trunkColor = trunkActive ? "#34d399" : "rgba(255,255,255,0.1)";
-  const particleColor = importing ? "#fdba74" : "#6ee7b7";
+  const trunkLeftPath = `M${PV.x - 1.4},${PV.y + 6} L${PV.x - 1.4},${NODE_Y}`;
+  const trunkRightPath = `M${PV.x + 1.4},${PV.y + 6} L${PV.x + 1.4},${NODE_Y}`;
+  const loadBranchPath = `M${PV.x - 1.4},${NODE_Y} L${LOAD.x},${NODE_Y}`;
+  const gridBranchPath = `M${PV.x + 1.4},${NODE_Y} L${GRID.x},${NODE_Y}`;
+  const lowerLinePath = `M${GRID.x},${LOWER_LINE_Y} L${LOAD.x},${LOWER_LINE_Y}`;
+
+  const pvColor = pvActive ? "#34d399" : INACTIVE_STROKE;
+  const gridBranchColor = exportingActive ? "#34d399" : INACTIVE_STROKE;
+  const lowerLineColor = importingActive ? "#fb923c" : INACTIVE_STROKE;
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">
-      <div className="relative aspect-[10/9] w-full max-w-[230px]">
-        <svg viewBox="0 0 100 90" className="absolute inset-0 h-full w-full" aria-hidden>
-          {/* Double vertical trunk, PV -> junction */}
-          <line x1={PV.x - 1.4} y1={PV.y + 6} x2={JUNCTION.x - 1.4} y2={JUNCTION.y} stroke={trunkColor} strokeWidth={0.6} />
-          <line x1={PV.x + 1.4} y1={PV.y + 6} x2={JUNCTION.x + 1.4} y2={JUNCTION.y} stroke={trunkColor} strokeWidth={0.6} />
+      <div className="relative aspect-square w-full max-w-[220px]">
+        <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden>
+          {/* PV -> Load: trunk (left rail) + left branch, always this color/state */}
+          <path
+            d={trunkLeftPath}
+            stroke={pvColor}
+            strokeWidth={pvActive ? 0.6 : 0.4}
+            fill="none"
+            strokeDasharray={pvActive ? undefined : INACTIVE_DASH}
+          />
+          <path
+            d={loadBranchPath}
+            stroke={pvColor}
+            strokeWidth={pvActive ? 0.6 : 0.4}
+            fill="none"
+            strokeDasharray={pvActive ? undefined : INACTIVE_DASH}
+          />
 
-          {/* Horizontal bus, junction splits once into Load (left) and Grid (right) */}
-          <path d={leftBusPath} stroke={busColor} strokeWidth={busActive ? 0.7 : 0.5} fill="none" />
-          <path d={rightBusPath} stroke={busColor} strokeWidth={busActive ? 0.7 : 0.5} fill="none" />
+          {/* PV -> Grid: trunk (right rail) + right branch, one continuous path, active only while exporting */}
+          <path
+            d={trunkRightPath}
+            stroke={gridBranchColor}
+            strokeWidth={exportingActive ? 0.6 : 0.4}
+            fill="none"
+            strokeDasharray={exportingActive ? undefined : INACTIVE_DASH}
+          />
+          <path
+            d={gridBranchPath}
+            stroke={gridBranchColor}
+            strokeWidth={exportingActive ? 0.6 : 0.4}
+            fill="none"
+            strokeDasharray={exportingActive ? undefined : INACTIVE_DASH}
+          />
 
-          {trunkActive &&
+          {/* Load <-> Grid: a completely separate line, the only path ever used for Grid -> Load */}
+          <path
+            d={lowerLinePath}
+            stroke={lowerLineColor}
+            strokeWidth={importingActive ? 0.6 : 0.4}
+            fill="none"
+            strokeDasharray={importingActive ? undefined : INACTIVE_DASH}
+          />
+
+          {pvActive &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`trunk-${delay}`}
+                key={`trunk-load-${delay}`}
                 r={0.9}
                 fill="#6ee7b7"
                 className="voltessa-flow-particle"
-                style={{
-                  offsetPath: `path('M${PV.x},${PV.y + 6} L${JUNCTION.x},${JUNCTION.y}')`,
-                  animationDelay: `${delay}s`,
-                }}
+                style={{ offsetPath: `path('${trunkLeftPath} ${loadBranchPath.replace("M", "L")}')`, animationDelay: `${delay}s` }}
               />
             ))}
 
-          {busActive && !importing &&
+          {exportingActive &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`bus-left-${delay}`}
+                key={`trunk-grid-${delay}`}
                 r={0.9}
-                fill={particleColor}
+                fill="#6ee7b7"
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${leftBusPath}')`, animationDelay: `${delay}s` }}
+                style={{ offsetPath: `path('${trunkRightPath} ${gridBranchPath.replace("M", "L")}')`, animationDelay: `${delay}s` }}
               />
             ))}
 
-          {busActive && !importing &&
+          {importingActive &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`bus-right-${delay}`}
+                key={`grid-load-${delay}`}
                 r={0.9}
-                fill={particleColor}
+                fill="#fdba74"
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${rightBusPath}')`, animationDelay: `${delay}s` }}
-              />
-            ))}
-
-          {busActive && importing &&
-            [0, 0.7, 1.4].map((delay) => (
-              <circle
-                key={`bus-import-${delay}`}
-                r={0.9}
-                fill={particleColor}
-                className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${wholeBusPath}')`, animationDelay: `${delay}s` }}
+                style={{ offsetPath: `path('${lowerLinePath}')`, animationDelay: `${delay}s` }}
               />
             ))}
         </svg>
@@ -131,24 +169,21 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
           icon={<SolarPanelIcon className="h-5 w-5 text-emerald-300/90" />}
           label="PV"
           value={`${pvKw.toFixed(1)} kW`}
-          borderClass="border-white/10"
-          style={{ left: `${PV.x}%`, top: `${(PV.y / 90) * 100}%` }}
+          style={{ left: `${PV.x}%`, top: `${PV.y}%` }}
         />
 
         <FlowNode
           icon={<LoadBuildingIcon className="h-5 w-5 text-slate-300" />}
           label="Load"
           value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
-          borderClass="border-white/10"
-          style={{ left: `${LOAD.x}%`, top: `${(LOAD.y / 90) * 100}%` }}
+          style={{ left: `${LOAD.x}%`, top: `${NODE_Y}%` }}
         />
 
         <FlowNode
           icon={<TransmissionTowerIcon className="h-5 w-5 text-cyan-300/90" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
-          borderClass="border-white/10"
-          style={{ left: `${GRID.x}%`, top: `${(GRID.y / 90) * 100}%` }}
+          style={{ left: `${GRID.x}%`, top: `${NODE_Y}%` }}
         />
       </div>
 
@@ -167,31 +202,28 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   );
 }
 
+/** Title above the icon, icon in the middle, value below — the value is the most prominent text, per this milestone's explicit label hierarchy. */
 function FlowNode({
   icon,
   label,
   value,
-  borderClass,
   style,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
-  borderClass: string;
   style: CSSProperties;
 }) {
   return (
     <div
-      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
+      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
       style={style}
     >
-      <div
-        className={`flex h-9 w-9 items-center justify-center rounded-full border bg-[#0f172a]/80 ${borderClass}`}
-      >
+      <p className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
+      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#0f172a]/80">
         {icon}
       </div>
-      <p className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
-      <p className="text-[11px] font-semibold tabular-nums text-white">{value}</p>
+      <p className="text-sm font-semibold tabular-nums text-white">{value}</p>
     </div>
   );
 }
