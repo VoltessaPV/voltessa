@@ -24,13 +24,11 @@ type EnergyFlowDiagramProps = {
  *   below the PV branches — this is the ONLY line ever used for
  *   Grid -> Load.
  *
- * Load/Grid's *rendered node* (icon+label+value block) position is
- * intentionally decoupled from where its own line actually ends — the
- * lines stay exactly where they were, while the node itself sits at a
- * separately-tuned position (`LOAD_NODE_X`/`GRID_NODE_X`/
- * `NODE_Y_POSITION`) closer to center and slightly lower, per this
- * milestone's explicit instruction (item 1/2). Never inferred from the
- * line geometry.
+ * Load/Grid's rendered node (icon+label+value block) and its branch
+ * endpoint are always the exact same point — `LOAD`/`GRID` below are used
+ * for both the line geometry and the `FlowNode` position, never two
+ * separate coordinates. (An earlier pass decoupled them; that was
+ * reverted — the node and the line endpoint must always stay aligned.)
  *
  * - **Exporting** (PV > Load): PV -> Load and PV -> Grid are the two
  *   active, green, particled flows. The Load-Grid line stays a static,
@@ -64,24 +62,17 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const VIEWBOX_HEIGHT = 80;
   const PV = { x: 50, y: 10 };
   // The horizontal branches run at exactly this y (NODE_Y), so each
-  // branch terminates with zero additional vertical drop. The Load-Grid
-  // line is a distinctly separate, lower line, raised so its gap from
-  // NODE_Y approximately matches the horizontal gap between the two PV
-  // trunk rails (2.8 units). Line geometry (`LOAD`/`GRID` below) is
-  // unchanged from the previous pass — per this milestone's explicit
-  // instruction, only the *rendered node* (icon+label+value block)
-  // position moves, decoupled from where its line actually ends.
-  const NODE_Y = 45;
-  const LOWER_LINE_Y = 48;
-  const LOAD = { x: 18, y: NODE_Y };
-  const GRID = { x: 82, y: NODE_Y };
-
-  // Node positions (Dashboard UI polish milestone): Load/Grid nodes moved
-  // 15 units toward center and pinned to y: 53 — independent of the line
-  // endpoints above, which stay exactly where they were.
-  const LOAD_NODE_X = LOAD.x + 15;
-  const GRID_NODE_X = GRID.x - 15;
-  const NODE_Y_POSITION = 53;
+  // branch terminates with zero additional vertical drop — `LOAD`/`GRID`
+  // below are both the branch endpoint AND the rendered node position,
+  // always the same point. The Load-Grid line is a distinctly separate,
+  // lower line, kept a fixed 3-unit gap below NODE_Y (originally tuned to
+  // approximately match the horizontal gap between the two PV trunk
+  // rails, 2.8 units) so it shifts down along with NODE_Y and never ends
+  // up level with or above the branches.
+  const NODE_Y = 50;
+  const LOWER_LINE_Y = NODE_Y + 3;
+  const LOAD = { x: 28, y: NODE_Y };
+  const GRID = { x: 72, y: NODE_Y };
 
   const INACTIVE_STROKE = "rgba(255,255,255,0.12)";
   const INACTIVE_DASH = "2 2";
@@ -215,14 +206,14 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
           icon={<LoadBuildingIcon className="h-[31px] w-[31px] text-slate-300" />}
           label="Load"
           value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
-          style={{ left: `${LOAD_NODE_X}%`, top: toTopPercent(NODE_Y_POSITION) }}
+          style={{ left: `${LOAD.x}%`, top: toTopPercent(LOAD.y) }}
         />
 
         <FlowNode
           icon={<TransmissionTowerIcon className="h-[31px] w-[31px] text-cyan-300/90" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
-          style={{ left: `${GRID_NODE_X}%`, top: toTopPercent(NODE_Y_POSITION) }}
+          style={{ left: `${GRID.x}%`, top: toTopPercent(GRID.y) }}
         />
       </div>
 
