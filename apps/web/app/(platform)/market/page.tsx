@@ -1,5 +1,8 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
-import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
+import {
+  computeExportRevenue,
+  type RevenueSummary,
+} from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
 
 import { MarketDistribution } from "@/components/market/MarketDistribution";
@@ -9,6 +12,7 @@ import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { AppShell } from "@/components/platform/layout/AppShell";
 
 import { getMarketPageData } from "./market-data";
 import { getProductionPageData } from "./production-data";
@@ -59,9 +63,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const revenueEyebrow =
     data.dataAvailable && data.isToday ? "Today's Revenue" : "Revenue";
 
-  const currentPriceTrend = data.dataAvailable && data.summary.currentPrice
-    ? priceDeltaTrend(data.summary.currentPrice.deltaVsPrevious)
-    : undefined;
+  const currentPriceTrend =
+    data.dataAvailable && data.summary.currentPrice
+      ? priceDeltaTrend(data.summary.currentPrice.deltaVsPrevious)
+      : undefined;
 
   // Grid direction is derived once here so the chart's NOW annotation
   // stays simple — never inferred from configuration, only from the real
@@ -73,7 +78,8 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       ? "export"
       : production.currentImport.available && production.currentImport.kw > 0
         ? "import"
-        : production.currentExport.available || production.currentImport.available
+        : production.currentExport.available ||
+            production.currentImport.available
           ? "neutral"
           : "unavailable";
 
@@ -87,7 +93,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     }
     if (gridDirection === "export" && production.currentExport.available) {
       nowAnnotationParts.push(`${production.currentExport.kw} kW export`);
-    } else if (gridDirection === "import" && production.currentImport.available) {
+    } else if (
+      gridDirection === "import" &&
+      production.currentImport.available
+    ) {
       nowAnnotationParts.push(`${production.currentImport.kw} kW import`);
     }
   }
@@ -95,164 +104,166 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     nowAnnotationParts.length > 0 ? nowAnnotationParts.join(" · ") : undefined;
 
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
-      <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium text-cyan-400">
-            Bulgarian day-ahead market
-          </p>
-          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
-            Market
-          </h1>
-        </div>
-      </section>
+    <AppShell
+      user={{ name: user.name, email: user.email, role: user.role }}
+      eyebrow="Bulgarian day-ahead market"
+      title="Market"
+    >
+      <div className="mr-auto max-w-7xl space-y-3">
+        <MarketToolbar
+          selectedDate={data.selectedDate}
+          prevDateParam={data.prevDateParam}
+          nextDateParam={data.nextDateParam}
+          isToday={data.isToday}
+        />
 
-      <MarketToolbar
-        selectedDate={data.selectedDate}
-        prevDateParam={data.prevDateParam}
-        nextDateParam={data.nextDateParam}
-        isToday={data.isToday}
-      />
-
-      {!data.dataAvailable ? (
-        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
-          <p className="text-sm font-medium text-white">
-            No market data available for {data.selectedDate}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Nothing has been imported from ENTSO-E for this day yet. Use the
-            date picker above to choose a different day.
-          </p>
-        </section>
-      ) : (
-        <>
-          {data.isPartialImport && (
-            <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
-              Today&apos;s import is partial — some intervals are missing
-              from ENTSO-E and are shown as gaps, never fabricated.
+        {!data.dataAvailable ? (
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+            <p className="text-sm font-medium text-white">
+              No market data available for {data.selectedDate}
             </p>
-          )}
-
-          <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
-            <MarketSummaryCard
-              eyebrow={revenueEyebrow}
-              value={revenue.available ? revenue.revenueEur.toFixed(2) : undefined}
-              valueUnit={revenue.available ? "EUR" : undefined}
-              unavailableNote="Waiting for production telemetry"
-              rows={
-                revenue.available
-                  ? [
-                      { label: "Exported today", value: `${revenue.exportedKwh.toFixed(2)} kWh` },
-                      {
-                        label: "Average selling price",
-                        value:
-                          revenue.averagePriceEurPerMwh !== null
-                            ? `${revenue.averagePriceEurPerMwh.toFixed(2)} EUR/MWh`
-                            : "—",
-                      },
-                    ]
-                  : undefined
-              }
-            />
-
-            <MarketSummaryCard
-              eyebrow="Current Price"
-              value={data.summary.currentPrice?.value.toString()}
-              valueUnit={data.summary.currentPrice ? "EUR/MWh" : undefined}
-              caption={data.summary.currentPrice?.intervalLabel}
-              unavailableNote="Live price only available for today"
-              trend={currentPriceTrend}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Current Export"
-              value={
-                production.currentExport.available
-                  ? production.currentExport.kw.toString()
-                  : undefined
-              }
-              valueUnit={production.currentExport.available ? "kW" : undefined}
-              unavailableNote="FusionSolar meter data unavailable"
-            />
-
-            <MarketSummaryCard
-              eyebrow="Configured Mode"
-              statusDot={{
-                colorClass: production.configuredExportModeLabel.colorClass,
-                label: production.configuredExportModeLabel.label,
-              }}
-              rows={[
-                { label: "Source", value: "Huawei configuration endpoint" },
-              ]}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Threshold"
-              value={data.threshold.minimumExportPrice.toString()}
-              valueUnit={`${data.threshold.currency}/MWh`}
-              caption="Minimum profitable price"
-              statusDot={{
-                colorClass: data.summary.marketStatus.healthy
-                  ? "bg-emerald-400"
-                  : "bg-red-400",
-                label: data.summary.marketStatus.healthy ? "Healthy" : "Degraded",
-              }}
-            />
+            <p className="mt-1 text-xs text-slate-500">
+              Nothing has been imported from ENTSO-E for this day yet. Use the
+              date picker above to choose a different day.
+            </p>
           </section>
+        ) : (
+          <>
+            {data.isPartialImport && (
+              <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+                Today&apos;s import is partial — some intervals are missing from
+                ENTSO-E and are shown as gaps, never fabricated.
+              </p>
+            )}
 
-          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-white">
-                  Price &amp; Export
-                </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Electricity price and recommended export windows
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
-              <MarketPriceChart
-                series={data.series}
-                thresholdPrice={data.threshold.minimumExportPrice}
-                nowAnnotation={nowAnnotation}
-                // production-data.ts computes this for whichever day is
-                // selected (the whole day if it's a past day, today-so-far
-                // if it's today) — historical days now render telemetry
-                // exactly like today, fixing the earlier "historical
-                // telemetry missing" bug (this used to be unconditionally
-                // suppressed for any non-today day).
-                settlementEnergySeries={production.settlementEnergySeries}
-                installedCapacityKw={production.installedCapacityKw}
+            <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+              <MarketSummaryCard
+                eyebrow={revenueEyebrow}
+                value={
+                  revenue.available ? revenue.revenueEur.toFixed(2) : undefined
+                }
+                valueUnit={revenue.available ? "EUR" : undefined}
+                unavailableNote="Waiting for production telemetry"
+                rows={
+                  revenue.available
+                    ? [
+                        {
+                          label: "Exported today",
+                          value: `${revenue.exportedKwh.toFixed(2)} kWh`,
+                        },
+                        {
+                          label: "Average selling price",
+                          value:
+                            revenue.averagePriceEurPerMwh !== null
+                              ? `${revenue.averagePriceEurPerMwh.toFixed(2)} EUR/MWh`
+                              : "—",
+                        },
+                      ]
+                    : undefined
+                }
               />
-            </div>
-          </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-            <MarketEventLog entries={data.eventLog} />
-            <MarketInsights
-              insights={data.insights}
-            />
-            <MarketDistribution buckets={data.distribution} />
-            <MarketInfo
-              country={data.summary.marketStatus.country}
-              source={data.summary.marketStatus.source}
-              // The newest real DeviceTelemetry sample for this plant —
-              // not the ENTSO-E price-import timestamp (which is largely
-              // static and was found to be hours staler than the
-              // telemetry actually driving this page's chart/revenue
-              // figures; see production-data.ts's `latestTelemetryAt`
-              // doc comment for the traced root cause).
-              lastUpdateLabel={
-                production.latestTelemetryAt
-                  ? sofiaDateTimeLabel(production.latestTelemetryAt)
-                  : null
-              }
-            />
-          </section>
-        </>
-      )}
-    </div>
+              <MarketSummaryCard
+                eyebrow="Current Price"
+                value={data.summary.currentPrice?.value.toString()}
+                valueUnit={data.summary.currentPrice ? "EUR/MWh" : undefined}
+                caption={data.summary.currentPrice?.intervalLabel}
+                unavailableNote="Live price only available for today"
+                trend={currentPriceTrend}
+              />
+
+              <MarketSummaryCard
+                eyebrow="Current Export"
+                value={
+                  production.currentExport.available
+                    ? production.currentExport.kw.toString()
+                    : undefined
+                }
+                valueUnit={
+                  production.currentExport.available ? "kW" : undefined
+                }
+                unavailableNote="FusionSolar meter data unavailable"
+              />
+
+              <MarketSummaryCard
+                eyebrow="Configured Mode"
+                statusDot={{
+                  colorClass: production.configuredExportModeLabel.colorClass,
+                  label: production.configuredExportModeLabel.label,
+                }}
+                rows={[
+                  { label: "Source", value: "Huawei configuration endpoint" },
+                ]}
+              />
+
+              <MarketSummaryCard
+                eyebrow="Threshold"
+                value={data.threshold.minimumExportPrice.toString()}
+                valueUnit={`${data.threshold.currency}/MWh`}
+                caption="Minimum profitable price"
+                statusDot={{
+                  colorClass: data.summary.marketStatus.healthy
+                    ? "bg-emerald-400"
+                    : "bg-red-400",
+                  label: data.summary.marketStatus.healthy
+                    ? "Healthy"
+                    : "Degraded",
+                }}
+              />
+            </section>
+
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    Price &amp; Export
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Electricity price and recommended export windows
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
+                <MarketPriceChart
+                  series={data.series}
+                  thresholdPrice={data.threshold.minimumExportPrice}
+                  nowAnnotation={nowAnnotation}
+                  // production-data.ts computes this for whichever day is
+                  // selected (the whole day if it's a past day, today-so-far
+                  // if it's today) — historical days now render telemetry
+                  // exactly like today, fixing the earlier "historical
+                  // telemetry missing" bug (this used to be unconditionally
+                  // suppressed for any non-today day).
+                  settlementEnergySeries={production.settlementEnergySeries}
+                  installedCapacityKw={production.installedCapacityKw}
+                />
+              </div>
+            </section>
+
+            <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+              <MarketEventLog entries={data.eventLog} />
+              <MarketInsights insights={data.insights} />
+              <MarketDistribution buckets={data.distribution} />
+              <MarketInfo
+                country={data.summary.marketStatus.country}
+                source={data.summary.marketStatus.source}
+                // The newest real DeviceTelemetry sample for this plant —
+                // not the ENTSO-E price-import timestamp (which is largely
+                // static and was found to be hours staler than the
+                // telemetry actually driving this page's chart/revenue
+                // figures; see production-data.ts's `latestTelemetryAt`
+                // doc comment for the traced root cause).
+                lastUpdateLabel={
+                  production.latestTelemetryAt
+                    ? sofiaDateTimeLabel(production.latestTelemetryAt)
+                    : null
+                }
+              />
+            </section>
+          </>
+        )}
+      </div>
+    </AppShell>
   );
 }

@@ -1,11 +1,21 @@
-export default function AlertsPage() {
-  return (
-    <section>
-      <h1 className="text-2xl font-semibold">Alerts</h1>
+import { requireOnboardedUser } from "@/lib/auth/session";
 
-      <p className="mt-2 text-white/60">
-        Review operational alerts and important platform events.
-      </p>
-    </section>
+import { AppShell } from "@/components/platform/layout/AppShell";
+
+export default async function AlertsPage() {
+  const user = await requireOnboardedUser();
+
+  return (
+    <AppShell
+      user={{ name: user.name, email: user.email, role: user.role }}
+      eyebrow="Operational alerts"
+      title="Alerts"
+    >
+      <section>
+        <p className="text-white/60">
+          Review operational alerts and important platform events.
+        </p>
+      </section>
+    </AppShell>
   );
 }

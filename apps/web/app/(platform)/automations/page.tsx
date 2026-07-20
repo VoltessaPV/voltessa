@@ -1,16 +1,21 @@
-export default function AutomationsPage() {
-  return (
-    <section>
-      <p className="text-xs font-medium text-cyan-400">
-        Automated export control
-      </p>
-      <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
-        Automations
-      </h1>
+import { requireOnboardedUser } from "@/lib/auth/session";
 
-      <p className="mt-2 text-white/60">
-        Configure plant control strategies and automation rules.
-      </p>
-    </section>
+import { AppShell } from "@/components/platform/layout/AppShell";
+
+export default async function AutomationsPage() {
+  const user = await requireOnboardedUser();
+
+  return (
+    <AppShell
+      user={{ name: user.name, email: user.email, role: user.role }}
+      eyebrow="Automated export control"
+      title="Automations"
+    >
+      <section>
+        <p className="text-white/60">
+          Configure plant control strategies and automation rules.
+        </p>
+      </section>
+    </AppShell>
   );
 }

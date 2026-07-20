@@ -9,6 +9,7 @@ import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { AppShell } from "@/components/platform/layout/AppShell";
 
 import { getDashboardPageData } from "./dashboard-data";
 
@@ -89,7 +90,11 @@ function mwhValueLabel(kwh: number | null): string | undefined {
 }
 
 /** Friendlier, date-aware unavailable wording — `todayNote` only ever applies when the selected day genuinely is today. */
-function unavailableNote(isToday: boolean, todayNote: string, historicalNote: string): string {
+function unavailableNote(
+  isToday: boolean,
+  todayNote: string,
+  historicalNote: string,
+): string {
   return isToday ? todayNote : historicalNote;
 }
 
@@ -97,7 +102,9 @@ type DashboardPageProps = {
   searchParams: Promise<{ date?: string }>;
 };
 
-export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+export default async function DashboardPage({
+  searchParams,
+}: DashboardPageProps) {
   const user = await requireOnboardedUser();
   const params = await searchParams;
 
@@ -105,141 +112,170 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     where: { organizationId: user.organizationId },
   });
 
-  const data = await getDashboardPageData(user.organizationId, automationSettings, params.date);
+  const data = await getDashboardPageData(
+    user.organizationId,
+    automationSettings,
+    params.date,
+  );
 
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
-      <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-medium text-cyan-400">Live plant operation</p>
-          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">Dashboard</h1>
-        </div>
-      </section>
+    <AppShell
+      user={{ name: user.name, email: user.email, role: user.role }}
+      eyebrow="Live plant operation"
+      title="Dashboard"
+    >
+      <div className="mr-auto max-w-7xl space-y-3">
+        <MarketToolbar
+          basePath="/dashboard"
+          selectedDate={data.selectedDate}
+          prevDateParam={data.prevDateParam}
+          nextDateParam={data.nextDateParam}
+          isToday={data.isToday}
+        />
 
-      <MarketToolbar
-        basePath="/dashboard"
-        selectedDate={data.selectedDate}
-        prevDateParam={data.prevDateParam}
-        nextDateParam={data.nextDateParam}
-        isToday={data.isToday}
-      />
-
-      {!data.plantAvailable ? (
-        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
-          <p className="text-sm font-medium text-white">No plant connected</p>
-          <p className="mt-1 text-xs text-slate-500">
-            Connect a FusionSolar plant to see live operational data.
-          </p>
-        </section>
-      ) : (
-        <>
-          <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-            <MarketSummaryCard
-              eyebrow="Yield Today"
-              value={energyValueLabel(data.kpis.producedTodayKwh)}
-              valueUnit={data.kpis.producedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote={unavailableNote(
-                data.isToday,
-                "Waiting for telemetry",
-                "No historical production data available",
-              )}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Total Yield"
-              value={mwhValueLabel(data.kpis.totalYieldKwh)}
-              valueUnit={data.kpis.totalYieldKwh !== null ? "MWh" : undefined}
-              unavailableNote={unavailableNote(data.isToday, "Not available", "Historical data not available")}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Consumption Today"
-              value={energyValueLabel(data.kpis.consumedTodayKwh)}
-              valueUnit={data.kpis.consumedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote={unavailableNote(
-                data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
-              )}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Consumed from PV"
-              value={energyValueLabel(data.kpis.consumedFromPvKwh)}
-              valueUnit={data.kpis.consumedFromPvKwh !== null ? "kWh" : undefined}
-              unavailableNote={unavailableNote(
-                data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
-              )}
-            />
-
-            <MarketSummaryCard
-              eyebrow="Fed to Grid"
-              value={energyValueLabel(data.kpis.exportedTodayKwh)}
-              valueUnit={data.kpis.exportedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote={unavailableNote(
-                data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
-              )}
-            />
-
-            <MarketSummaryCard
-              eyebrow="From Grid"
-              value={energyValueLabel(data.kpis.importedTodayKwh)}
-              valueUnit={data.kpis.importedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote={unavailableNote(
-                data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
-              )}
-            />
+        {!data.plantAvailable ? (
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+            <p className="text-sm font-medium text-white">No plant connected</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Connect a FusionSolar plant to see live operational data.
+            </p>
           </section>
+        ) : (
+          <>
+            <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+              <MarketSummaryCard
+                eyebrow="Yield Today"
+                value={energyValueLabel(data.kpis.producedTodayKwh)}
+                valueUnit={
+                  data.kpis.producedTodayKwh !== null ? "kWh" : undefined
+                }
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Waiting for telemetry",
+                  "No historical production data available",
+                )}
+              />
 
-          <section className="grid gap-2.5 lg:grid-cols-[30%_1fr]">
-            <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-              <div>
-                <h2 className="text-sm font-semibold text-white">System Overview</h2>
-                <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
+              <MarketSummaryCard
+                eyebrow="Total Yield"
+                value={mwhValueLabel(data.kpis.totalYieldKwh)}
+                valueUnit={data.kpis.totalYieldKwh !== null ? "MWh" : undefined}
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Not available",
+                  "Historical data not available",
+                )}
+              />
+
+              <MarketSummaryCard
+                eyebrow="Consumption Today"
+                value={energyValueLabel(data.kpis.consumedTodayKwh)}
+                valueUnit={
+                  data.kpis.consumedTodayKwh !== null ? "kWh" : undefined
+                }
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Waiting for telemetry",
+                  "Historical data not available",
+                )}
+              />
+
+              <MarketSummaryCard
+                eyebrow="Consumed from PV"
+                value={energyValueLabel(data.kpis.consumedFromPvKwh)}
+                valueUnit={
+                  data.kpis.consumedFromPvKwh !== null ? "kWh" : undefined
+                }
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Waiting for telemetry",
+                  "Historical data not available",
+                )}
+              />
+
+              <MarketSummaryCard
+                eyebrow="Fed to Grid"
+                value={energyValueLabel(data.kpis.exportedTodayKwh)}
+                valueUnit={
+                  data.kpis.exportedTodayKwh !== null ? "kWh" : undefined
+                }
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Waiting for telemetry",
+                  "Historical data not available",
+                )}
+              />
+
+              <MarketSummaryCard
+                eyebrow="From Grid"
+                value={energyValueLabel(data.kpis.importedTodayKwh)}
+                valueUnit={
+                  data.kpis.importedTodayKwh !== null ? "kWh" : undefined
+                }
+                unavailableNote={unavailableNote(
+                  data.isToday,
+                  "Waiting for telemetry",
+                  "Historical data not available",
+                )}
+              />
+            </section>
+
+            <section className="grid gap-2.5 lg:grid-cols-[30%_1fr]">
+              <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    System Overview
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Real-time energy flow
+                  </p>
+                </div>
+
+                <div className="mt-2 min-h-0 flex-1">
+                  <EnergyFlowDiagram
+                    flow={data.energyFlow}
+                    isToday={data.isToday}
+                  />
+                </div>
               </div>
 
-              <div className="mt-2 min-h-0 flex-1">
-                <EnergyFlowDiagram flow={data.energyFlow} isToday={data.isToday} />
+              <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    Live Energy
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Today&apos;s production, consumption, and grid exchange
+                  </p>
+                </div>
+
+                <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
+                  <LiveEnergyChart
+                    data={data.chartSeries}
+                    nowAnnotation={data.nowAnnotation}
+                  />
+                </div>
               </div>
-            </div>
+            </section>
 
-            <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-              <div>
-                <h2 className="text-sm font-semibold text-white">Live Energy</h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Today&apos;s production, consumption, and grid exchange
-                </p>
-              </div>
+            <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+              <InvertersCard inverters={data.inverters} />
+              <WeatherCard />
+              <GlidepathCard />
+              <MarketEventLog entries={data.eventLog} />
+            </section>
+          </>
+        )}
 
-              <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
-                <LiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
-              </div>
-            </div>
-          </section>
-
-          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-            <InvertersCard inverters={data.inverters} />
-            <WeatherCard />
-            <GlidepathCard />
-            <MarketEventLog entries={data.eventLog} />
-          </section>
-        </>
-      )}
-
-      <p className="text-xs text-slate-500">
-        Last telemetry:{" "}
-        <span className="text-slate-300">
-          {data.plantAvailable && data.latestTelemetryAt
-            ? sofiaDateTimeLabel(data.latestTelemetryAt)
-            : "No data"}
-        </span>
-      </p>
-    </div>
+        <p className="text-xs text-slate-500">
+          Last telemetry:{" "}
+          <span className="text-slate-300">
+            {data.plantAvailable && data.latestTelemetryAt
+              ? sofiaDateTimeLabel(data.latestTelemetryAt)
+              : "No data"}
+          </span>
+        </p>
+      </div>
+    </AppShell>
   );
 }
