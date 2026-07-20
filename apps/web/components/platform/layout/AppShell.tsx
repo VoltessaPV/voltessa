@@ -20,10 +20,10 @@ export function AppShell({
     <div className="min-h-screen bg-[#050816] text-white">
       <AppSidebar />
 
-      <div className="min-h-screen pl-64">
+      <div className="min-h-screen pl-56">
         <AppHeader user={user} />
 
-        <main className="p-6">
+        <main className="px-6 pb-6 pt-3">
           {children}
         </main>
       </div>
