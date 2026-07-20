@@ -1,3 +1,4 @@
+import { LineChart } from "lucide-react";
 import Link from "next/link";
 
 import type { DashboardMarketWidgetData } from "@/app/(platform)/dashboard/dashboard-data";
@@ -27,7 +28,10 @@ export function DashboardMarketWidget({ market }: DashboardMarketWidgetProps) {
 
   return (
     <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Market</p>
+      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+        <LineChart className="h-3.5 w-3.5" />
+        Market
+      </p>
 
       <div className="mt-1.5 flex items-baseline gap-1.5">
         <span className="text-xl font-semibold leading-none tracking-tight text-white tabular-nums">

@@ -1,3 +1,6 @@
+import { Home, Sun, Zap } from "lucide-react";
+import type { CSSProperties, ReactNode } from "react";
+
 import type { EnergyFlowState } from "@/app/(platform)/dashboard/dashboard-data";
 
 type EnergyFlowDiagramProps = {
@@ -5,31 +8,34 @@ type EnergyFlowDiagramProps = {
 };
 
 /**
- * Real-time PV -> Home -> Grid energy flow (Design-System Consistency
- * milestone). Exactly three nodes, always — never a second Grid or a
- * second Home. Exactly two possible states, never a third "idle" one:
+ * Compact PV / Load / Grid triangle diagram (Dashboard UI Refinement — Final
+ * Design Pass milestone), replacing the previous wide horizontal
+ * PV -> Home -> Grid layout. Matches the Huawei-style layout the milestone
+ * asked for: PV top-center, Load bottom-left, Grid bottom-right — icons
+ * (`lucide-react`, already a dependency) instead of plain text circles.
+ * "Load", never "Home" — this product isn't house-only.
  *
- * - Case A (`exporting`): PV >= Consumption. `PV -> Home -> Grid`, Grid
- *   shows exported power.
- * - Case B (`importing`): Consumption > PV. `PV -> Home <- Grid`, Grid
- *   shows imported power.
+ * Exactly two states, never a third "idle" one, unchanged from the
+ * original implementation (see `lib/telemetry/energy-flow.ts`'s
+ * `deriveEnergyFlow` — this component still only renders what that
+ * function returns, never modifies/clamps/floors a value itself):
  *
- * Direction and every value are read directly from `flow`
- * (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`, the one documented
- * domain calculation) — this component never modifies, clamps, or floors
- * anything itself. PV/Grid are always the real measured readings; Home
- * shows "Inconsistent" instead of a number on the rare occasion the two
- * independently-read devices momentarily disagree (`consumption.consistent
- * === false`) — never a fabricated or clamped value. Pure CSS motion-path
- * animation (see `app/globals.css`'s `voltessa-flow-particle` keyframes,
- * the same subtle animation style used elsewhere) — no client JS needed
- * for particles moving along a fixed path at a constant rate, so this
- * stays a plain server component.
+ * - Case A (`exporting`): PV -> Load -> Grid. The Load -> Grid segment
+ *   flows outward (Load feeds Grid).
+ * - Case B (`importing`): PV -> Load, Grid -> Load. The same segment
+ *   reverses (Grid feeds Load).
+ *
+ * The PV -> Load segment always flows in one direction (down from PV)
+ * regardless of state — only the Load <-> Grid segment's direction and
+ * particle travel depend on `flow.direction`. Small glowing particles
+ * travel along both segments via the same CSS motion-path technique
+ * already established in `app/globals.css` (`voltessa-flow-particle`) —
+ * reused, not reinvented.
  */
 export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   if (!flow.available) {
     return (
-      <div className="flex h-[220px] items-center justify-center text-sm text-slate-500">
+      <div className="flex h-[160px] items-center justify-center text-sm text-slate-500">
         Live meter data unavailable
       </div>
     );
@@ -38,141 +44,129 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   const { pvKw, consumption, direction, gridKw } = flow;
   const importing = direction === "importing";
 
+  // Coordinates share the same 0-100 x / 0-50 y space as the SVG viewBox
+  // below, so the HTML icon nodes (positioned by percentage) and the SVG
+  // lines/particles (positioned by these same numbers) always line up
+  // regardless of the container's rendered size.
+  const PV = { x: 50, y: 9 };
+  const LOAD = { x: 14, y: 41 };
+  const GRID = { x: 86, y: 41 };
+
+  const pvToLoadPath = `M${PV.x},${PV.y} L${LOAD.x},${LOAD.y}`;
+  const loadGridForwardPath = `M${LOAD.x},${LOAD.y} L${GRID.x},${GRID.y}`;
+  const loadGridReversePath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+
   return (
-    <div className="flex flex-col items-center gap-4">
-      <svg viewBox="0 0 640 200" className="h-[200px] w-full max-w-[640px]" aria-hidden>
-        <defs>
-          <marker id="flow-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
-            <path d="M0,0 L8,4 L0,8 Z" fill="#475569" />
-          </marker>
-        </defs>
-
-        {/* PV -> Home path, always present and always this direction */}
-        <line x1={150} y1={100} x2={270} y2={100} stroke="rgba(255,255,255,0.12)" strokeWidth={2} />
-        <line
-          x1={150}
-          y1={100}
-          x2={262}
-          y2={100}
-          stroke="#34d399"
-          strokeWidth={2}
-          markerEnd="url(#flow-arrow)"
-        />
-
-        {/* Home <-> Grid path — exactly one direction active, never both */}
-        <line x1={370} y1={100} x2={490} y2={100} stroke="rgba(255,255,255,0.12)" strokeWidth={2} />
-        {importing ? (
+    <div className="flex flex-col items-center gap-3">
+      <div className="relative aspect-[2/1] w-full max-w-[360px]">
+        <svg viewBox="0 0 100 50" className="absolute inset-0 h-full w-full" aria-hidden>
           <line
-            x1={490}
-            y1={100}
-            x2={378}
-            y2={100}
-            stroke="#22d3ee"
-            strokeWidth={2}
-            markerEnd="url(#flow-arrow)"
+            x1={PV.x}
+            y1={PV.y}
+            x2={LOAD.x}
+            y2={LOAD.y}
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth={0.6}
           />
-        ) : (
           <line
-            x1={370}
-            y1={100}
-            x2={482}
-            y2={100}
-            stroke="#22d3ee"
-            strokeWidth={2}
-            markerEnd="url(#flow-arrow)"
+            x1={LOAD.x}
+            y1={LOAD.y}
+            x2={GRID.x}
+            y2={GRID.y}
+            stroke="rgba(255,255,255,0.1)"
+            strokeWidth={0.6}
           />
-        )}
 
-        {/* Animated particles, PV -> Home, whenever PV is producing */}
-        {pvKw > 0 &&
-          [0, 0.7, 1.4].map((delay) => (
+          {pvKw > 0 &&
+            [0, 0.7, 1.4].map((delay) => (
+              <circle
+                key={`pv-${delay}`}
+                r={1}
+                fill="#6ee7b7"
+                className="voltessa-flow-particle"
+                style={{ offsetPath: `path('${pvToLoadPath}')`, animationDelay: `${delay}s` }}
+              />
+            ))}
+
+          {[0, 0.7, 1.4].map((delay) => (
             <circle
-              key={`pv-${delay}`}
-              r={3.5}
-              fill="#6ee7b7"
+              key={`grid-${delay}`}
+              r={1}
+              fill="#67e8f9"
               className="voltessa-flow-particle"
-              style={{ offsetPath: "path('M150,100 L266,100')", animationDelay: `${delay}s` }}
+              style={{
+                offsetPath: `path('${importing ? loadGridReversePath : loadGridForwardPath}')`,
+                animationDelay: `${delay}s`,
+              }}
             />
           ))}
+        </svg>
 
-        {/* Animated particles, Home <-> Grid — direction-aware, one path only */}
-        {[0, 0.7, 1.4].map((delay) => (
-          <circle
-            key={`grid-${delay}`}
-            r={3.5}
-            fill="#67e8f9"
-            className="voltessa-flow-particle"
-            style={{
-              offsetPath: importing ? "path('M490,100 L374,100')" : "path('M370,100 L486,100')",
-              animationDelay: `${delay}s`,
-            }}
-          />
-        ))}
-
-        {/* PV node */}
-        <circle cx={90} cy={100} r={44} fill="#0f172a" stroke="rgba(52,211,153,0.4)" strokeWidth={1.5} />
-        <text x={90} y={92} textAnchor="middle" fontSize={11} fontWeight={600} fill="#e2e8f0">
-          PV
-        </text>
-        <text x={90} y={110} textAnchor="middle" fontSize={13} fontWeight={700} fill="#6ee7b7">
-          {pvKw.toFixed(1)}
-        </text>
-        <text x={90} y={124} textAnchor="middle" fontSize={9} fill="#64748b">
-          kW
-        </text>
-
-        {/* Home node */}
-        <circle
-          cx={320}
-          cy={100}
-          r={44}
-          fill="#0f172a"
-          stroke={consumption.consistent ? "rgba(255,255,255,0.15)" : "rgba(251,191,36,0.4)"}
-          strokeWidth={1.5}
+        <FlowNode
+          icon={<Sun className="h-5 w-5 text-emerald-300" />}
+          label="PV"
+          value={`${pvKw.toFixed(1)} kW`}
+          borderClass="border-emerald-400/40"
+          style={{ left: `${PV.x}%`, top: `${PV.y * 2}%` }}
         />
-        <text x={320} y={92} textAnchor="middle" fontSize={11} fontWeight={600} fill="#e2e8f0">
-          Home
-        </text>
-        {consumption.consistent ? (
-          <>
-            <text x={320} y={110} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f8fafc">
-              {consumption.kw.toFixed(1)}
-            </text>
-            <text x={320} y={124} textAnchor="middle" fontSize={9} fill="#64748b">
-              kW
-            </text>
-          </>
-        ) : (
-          <text x={320} y={112} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fbbf24">
-            Inconsistent
-          </text>
-        )}
 
-        {/* Grid node */}
-        <circle cx={550} cy={100} r={44} fill="#0f172a" stroke="rgba(34,211,238,0.4)" strokeWidth={1.5} />
-        <text x={550} y={92} textAnchor="middle" fontSize={11} fontWeight={600} fill="#e2e8f0">
-          Grid
-        </text>
-        <text x={550} y={110} textAnchor="middle" fontSize={13} fontWeight={700} fill="#67e8f9">
-          {gridKw.toFixed(1)}
-        </text>
-        <text x={550} y={124} textAnchor="middle" fontSize={9} fill="#64748b">
-          kW
-        </text>
-      </svg>
+        <FlowNode
+          icon={<Home className="h-5 w-5 text-slate-200" />}
+          label="Load"
+          value={consumption.consistent ? `${consumption.kw.toFixed(1)} kW` : "Inconsistent"}
+          borderClass={consumption.consistent ? "border-white/15" : "border-amber-400/40"}
+          style={{ left: `${LOAD.x}%`, top: `${LOAD.y * 2}%` }}
+        />
+
+        <FlowNode
+          icon={<Zap className="h-5 w-5 text-cyan-300" />}
+          label="Grid"
+          value={`${gridKw.toFixed(1)} kW`}
+          borderClass="border-cyan-400/40"
+          style={{ left: `${GRID.x}%`, top: `${GRID.y * 2}%` }}
+        />
+      </div>
 
       <div className="flex items-center gap-2 text-sm">
         <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-cyan-400" : "bg-emerald-400"}`} />
         <span className="font-medium text-white">{importing ? "Importing" : "Exporting"}</span>
-        <span className="tabular-nums text-slate-400">{gridKw.toFixed(1)} kW</span>
       </div>
 
       {!consumption.consistent && (
         <p className="max-w-md text-center text-xs text-amber-400/80">
-          PV and grid readings are momentarily inconsistent — consumption can&apos;t be derived
-          right now. PV and Grid above are the real measured values, unmodified.
+          PV and grid readings are momentarily inconsistent — Load can&apos;t be derived right
+          now. PV and Grid above are the real measured values, unmodified.
         </p>
       )}
+    </div>
+  );
+}
+
+function FlowNode({
+  icon,
+  label,
+  value,
+  borderClass,
+  style,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  borderClass: string;
+  style: CSSProperties;
+}) {
+  return (
+    <div
+      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+      style={style}
+    >
+      <div
+        className={`flex h-11 w-11 items-center justify-center rounded-full border bg-[#0f172a] ${borderClass}`}
+      >
+        {icon}
+      </div>
+      <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="text-xs font-semibold tabular-nums text-white">{value}</p>
     </div>
   );
 }

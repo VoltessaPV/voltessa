@@ -17,12 +17,23 @@ import { getDashboardPageData } from "./dashboard-data";
  * reference implementation), not evolved from the previous Dashboard. The
  * base layout below - outer container, header, KPI-row grid, chart-section
  * wrapper, bottom four-card grid - is Market's own skeleton, class for
- * class (`mx-auto max-w-7xl space-y-3`, `grid gap-2.5 sm:grid-cols-2
- * xl:grid-cols-5`, the exact chart-section shadow, `grid gap-2.5
- * lg:grid-cols-2 xl:grid-cols-4`). "Dashboard is Market plus operational
- * information": the only sections with no Market equivalent are System
- * Overview and Inverters, each its own section below the shared skeleton,
- * never patched into it.
+ * class (`mx-auto max-w-7xl space-y-3`, the exact chart-section shadow,
+ * `grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4`). "Dashboard is Market plus
+ * operational information": the only sections with no Market equivalent are
+ * System Overview and Inverters, each its own section below the shared
+ * skeleton, never patched into it.
+ *
+ * ## Dashboard UI Refinement (Final Design Pass) milestone
+ *
+ * UI/UX only — every value below still comes from `dashboard-data.ts`
+ * unchanged (plus `totalYieldKwh`/`consumedFromPvKwh`, additive fields on
+ * the same already-fetched data, see that module's doc comment). This pass
+ * only changes: the top KPI row (six cards, Revenue dropped since it's
+ * already shown on Market), global terminology (`Produced Today` -> `Yield
+ * Today`, `Consumed Today` -> `Consumption Today`, `Exported Today` -> `Fed
+ * to Grid`, `Imported Today` -> `From Grid` — see `LiveEnergyChart.tsx` for
+ * the matching real-time-chart renames), and small icons on the bottom
+ * cards' headers (via `lucide-react`, already a dependency).
  */
 
 /**
@@ -65,40 +76,47 @@ export default async function DashboardPage() {
         </section>
       ) : (
         <>
-          <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+          <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
             <MarketSummaryCard
-              eyebrow="Produced Today"
+              eyebrow="Yield Today"
               value={energyValueLabel(data.kpis.producedTodayKwh)}
               valueUnit={data.kpis.producedTodayKwh !== null ? "kWh" : undefined}
               unavailableNote="Waiting for telemetry"
             />
 
             <MarketSummaryCard
-              eyebrow="Consumed Today"
+              eyebrow="Total Yield"
+              value={energyValueLabel(data.kpis.totalYieldKwh)}
+              valueUnit={data.kpis.totalYieldKwh !== null ? "kWh" : undefined}
+              unavailableNote="Not available"
+            />
+
+            <MarketSummaryCard
+              eyebrow="Consumption Today"
               value={energyValueLabel(data.kpis.consumedTodayKwh)}
               valueUnit={data.kpis.consumedTodayKwh !== null ? "kWh" : undefined}
               unavailableNote="Waiting for telemetry"
             />
 
             <MarketSummaryCard
-              eyebrow="Exported Today"
+              eyebrow="Consumed from PV"
+              value={energyValueLabel(data.kpis.consumedFromPvKwh)}
+              valueUnit={data.kpis.consumedFromPvKwh !== null ? "kWh" : undefined}
+              unavailableNote="Waiting for telemetry"
+            />
+
+            <MarketSummaryCard
+              eyebrow="Fed to Grid"
               value={energyValueLabel(data.kpis.exportedTodayKwh)}
               valueUnit={data.kpis.exportedTodayKwh !== null ? "kWh" : undefined}
               unavailableNote="Waiting for telemetry"
             />
 
             <MarketSummaryCard
-              eyebrow="Imported Today"
+              eyebrow="From Grid"
               value={energyValueLabel(data.kpis.importedTodayKwh)}
               valueUnit={data.kpis.importedTodayKwh !== null ? "kWh" : undefined}
               unavailableNote="Waiting for telemetry"
-            />
-
-            <MarketSummaryCard
-              eyebrow="Revenue Today"
-              value={data.kpis.revenue.available ? data.kpis.revenue.revenueEur.toFixed(2) : undefined}
-              valueUnit={data.kpis.revenue.available ? "EUR" : undefined}
-              unavailableNote="Waiting for production telemetry"
             />
           </section>
 

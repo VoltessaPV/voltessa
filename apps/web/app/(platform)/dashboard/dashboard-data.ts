@@ -82,7 +82,19 @@ const TELEMETRY_GRID_MINUTES = 5;
 
 export type DashboardKpis = {
   producedTodayKwh: number | null;
+  /** Lifetime PV yield (Huawei `total_power`) — see `getPlantDailyKpi`'s doc comment. `null` only when the field isn't present, never fabricated. */
+  totalYieldKwh: number | null;
   consumedTodayKwh: number | null;
+  /**
+   * Self-consumption: the portion of today's PV yield that never left the
+   * site (`producedTodayKwh - exportedTodayKwh`) — a plain energy-balance
+   * identity over two values already computed above, not a new
+   * measurement or Huawei field. `null` whenever either input is
+   * unavailable, or when the subtraction would go negative (a genuine
+   * disagreement between the two independent Huawei-sourced counters) —
+   * never clamped to zero.
+   */
+  consumedFromPvKwh: number | null;
   exportedTodayKwh: number | null;
   importedTodayKwh: number | null;
   revenue: RevenueSummary;
@@ -274,10 +286,19 @@ export async function getDashboardPageData(
   // query for the same [dayStart, now) window.
   const settlementTotals = sumSettlementEnergy(production.settlementEnergySeries);
 
+  const producedTodayKwh = dailyKpi.available ? dailyKpi.producedKwh : null;
+  const exportedTodayKwh = settlementTotals.available ? settlementTotals.exportedKwh : null;
+  const selfConsumptionKwh =
+    producedTodayKwh !== null && exportedTodayKwh !== null && producedTodayKwh >= exportedTodayKwh
+      ? Math.round((producedTodayKwh - exportedTodayKwh) * 100) / 100
+      : null;
+
   const kpis: DashboardKpis = {
-    producedTodayKwh: dailyKpi.available ? dailyKpi.producedKwh : null,
+    producedTodayKwh,
+    totalYieldKwh: dailyKpi.available ? dailyKpi.totalYieldKwh : null,
     consumedTodayKwh: dailyKpi.available ? dailyKpi.consumedKwh : null,
-    exportedTodayKwh: settlementTotals.available ? settlementTotals.exportedKwh : null,
+    consumedFromPvKwh: selfConsumptionKwh,
+    exportedTodayKwh,
     importedTodayKwh: settlementTotals.available ? settlementTotals.importedKwh : null,
     revenue,
   };
