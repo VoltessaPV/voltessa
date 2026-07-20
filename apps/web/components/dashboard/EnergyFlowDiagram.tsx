@@ -63,7 +63,13 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   // 0-100) removes the dead space below the lower line that made the
   // previous pass feel sparse.
   const VIEWBOX_HEIGHT = 80;
-  const PV = { x: 50, y: 10 };
+  // PV nudged down slightly (Dashboard UI final polish, second pass) to
+  // better center the whole composition between the card's subtitle and
+  // the Exporting/Importing status below — the trunk rails (anchored to
+  // PV.y below) move down together with it. NODE_Y/LOAD/GRID are
+  // deliberately untouched, so the branch split point and Load/Grid never
+  // move; the trunk is simply a little shorter as a result.
+  const PV = { x: 50, y: 14 };
   // The horizontal branches run at exactly this y (NODE_Y) and the
   // Load-Grid line at LOWER_LINE_Y — both fixed, unchanged line geometry.
   // `LOAD`/`GRID` (x, and NODE_Y for the branch endpoint) still drive the
@@ -116,6 +122,16 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
       >
         <svg
           viewBox={`0 0 100 ${VIEWBOX_HEIGHT}`}
+          // The container's `aspectRatio` above only takes effect when width
+          // or height is auto — both are explicit here (`w-full` / `height:
+          // 100%`), so the box's real on-screen ratio rarely matches 100:80.
+          // Without this, the SVG's default `xMidYMid meet` scaling
+          // letterboxes the viewBox content to preserve that ratio, while
+          // the percentage-positioned FlowNode icons below are placed
+          // against the box's full (non-letterboxed) height — the two
+          // coordinate systems silently disagree. `none` makes both stretch
+          // identically to the real box, keeping icons and lines aligned.
+          preserveAspectRatio="none"
           className="absolute inset-0 h-full w-full"
           aria-hidden
         >
