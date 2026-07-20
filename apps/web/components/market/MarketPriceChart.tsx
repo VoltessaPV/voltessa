@@ -4,7 +4,7 @@ import { Bar, Line, ReferenceArea, ReferenceLine } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
-import { CHART_TOOLTIP_CLASSNAME, computeFixedHourlyTicks, formatSofiaTime } from "@/components/charts/chart-style";
+import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaTime } from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
@@ -255,9 +255,9 @@ export function MarketPriceChart({
     domainEnd !== undefined &&
     now >= domainStart &&
     now <= domainEnd;
-  // Fixed hourly ticks (01:00, 03:00, ...) — `data[0].time` is always the
-  // selected day's local midnight (`market-data.ts`'s `buildSeries`).
-  const xTicks = domainStart !== undefined ? computeFixedHourlyTicks(domainStart) : undefined;
+  // Fixed 90-minute ticks (01:30, 03:00, ...) — `data[0].time` is always
+  // the selected day's local midnight (`market-data.ts`'s `buildSeries`).
+  const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
 
   const yAxes: ChartFrameYAxis[] = [
     { yAxisId: "price", unitLabel: "EUR/MWh" },

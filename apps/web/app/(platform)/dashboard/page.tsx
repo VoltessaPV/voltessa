@@ -197,7 +197,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             />
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-[35%_1fr]">
+          <section className="grid gap-2.5 lg:grid-cols-[32%_1fr]">
             <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">System Overview</h2>

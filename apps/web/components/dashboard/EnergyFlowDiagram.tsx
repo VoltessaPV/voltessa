@@ -106,7 +106,14 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">
-      <div className="relative mx-auto w-full max-w-full" style={{ aspectRatio: `100 / ${VIEWBOX_HEIGHT}`, height: "100%", maxHeight: 340 }}>
+      {/* Small downward nudge (Dashboard/Market UI final polish milestone)
+          so the whole composition sits visually centered between the card's
+          subtitle and the Exporting/Importing status below, rather than
+          hugging the top of the available space. */}
+      <div
+        className="relative mx-auto mt-3 w-full max-w-full"
+        style={{ aspectRatio: `100 / ${VIEWBOX_HEIGHT}`, height: "100%", maxHeight: 340 }}
+      >
         <svg
           viewBox={`0 0 100 ${VIEWBOX_HEIGHT}`}
           className="absolute inset-0 h-full w-full"
