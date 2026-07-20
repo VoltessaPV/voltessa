@@ -108,7 +108,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const data = await getDashboardPageData(user.organizationId, automationSettings, params.date);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-3">
+    <div className="max-w-7xl space-y-3">
       <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium text-cyan-400">Live plant operation</p>
