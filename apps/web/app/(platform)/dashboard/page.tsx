@@ -57,6 +57,17 @@ import { getDashboardPageData } from "./dashboard-data";
  * reordered to Inverters, Weather, Forecast, Event Log (card sizes
  * unchanged). Total Yield is the one KPI displayed in MWh instead of kWh
  * (`mwhValueLabel`) — every other KPI stays kWh.
+ *
+ * ## Dashboard UI final polish milestone
+ *
+ * "Waiting for telemetry" is honest for *today* (data is genuinely still
+ * arriving) but misleading for a past day that simply has no stored row —
+ * `unavailableNote` below picks friendlier, accurate wording for that case
+ * ("Historical data not available", or a more specific variant matching
+ * this milestone's examples) without ever hiding a real historical value
+ * that *does* exist (every KPI here still just renders whatever
+ * `dashboard-data.ts` returns — `null` only when a row is genuinely
+ * absent, real historical rows render exactly like today's).
  */
 
 /**
@@ -75,6 +86,11 @@ function energyValueLabel(kwh: number | null): string | undefined {
 /** Total Yield only — the one KPI shown in MWh instead of kWh, per this milestone's explicit formatting requirement. */
 function mwhValueLabel(kwh: number | null): string | undefined {
   return kwh !== null ? (kwh / 1000).toFixed(1) : undefined;
+}
+
+/** Friendlier, date-aware unavailable wording — `todayNote` only ever applies when the selected day genuinely is today. */
+function unavailableNote(isToday: boolean, todayNote: string, historicalNote: string): string {
+  return isToday ? todayNote : historicalNote;
 }
 
 type DashboardPageProps = {
@@ -122,42 +138,62 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               eyebrow="Yield Today"
               value={energyValueLabel(data.kpis.producedTodayKwh)}
               valueUnit={data.kpis.producedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote="Waiting for telemetry"
+              unavailableNote={unavailableNote(
+                data.isToday,
+                "Waiting for telemetry",
+                "No historical production data available",
+              )}
             />
 
             <MarketSummaryCard
               eyebrow="Total Yield"
               value={mwhValueLabel(data.kpis.totalYieldKwh)}
               valueUnit={data.kpis.totalYieldKwh !== null ? "MWh" : undefined}
-              unavailableNote="Not available"
+              unavailableNote={unavailableNote(data.isToday, "Not available", "Historical data not available")}
             />
 
             <MarketSummaryCard
               eyebrow="Consumption Today"
               value={energyValueLabel(data.kpis.consumedTodayKwh)}
               valueUnit={data.kpis.consumedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote="Waiting for telemetry"
+              unavailableNote={unavailableNote(
+                data.isToday,
+                "Waiting for telemetry",
+                "Historical data not available",
+              )}
             />
 
             <MarketSummaryCard
               eyebrow="Consumed from PV"
               value={energyValueLabel(data.kpis.consumedFromPvKwh)}
               valueUnit={data.kpis.consumedFromPvKwh !== null ? "kWh" : undefined}
-              unavailableNote="Waiting for telemetry"
+              unavailableNote={unavailableNote(
+                data.isToday,
+                "Waiting for telemetry",
+                "Historical data not available",
+              )}
             />
 
             <MarketSummaryCard
               eyebrow="Fed to Grid"
               value={energyValueLabel(data.kpis.exportedTodayKwh)}
               valueUnit={data.kpis.exportedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote="Waiting for telemetry"
+              unavailableNote={unavailableNote(
+                data.isToday,
+                "Waiting for telemetry",
+                "Historical data not available",
+              )}
             />
 
             <MarketSummaryCard
               eyebrow="From Grid"
               value={energyValueLabel(data.kpis.importedTodayKwh)}
               valueUnit={data.kpis.importedTodayKwh !== null ? "kWh" : undefined}
-              unavailableNote="Waiting for telemetry"
+              unavailableNote={unavailableNote(
+                data.isToday,
+                "Waiting for telemetry",
+                "Historical data not available",
+              )}
             />
           </section>
 
@@ -169,7 +205,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               </div>
 
               <div className="mt-2 min-h-0 flex-1">
-                <EnergyFlowDiagram flow={data.energyFlow} />
+                <EnergyFlowDiagram flow={data.energyFlow} isToday={data.isToday} />
               </div>
             </div>
 

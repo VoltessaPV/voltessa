@@ -34,7 +34,9 @@ export function InvertersCard({ inverters }: InvertersCardProps) {
         <p className="mt-4 text-xs text-slate-500">
           {inverters.reason === "no_inverter_devices"
             ? "No inverter devices configured"
-            : "FusionSolar data unavailable"}
+            : inverters.reason === "historical_day"
+              ? "Historical inverter status is not available"
+              : "FusionSolar data unavailable"}
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-white/5">

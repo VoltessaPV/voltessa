@@ -381,14 +381,15 @@ export async function getDashboardPageData(
   const chartSeries = buildFullDayChartSeries(dayStart, dayEnd, chartSeriesRaw);
   const nowAnnotation = buildNowAnnotation(energyFlow);
 
-  // "no_inverter_devices" is reused here for the historical-day case too
+// A live Huawei read has no meaning for a day that already happened
   // (`connection` is deliberately `null` whenever `!isToday`, see above) —
-  // `InverterStatusResult`'s reason enum has no dedicated "historical day"
-  // value, and adding one would mean touching `get-plant-inverter-status.ts`
-  // itself, out of scope for a presentation-only milestone.
+  // `"historical_day"` (added to `InverterStatusResult` for exactly this,
+  // Dashboard UI final polish milestone) lets `InvertersCard` show
+  // accurate wording instead of misreporting "no inverter devices
+  // configured" for a historical view.
   let inverters: InverterStatusResult = {
     available: false,
-    reason: "no_inverter_devices",
+    reason: isToday ? "no_inverter_devices" : "historical_day",
   };
 
   if (connection) {

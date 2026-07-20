@@ -43,7 +43,19 @@ export type InverterStatus = {
 
 export type InverterStatusResult =
   | { available: true; inverters: InverterStatus[] }
-  | { available: false; reason: "no_inverter_devices" | "request_failed" };
+  | {
+      available: false;
+      /**
+       * `"historical_day"` is never returned by this function — it's set
+       * directly by `dashboard-data.ts` when rendering a non-today date
+       * (a live Huawei read has no meaning for a day that already
+       * happened), added to this type so `InvertersCard` can show
+       * friendlier, accurate wording instead of misreporting "no inverter
+       * devices configured" for a historical view (Dashboard UI final
+       * polish milestone).
+       */
+      reason: "no_inverter_devices" | "request_failed" | "historical_day";
+    };
 
 /**
  * An inverter's `active_power` is already in kW for this device type/model
