@@ -266,9 +266,21 @@ function FlowNode({
     </div>
   );
 
+  // `-translate-y-1/2` centers the whole icon+label+value block on `style`'s
+  // anchor point — correct for PV (labelValueIcon), whose anchor isn't
+  // required to sit at the icon's own center. For Load/Grid
+  // (iconLabelValue), the anchor must be the ICON's center specifically
+  // (exactly midway between the two horizontal lines): since the icon (a
+  // fixed h-10 = 40px) is the first element with label/value stacked below
+  // it, centering the *whole block* instead pulls the anchor down past the
+  // icon's own center, landing near its bottom edge. Translating by a fixed
+  // -20px (half the icon's own height) instead of -50% of the whole block
+  // puts the icon's true center exactly on the anchor point.
+  const verticalTranslateClass = layout === "labelValueIcon" ? "-translate-y-1/2" : "-translate-y-5";
+
   return (
     <div
-      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
+      className={`absolute flex -translate-x-1/2 ${verticalTranslateClass} flex-col items-center gap-0.5`}
       style={style}
     >
       {layout === "labelValueIcon" ? (
