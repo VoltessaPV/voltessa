@@ -119,10 +119,22 @@ export type DashboardPageData =
       eventLog: MarketEventLogEntry[];
     };
 
+/**
+ * Consumption can never be physically negative, but deriving it as
+ * `production + import - export` can produce a negative artifact for this
+ * plant: its real-time inverter power reading is already documented
+ * elsewhere (`energy-metrics.ts`'s `peakExport` doc comment) as reading
+ * near-zero even during genuine substantial export, since it's a
+ * different measurement point than the meter. Clamping to zero here is
+ * the same established pattern already used throughout this codebase for
+ * exactly this kind of sign artifact (`exportKw = max(meterKw, 0)`,
+ * `importKw = max(-meterKw, 0)`), not a fabrication - the underlying
+ * PV/grid readings themselves are shown unclamped and unmodified.
+ */
 function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
   const consumptionKw =
     point.productionKw !== null && point.exportKw !== null && point.importKw !== null
-      ? Math.round((point.productionKw + point.importKw - point.exportKw) * 100) / 100
+      ? Math.max(0, Math.round((point.productionKw + point.importKw - point.exportKw) * 100) / 100)
       : null;
 
   return {
@@ -155,7 +167,10 @@ function buildEnergyFlow(production: {
     return {
       available: true,
       pvKw,
-      consumptionKw: Math.round((pvKw + importKw) * 100) / 100,
+      // Never negative in reality - see toEnergyFlowPoint's doc comment
+      // for why the clamp is needed (this plant's real-time inverter
+      // reading can under-report versus the meter).
+      consumptionKw: Math.max(0, Math.round((pvKw + importKw) * 100) / 100),
       direction: "importing",
       gridKw: importKw,
     };
@@ -165,7 +180,7 @@ function buildEnergyFlow(production: {
     return {
       available: true,
       pvKw,
-      consumptionKw: Math.round((pvKw - exportKw) * 100) / 100,
+      consumptionKw: Math.max(0, Math.round((pvKw - exportKw) * 100) / 100),
       direction: "exporting",
       gridKw: exportKw,
     };
