@@ -132,29 +132,75 @@ export type DashboardPageData =
     };
 
 /**
- * Consumption can never be physically negative, but deriving it as
- * `production + import - export` can produce a negative artifact for this
- * plant: its real-time inverter power reading is already documented
- * elsewhere (`energy-metrics.ts`'s `peakExport` doc comment) as reading
- * near-zero even during genuine substantial export, since it's a
- * different measurement point than the meter. Clamping to zero here is
- * the same established pattern already used throughout this codebase for
- * exactly this kind of sign artifact (`exportKw = max(meterKw, 0)`,
- * `importKw = max(-meterKw, 0)`), not a fabrication - the underlying
- * PV/grid readings themselves are shown unclamped and unmodified.
+ * Enforces exact energy conservation - exactly one of these two equations
+ * always holds, never an inconsistent combination of the three nodes:
+ *
+ * - Case A (exporting): `PV = Home + Export`
+ * - Case B (importing): `Home = PV + Import`
+ *
+ * There is no independent "Home" meter anywhere in this integration -
+ * consumption has always been a derived quantity (see
+ * `energy-metrics.ts`'s own `producedKwh + importedKwh - exportedKwh`
+ * identity). The previous version of this function derived Home this way
+ * and then clamped a negative result to zero - which satisfies neither
+ * equation (e.g. the real production incident this milestone was written
+ * to fix: PV 0.1 kW, Home clamped to 0.0 kW, Export 33.9 kW - `0.1 != 0 +
+ * 33.9`, an impossible combination that just happened to not be negative).
+ *
+ * The real root cause: this plant's real-time inverter power reading is
+ * already documented elsewhere (`energy-metrics.ts`'s `peakExport` doc
+ * comment) as reading near-zero even during genuine substantial export,
+ * since it's a different measurement point than the meter - not sensor
+ * noise, a confirmed, persistent discrepancy. The meter (Export/Import) is
+ * the reliable reading everywhere else in this app (revenue, KPIs), so in
+ * Case A the displayed PV is floored at Export - you cannot export more
+ * than you produce, so real PV is *at least* Export whenever Export > 0,
+ * even if the inverter's instantaneous reading momentarily under-reports.
+ * This is not fabricating a value: it's a physically necessary lower bound
+ * applied to a reading already known to sometimes be too low, chosen so
+ * the *displayed* PV is what makes the equation hold exactly. Case B never
+ * needs this adjustment - addition of two non-negative readings can't
+ * produce an inconsistent result.
  */
+function conserveEnergyFlow(
+  rawPvKw: number,
+  exportKw: number,
+  importKw: number,
+): { pvKw: number; consumptionKw: number; gridImportKw: number; gridExportKw: number; direction: "importing" | "exporting" } {
+  if (importKw > 0) {
+    return {
+      pvKw: rawPvKw,
+      consumptionKw: Math.round((rawPvKw + importKw) * 100) / 100,
+      gridImportKw: importKw,
+      gridExportKw: 0,
+      direction: "importing",
+    };
+  }
+
+  const pvKw = Math.max(rawPvKw, exportKw);
+
+  return {
+    pvKw,
+    consumptionKw: Math.round((pvKw - exportKw) * 100) / 100,
+    gridImportKw: 0,
+    gridExportKw: exportKw,
+    direction: "exporting",
+  };
+}
+
 function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
-  const consumptionKw =
-    point.productionKw !== null && point.exportKw !== null && point.importKw !== null
-      ? Math.max(0, Math.round((point.productionKw + point.importKw - point.exportKw) * 100) / 100)
-      : null;
+  if (point.productionKw === null || point.exportKw === null || point.importKw === null) {
+    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+  }
+
+  const flow = conserveEnergyFlow(point.productionKw, point.exportKw, point.importKw);
 
   return {
     time: point.timestamp.getTime(),
-    pvKw: point.productionKw,
-    consumptionKw,
-    gridImportKw: point.importKw,
-    gridExportKw: point.exportKw,
+    pvKw: flow.pvKw,
+    consumptionKw: flow.consumptionKw,
+    gridImportKw: flow.gridImportKw,
+    gridExportKw: flow.gridExportKw,
   };
 }
 
@@ -203,43 +249,27 @@ function buildEnergyFlow(production: {
     return { available: false };
   }
 
-  const pvKw = production.currentProduction.kw;
-  const exportKw = production.currentExport.kw;
-  const importKw = production.currentImport.kw;
-
-  if (importKw > 0) {
-    return {
-      available: true,
-      pvKw,
-      // Never negative in reality - see toEnergyFlowPoint's doc comment
-      // for why the clamp is needed (this plant's real-time inverter
-      // reading can under-report versus the meter).
-      consumptionKw: Math.max(0, Math.round((pvKw + importKw) * 100) / 100),
-      direction: "importing",
-      gridKw: importKw,
-    };
-  }
+  const flow = conserveEnergyFlow(
+    production.currentProduction.kw,
+    production.currentExport.kw,
+    production.currentImport.kw,
+  );
 
   return {
     available: true,
-    pvKw,
-    consumptionKw: Math.max(0, Math.round((pvKw - exportKw) * 100) / 100),
-    direction: "exporting",
-    gridKw: exportKw,
+    pvKw: flow.pvKw,
+    consumptionKw: flow.consumptionKw,
+    direction: flow.direction,
+    gridKw: flow.direction === "importing" ? flow.gridImportKw : flow.gridExportKw,
   };
 }
 
-function buildNowAnnotation(
-  production: { currentProduction: ProductionReading },
-  energyFlow: EnergyFlowState,
-): string | undefined {
+/** Uses `energyFlow`'s already-conserved `pvKw` (never the raw inverter reading) so the chart's NOW marker never contradicts the System Overview diagram above it. */
+function buildNowAnnotation(energyFlow: EnergyFlowState): string | undefined {
   const parts: string[] = [];
 
-  if (production.currentProduction.available) {
-    parts.push(`${production.currentProduction.kw} kW PV`);
-  }
-
   if (energyFlow.available) {
+    parts.push(`${energyFlow.pvKw} kW PV`);
     parts.push(
       `${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`,
     );
@@ -325,7 +355,7 @@ export async function getDashboardPageData(
 
   const energyFlow = buildEnergyFlow(production);
   const chartSeries = buildFullDayChartSeries(dayStart, dayEnd, chartSeriesRaw);
-  const nowAnnotation = buildNowAnnotation(production, energyFlow);
+  const nowAnnotation = buildNowAnnotation(energyFlow);
 
   let inverters: InverterStatusResult = {
     available: false,

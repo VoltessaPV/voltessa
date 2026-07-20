@@ -1,28 +1,10 @@
 "use client";
 
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceArea,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, Line, ReferenceArea, ReferenceLine } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
-import {
-  CHART_AXIS_LINE,
-  CHART_AXIS_TICK,
-  CHART_GRID_STROKE,
-  CHART_MARGIN,
-  CHART_MARGIN_WITH_ANNOTATION,
-  CHART_TOOLTIP_CLASSNAME,
-  formatSofiaTime,
-} from "@/components/charts/chart-style";
+import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
+import { CHART_TOOLTIP_CLASSNAME, formatSofiaTime } from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
@@ -274,6 +256,21 @@ export function MarketPriceChart({
     now >= domainStart &&
     now <= domainEnd;
 
+  const yAxes: ChartFrameYAxis[] = [
+    { yAxisId: "price", unitLabel: "EUR/MWh" },
+    ...(hasEnergyAxis
+      ? [
+          {
+            yAxisId: "energy",
+            orientation: "right" as const,
+            domain: [0, maxExportedKwhPerInterval] as [number, number],
+            allowDataOverflow: true,
+            unitLabel: "kWh",
+          },
+        ]
+      : []),
+  ];
+
   return (
     <div className="flex h-full w-full flex-col">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
@@ -307,123 +304,69 @@ export function MarketPriceChart({
       </div>
 
       <div className="mt-2 min-h-0 flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart
-            data={data}
-            margin={nowAnnotation ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}
-          >
-            <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
-
-            {bands.map((band) => (
-              <ReferenceArea
-                key={band.start}
-                x1={band.start}
-                x2={band.end}
-                fill="rgba(52,211,153,0.12)"
-                stroke="#34d399"
-                strokeOpacity={0.25}
-                strokeWidth={1}
-              />
-            ))}
-
-            <XAxis
-              dataKey="time"
-              type="number"
-              scale="time"
-              domain={["dataMin", "dataMax"]}
-              tickFormatter={formatSofiaTime}
-              tick={CHART_AXIS_TICK}
-              tickLine={false}
-              axisLine={CHART_AXIS_LINE}
-              tickMargin={10}
-              minTickGap={48}
+        <ChartFrame
+          data={data}
+          yAxes={yAxes}
+          tooltipContent={<ChartTooltip />}
+          hasAnnotationMargin={Boolean(nowAnnotation)}
+        >
+          {bands.map((band) => (
+            <ReferenceArea
+              key={band.start}
+              x1={band.start}
+              x2={band.end}
+              fill="rgba(52,211,153,0.12)"
+              stroke="#34d399"
+              strokeOpacity={0.25}
+              strokeWidth={1}
             />
+          ))}
 
-            <YAxis
-              yAxisId="price"
-              tick={CHART_AXIS_TICK}
-              tickLine={false}
-              axisLine={false}
-              width={52}
-              tickMargin={8}
-              label={{
-                value: "EUR/MWh",
-                angle: -90,
-                position: "insideLeft",
-                fill: "#64748b",
-                fontSize: 10,
-              }}
-            />
+          <ReferenceLine
+            yAxisId="price"
+            y={thresholdPrice}
+            stroke="#fbbf24"
+            strokeOpacity={0.6}
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            label={<ThresholdLabel thresholdPrice={thresholdPrice} />}
+          />
 
-            {hasEnergyAxis && (
-              <YAxis
-                yAxisId="energy"
-                orientation="right"
-                tick={CHART_AXIS_TICK}
-                tickLine={false}
-                axisLine={false}
-                width={52}
-                tickMargin={8}
-                domain={[0, maxExportedKwhPerInterval]}
-                allowDataOverflow
-                label={{
-                  value: "kWh",
-                  angle: -90,
-                  position: "insideRight",
-                  fill: "#64748b",
-                  fontSize: 10,
-                }}
-              />
-            )}
-
-            <Tooltip content={<ChartTooltip />} />
-
+          {nowInRange && (
             <ReferenceLine
-              yAxisId="price"
-              y={thresholdPrice}
-              stroke="#fbbf24"
-              strokeOpacity={0.6}
+              x={now}
+              stroke="#22d3ee"
+              strokeOpacity={0.55}
               strokeWidth={1.5}
-              strokeDasharray="5 4"
-              label={<ThresholdLabel thresholdPrice={thresholdPrice} />}
+              label={<NowLabel annotation={nowAnnotation} />}
             />
+          )}
 
-            {nowInRange && (
-              <ReferenceLine
-                x={now}
-                stroke="#22d3ee"
-                strokeOpacity={0.55}
-                strokeWidth={1.5}
-                label={<NowLabel annotation={nowAnnotation} />}
-              />
-            )}
-
-            {hasEnergyAxis && (
-              <Bar
-                yAxisId="energy"
-                dataKey="exportedKwh"
-                fill="#a78bfa"
-                fillOpacity={0.65}
-                radius={[2, 2, 0, 0]}
-                isAnimationActive
-                animationDuration={700}
-              />
-            )}
-
-            <Line
-              yAxisId="price"
-              type="monotone"
-              dataKey="price"
-              stroke="#60a5fa"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 3.5, fill: "#93c5fd" }}
-              connectNulls={false}
+          {hasEnergyAxis && (
+            <Bar
+              yAxisId="energy"
+              dataKey="exportedKwh"
+              fill="#a78bfa"
+              fillOpacity={0.65}
+              radius={[2, 2, 0, 0]}
               isAnimationActive
               animationDuration={700}
             />
-          </ComposedChart>
-        </ResponsiveContainer>
+          )}
+
+          <Line
+            yAxisId="price"
+            type="monotone"
+            dataKey="price"
+            stroke="#60a5fa"
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 3.5, fill: "#93c5fd" }}
+            connectNulls={false}
+            isAnimationActive
+            animationDuration={700}
+          />
+        </ChartFrame>
       </div>
     </div>
   );

@@ -13,14 +13,16 @@ import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { getDashboardPageData } from "./dashboard-data";
 
 /**
- * Final Dashboard UX Refinement milestone: Market is the finished visual
- * reference (financial decisions); this page is the operational control
- * center (live plant operation). Every KPI/card here reads from
- * `dashboard-data.ts`, which composes Market's own already-proven
- * functions (`getMarketPageData`, `getProductionPageData`,
- * `computeExportRevenue`, `energy-metrics.ts`) rather than recomputing
- * anything — see that module's doc comment. No metric appears more than
- * once across Dashboard + Market combined.
+ * Design-System Consistency milestone: rebuilt from `market/page.tsx` (the
+ * reference implementation), not evolved from the previous Dashboard. The
+ * base layout below - outer container, header, KPI-row grid, chart-section
+ * wrapper, bottom four-card grid - is Market's own skeleton, class for
+ * class (`mx-auto max-w-7xl space-y-3`, `grid gap-2.5 sm:grid-cols-2
+ * xl:grid-cols-5`, the exact chart-section shadow, `grid gap-2.5
+ * lg:grid-cols-2 xl:grid-cols-4`). "Dashboard is Market plus operational
+ * information": the only sections with no Market equivalent are System
+ * Overview and Inverters, each its own section below the shared skeleton,
+ * never patched into it.
  */
 
 /**
@@ -50,9 +52,7 @@ export default async function DashboardPage() {
       <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium text-cyan-400">Live plant operation</p>
-          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
-            Dashboard
-          </h1>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">Dashboard</h1>
         </div>
       </section>
 
@@ -103,9 +103,11 @@ export default async function DashboardPage() {
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-            <div>
-              <h2 className="text-sm font-semibold text-white">System Overview</h2>
-              <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-white">System Overview</h2>
+                <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
+              </div>
             </div>
 
             <div className="mt-3">
@@ -114,11 +116,13 @@ export default async function DashboardPage() {
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-            <div>
-              <h2 className="text-sm font-semibold text-white">Live Energy</h2>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Today&apos;s production, consumption, and grid exchange
-              </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Live Energy</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Today&apos;s production, consumption, and grid exchange
+                </p>
+              </div>
             </div>
 
             <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
@@ -126,27 +130,27 @@ export default async function DashboardPage() {
             </div>
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-3">
+          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+            <MarketEventLog entries={data.eventLog} />
             <WeatherCard />
             <GlidepathCard />
             <DashboardMarketWidget market={data.market} />
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-3">
-            <div className="lg:col-span-2">
-              <InvertersCard inverters={data.inverters} />
-            </div>
-            <MarketEventLog entries={data.eventLog} />
+          <section>
+            <InvertersCard inverters={data.inverters} />
           </section>
-
-          <p className="text-xs text-slate-500">
-            Last telemetry:{" "}
-            <span className="text-slate-300">
-              {data.latestTelemetryAt ? sofiaDateTimeLabel(data.latestTelemetryAt) : "No data"}
-            </span>
-          </p>
         </>
       )}
+
+      <p className="text-xs text-slate-500">
+        Last telemetry:{" "}
+        <span className="text-slate-300">
+          {data.plantAvailable && data.latestTelemetryAt
+            ? sofiaDateTimeLabel(data.latestTelemetryAt)
+            : "No data"}
+        </span>
+      </p>
     </div>
   );
 }
