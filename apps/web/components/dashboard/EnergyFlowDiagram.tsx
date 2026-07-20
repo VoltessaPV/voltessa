@@ -24,11 +24,14 @@ type EnergyFlowDiagramProps = {
  *   below the PV branches — this is the ONLY line ever used for
  *   Grid -> Load.
  *
- * Load/Grid's rendered node (icon+label+value block) and its branch
- * endpoint are always the exact same point — `LOAD`/`GRID` below are used
- * for both the line geometry and the `FlowNode` position, never two
- * separate coordinates. (An earlier pass decoupled them; that was
- * reverted — the node and the line endpoint must always stay aligned.)
+ * Load/Grid's rendered node horizontally shares its branch's own x
+ * (`LOAD.x`/`GRID.x` drive both the line and the `FlowNode` position —
+ * never two separate x values). Vertically, the icon is deliberately
+ * centered exactly midway between the two horizontal lines that define
+ * it (`ICON_Y`, the literal midpoint of `NODE_Y`/`LOWER_LINE_Y`) rather
+ * than sitting on either line — distance(branch -> icon) always equals
+ * distance(icon -> lower line). The lines themselves never move to match
+ * the icon; only the icon centers between them.
  *
  * - **Exporting** (PV > Load): PV -> Load and PV -> Grid are the two
  *   active, green, particled flows. The Load-Grid line stays a static,
@@ -61,16 +64,18 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   // previous pass feel sparse.
   const VIEWBOX_HEIGHT = 80;
   const PV = { x: 50, y: 10 };
-  // The horizontal branches run at exactly this y (NODE_Y), so each
-  // branch terminates with zero additional vertical drop — `LOAD`/`GRID`
-  // below are both the branch endpoint AND the rendered node position,
-  // always the same point. The Load-Grid line is a distinctly separate,
-  // lower line, kept a fixed 3-unit gap below NODE_Y (originally tuned to
-  // approximately match the horizontal gap between the two PV trunk
-  // rails, 2.8 units) so it shifts down along with NODE_Y and never ends
-  // up level with or above the branches.
+  // The horizontal branches run at exactly this y (NODE_Y) and the
+  // Load-Grid line at LOWER_LINE_Y — both fixed, unchanged line geometry.
+  // `LOAD`/`GRID` (x, and NODE_Y for the branch endpoint) still drive the
+  // SVG paths directly, so the lines themselves never move. The rendered
+  // icon's vertical center is a separate value, `ICON_Y`: the exact
+  // midpoint between the two lines, so distance(branch -> icon) always
+  // equals distance(icon -> lower line) for both Load and Grid — the
+  // lines are never pulled to match the icon, only the icon centers
+  // between them.
   const NODE_Y = 50;
   const LOWER_LINE_Y = NODE_Y + 3;
+  const ICON_Y = (NODE_Y + LOWER_LINE_Y) / 2;
   const LOAD = { x: 28, y: NODE_Y };
   const GRID = { x: 72, y: NODE_Y };
 
@@ -206,14 +211,14 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
           icon={<LoadBuildingIcon className="h-[31px] w-[31px] text-slate-300" />}
           label="Load"
           value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
-          style={{ left: `${LOAD.x}%`, top: toTopPercent(LOAD.y) }}
+          style={{ left: `${LOAD.x}%`, top: toTopPercent(ICON_Y) }}
         />
 
         <FlowNode
           icon={<TransmissionTowerIcon className="h-[31px] w-[31px] text-cyan-300/90" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
-          style={{ left: `${GRID.x}%`, top: toTopPercent(GRID.y) }}
+          style={{ left: `${GRID.x}%`, top: toTopPercent(ICON_Y) }}
         />
       </div>
 
