@@ -63,16 +63,17 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const PV = { x: 50, y: 10 };
   // The horizontal branches run at exactly this y (NODE_Y), so each
   // branch terminates with zero additional vertical drop. The Load-Grid
-  // line is a distinctly separate, lower line, raised closer to NODE_Y
-  // than the previous pass so the composition reads as one balanced
-  // whole rather than two loosely-related halves. LOAD/GRID are pushed
-  // further to the sides (x: 10/90) so their icons sit clearly beside the
-  // line geometry instead of crowding the center.
+  // line is a distinctly separate, lower line — raised here (Dashboard UI
+  // final polish, second pass) so its gap from NODE_Y approximately
+  // matches the horizontal gap between the two PV trunk rails (2.8 units),
+  // making the vertical spacing feel symmetrical rather than sitting too
+  // low. LOAD/GRID moved slightly toward center (x: 18/82, was 10/90) to
+  // reduce unused horizontal space — PV itself is untouched.
   const NODE_Y = 45;
-  const LOWER_LINE_Y = 58;
+  const LOWER_LINE_Y = 48;
   const ICON_Y = (NODE_Y + LOWER_LINE_Y) / 2;
-  const LOAD = { x: 10, y: NODE_Y };
-  const GRID = { x: 90, y: NODE_Y };
+  const LOAD = { x: 18, y: NODE_Y };
+  const GRID = { x: 82, y: NODE_Y };
 
   const INACTIVE_STROKE = "rgba(255,255,255,0.12)";
   const INACTIVE_DASH = "2 2";
