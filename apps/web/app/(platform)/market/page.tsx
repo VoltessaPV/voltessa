@@ -95,7 +95,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     nowAnnotationParts.length > 0 ? nowAnnotationParts.join(" · ") : undefined;
 
   return (
-    <div className="max-w-7xl space-y-3">
+    <div className="mr-auto max-w-7xl space-y-3">
       <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-xs font-medium text-cyan-400">
