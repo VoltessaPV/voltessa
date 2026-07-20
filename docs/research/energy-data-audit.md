@@ -1,10 +1,10 @@
 # Energy Data Audit — Dashboard & Market
 
-Status: **Investigation only. No code changed.** Every number below was traced through the actual
-current code (not memory) and cross-checked against live Huawei API responses and real stored
-`DeviceTelemetry`/`rawPayload` rows on 2026-07-20, ~11:35 UTC. Goal: identify every place Voltessa
-reconstructs a value Huawei already computes and provides directly, so a follow-up milestone can
-decide what to replace.
+Status: **Investigated (§1-§6.4), then implemented and verified in production (§6.5, §8) by the
+Telemetry Architecture Finalization milestone.** Every number in the original investigation was
+traced through the actual current code (not memory) and cross-checked against live Huawei API
+responses and real stored `DeviceTelemetry`/`rawPayload` rows on 2026-07-20, ~11:35 UTC. §8 records
+what was then built, deployed, and confirmed working against production.
 
 ## 1. Method
 
@@ -268,3 +268,86 @@ for the related prior investigation this one builds on, and ADR-007 in
 `docs/ARCHITECT_DECISIONS.md` for why `DeviceTelemetry` was designed as a raw producer table with
 `rawPayload` preserved unmodified — this is exactly what made re-deriving today's findings from
 already-stored data possible without a single new Huawei API call).
+
+## 8. Telemetry Architecture Finalization — implementation & production verification report
+
+Full implementation of §6.4/§6.5's plan, executed end to end: schema, ingestion, domain read layer,
+Dashboard wiring, validation, deploy, and production verification. See ADR-010
+(`docs/ARCHITECT_DECISIONS.md`) for the architectural decision this records; this section is the
+production evidence.
+
+### 8.1 What changed
+
+- **New `PlantDailyKpi` table** (`prisma/schema.prisma`), organization-scoped (ADR-002), unique on
+  `(plantId, localDate)`. Typed columns for exactly the Huawei fields needed
+  (`pvYieldKwh`/`day_power`, `consumptionKwh`/`day_use_energy`, `exportedEnergyKwh`/
+  `day_on_grid_energy`, reference-only); the complete `dataItemMap` (including `total_income`/
+  `total_power`/`day_income`/`real_health_state`/`month_power`) preserved unmodified in `rawPayload`,
+  matching `DeviceTelemetry`'s own discipline — no calculated/derived field was invented.
+- **`lib/fusionsolar/import-plant-daily-kpi.ts`** — the one code path in this codebase that calls
+  `getStationRealKpi`. Upserts per plant per local (Europe/Sofia) day; never writes a row when
+  `day_power`/`day_use_energy` are absent (an absent row reads back as `available: false`, never a
+  fabricated `0`).
+- **`lib/fusionsolar/bootstrap-device-telemetry.ts`** extended to call the above every cycle,
+  alongside the existing `DeviceTelemetry` import — same route, same Scaleway timer, no second
+  scheduler.
+- **`lib/telemetry/plant-daily-kpi.ts`**'s `getPlantDailyKpi` — the one shared read function;
+  `dashboard-data.ts` now calls this instead of integrating `chartSeriesRaw` for Produced/Consumed
+  Today. Market was checked and does not currently display these two KPIs at all, so there was no
+  second call site to migrate.
+- **Removed**: `syncFusionSolarPlantTelemetry`, `ingestFusionSolarPlantTelemetry`, and the two routes
+  that called them (`/api/internal/fusionsolar/ingest-plant-telemetry`,
+  `/api/diag/fusionsolar-sync-plant-telemetry`) — this pipeline called the same Huawei endpoint
+  independently of the new one, which would have meant two code paths calling `getStationRealKpi`.
+  `PlantTelemetrySnapshot` (the table, and its 906 already-stored historical rows) was deliberately
+  **kept**, not dropped — `prisma db push` reported it would require `--accept-data-loss`, and
+  destroying 906 rows of production data was judged out of proportion to this milestone, per direct
+  confirmation. It is now dead, unread, unwritten schema — a dedicated future cleanup migration can
+  drop it once `PlantDailyKpi` has run in production for a while.
+
+### 8.2 Validation
+
+- `pnpm lint`, `turbo check-types`, `turbo build` (full, unscoped — not `--filter=web`): all pass.
+  `apps/api`'s Jest suite: 1/1 passing (unaffected by this change, run anyway per Definition of
+  Done).
+- `prisma db push`: additive only (confirmed via the `--accept-data-loss` requirement above,
+  resolved by keeping `PlantTelemetrySnapshot` rather than by accepting data loss) — the second,
+  final push reported "Your database is now in sync" with no warnings.
+- `git diff`/`git status` before commit: only the files this milestone touched — no unrelated
+  formatting or drive-by changes.
+
+### 8.3 Production verification (2026-07-20, ~12:15-12:17 UTC)
+
+- Commit `9ac7e80` pushed to `main`; GitHub Actions CI (`lint`, `check-types`, `build`) passed;
+  Vercel production deployment `dpl_3SmbRqsaGzy7VPyBaQiZ9u6659a4` for that exact commit is `READY`.
+- Manually triggered `voltessa-telemetry-ingestion.service` on the Scaleway VM (the same unit
+  ADR-008/ADR-009 already run every 5 minutes) rather than waiting for the next scheduled tick.
+  Result: `{"ok":true,...,"dailyKpisUpserted":1,"dailyKpiErrors":[],"failures":[]}` — zero errors,
+  one `PlantDailyKpi` row written on the very first cycle against the new production deployment.
+- Queried the written row directly: `pvYieldKwh: 743.61` (`day_power`), `consumptionKwh: 684.6`
+  (`day_use_energy`), `exportedEnergyKwh: 199.31` (`day_on_grid_energy`, reference-only),
+  `localDate: 2026-07-19T21:00:00.000Z` (= `2026-07-20T00:00 Europe/Sofia`, correct for a
+  UTC+3 summer offset), `rawPayload` containing the complete Huawei response including
+  `total_power`/`month_power`/`day_income`/`total_income`/`real_health_state`. These are Huawei's
+  own live counters at ingestion time — not a second figure to cross-check against a separate
+  Huawei call, since the ingested value *is* the Huawei value.
+- Confirmed via `grep` that `getStationRealKpi`/`getFusionSolarPlantRealTimeData` is referenced only
+  in `plant-data.ts` (the function itself), `import-plant-daily-kpi.ts` (the one ingestion call
+  site), the pre-existing `/api/diag/fusionsolar-plant-realtime` diagnostic route (manual
+  investigation tooling, not part of the live Dashboard/Market data path), and doc comments in
+  `schema.prisma` — `dashboard-data.ts` and `market/*.ts` contain no direct Huawei call for these
+  KPIs.
+- Not independently screenshotted through an authenticated browser session (production Dashboard
+  sits behind real Google OAuth for the customer's own account, which requires interactive login);
+  verified instead by direct database query against the exact row `dashboard-data.ts`'s
+  `getPlantDailyKpi(plant.id, dayStart)` call will read, plus the passing production build/
+  type-check of that exact call site.
+
+### 8.4 Known follow-up (not done here, by design)
+
+- Drop `PlantTelemetrySnapshot` in a dedicated cleanup migration once `PlantDailyKpi` has run in
+  production for a while — deliberately deferred to avoid irreversible data loss in this milestone.
+- `energy-metrics.ts`'s `computeEnergyMetricsFromSeries`/`computePlantEnergyMetrics`/`integrateKwh`
+  have no remaining callers anywhere in the codebase after this migration. Left in place rather than
+  deleted, since removing now-dead code is a separate decision from this milestone's scope — flagged
+  here, not silently folded into this diff.
