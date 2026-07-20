@@ -1,3 +1,5 @@
+export { pageHeading } from "./heading";
+
 export default function AutomationsPage() {
   return (
     <section>

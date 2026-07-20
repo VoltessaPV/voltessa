@@ -16,6 +16,8 @@ import { MarketToolbar } from "@/components/market/MarketToolbar";
 import { getMarketPageData } from "./market-data";
 import { getProductionPageData } from "./production-data";
 
+export { pageHeading } from "./heading";
+
 type Trend = "up" | "down" | "flat";
 
 /**

@@ -4,6 +4,8 @@ import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
+export { pageHeading } from "./heading";
+
 export default async function PlantsPage() {
   const user = await requirePermission(Permissions.canViewPlants);
 

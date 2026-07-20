@@ -12,6 +12,8 @@ import { MarketToolbar } from "@/components/market/MarketToolbar";
 
 import { getDashboardPageData } from "./dashboard-data";
 
+export { pageHeading } from "./heading";
+
 /**
  * Design-System Consistency milestone: rebuilt from `market/page.tsx` (the
  * reference implementation), not evolved from the previous Dashboard. The
@@ -72,8 +74,9 @@ import { getDashboardPageData } from "./dashboard-data";
  * ## Fixed Header Architecture milestone
  *
  * The eyebrow/title block that used to open this page's own JSX now
- * renders once inside `AppHeader` (via `PageHeading`, a route-keyed lookup)
- * instead of here - this page starts directly with `MarketToolbar`.
+ * renders once inside `AppHeader` (via `PageHeading`, reading this page's
+ * own `pageHeading` - see `./heading.ts`) instead of here - this page
+ * starts directly with `MarketToolbar`.
  */
 
 /**

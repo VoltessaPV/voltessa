@@ -5,6 +5,8 @@ import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
+export { pageHeading } from "./heading";
+
 type Props = {
   params: Promise<{
     id: string;

@@ -8,6 +8,8 @@ import { prisma } from "@/lib/prisma";
 
 import { updateAutomationSettings } from "./actions";
 
+export { pageHeading } from "./heading";
+
 type SettingsPageProps = {
   searchParams: Promise<{
     fusionsolar?: string;
