@@ -27,3 +27,21 @@ export const CHART_TOOLTIP_CLASSNAME =
 
 export const CHART_MARGIN = { top: 30, right: 12, bottom: 0, left: 0 } as const;
 export const CHART_MARGIN_WITH_ANNOTATION = { top: 46, right: 12, bottom: 0, left: 0 } as const;
+
+/**
+ * Fixed tick marks at every odd hour (01:00, 03:00, ..., 23:00) for a full
+ * Europe/Sofia calendar-day chart (Dashboard visual polish milestone) —
+ * used instead of recharts' automatic tick placement, which doesn't land on
+ * round hours for a `[dayStart, dayEnd)` domain. Both Market's price chart
+ * and Dashboard's Live Energy chart pass their own `dayStart` (in ms) here
+ * so the two charts always show identical X-axis labels.
+ */
+export function computeFixedHourlyTicks(dayStartMs: number): number[] {
+  const ticks: number[] = [];
+
+  for (let hour = 1; hour <= 23; hour += 2) {
+    ticks.push(dayStartMs + hour * 60 * 60 * 1000);
+  }
+
+  return ticks;
+}

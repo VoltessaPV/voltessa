@@ -37,11 +37,13 @@ type ChartFrameProps = {
   tooltipContent: ReactElement;
   /** Extra top margin for the NOW marker's pill+annotation, matching `MarketPriceChart`'s own convention. */
   hasAnnotationMargin?: boolean;
+  /** Explicit X-axis tick positions (ms) — see `chart-style.ts`'s `computeFixedHourlyTicks`. Omitted falls back to recharts' automatic placement. */
+  xTicks?: number[];
   /** The chart's own marks — `Line`/`Bar`/`ReferenceArea`/`ReferenceLine`, rendered as direct children of `ComposedChart`, exactly as if written inline. */
   children: ReactNode;
 };
 
-export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, children }: ChartFrameProps) {
+export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, children }: ChartFrameProps) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart data={data} margin={hasAnnotationMargin ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}>
@@ -52,6 +54,7 @@ export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, c
           type="number"
           scale="time"
           domain={["dataMin", "dataMax"]}
+          ticks={xTicks}
           tickFormatter={formatSofiaTime}
           tick={CHART_AXIS_TICK}
           tickLine={false}

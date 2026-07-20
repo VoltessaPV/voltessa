@@ -26,6 +26,8 @@ type MarketToolbarProps = {
   prevDateParam: string;
   nextDateParam: string;
   isToday: boolean;
+  /** Route this toolbar navigates within — defaults to `/market`. Dashboard passes `/dashboard` to reuse this exact component (Dashboard visual polish milestone) rather than a second copy. */
+  basePath?: string;
 };
 
 export function MarketToolbar({
@@ -33,6 +35,7 @@ export function MarketToolbar({
   prevDateParam,
   nextDateParam,
   isToday,
+  basePath = "/market",
 }: MarketToolbarProps) {
   return (
     <div className="flex flex-col gap-2.5 rounded-2xl border border-white/10 bg-white/[0.03] p-2.5 lg:flex-row lg:items-center lg:justify-between">
@@ -49,14 +52,14 @@ export function MarketToolbar({
         </div>
 
         <a
-          href={`/market?date=${prevDateParam}`}
+          href={`${basePath}?date=${prevDateParam}`}
           aria-label="Previous day"
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:border-white/20 hover:text-white"
         >
           ‹
         </a>
 
-        <form action="/market" method="get" className="flex items-center gap-1.5">
+        <form action={basePath} method="get" className="flex items-center gap-1.5">
           <input
             type="date"
             name="date"
@@ -72,7 +75,7 @@ export function MarketToolbar({
         </form>
 
         <a
-          href={`/market?date=${nextDateParam}`}
+          href={`${basePath}?date=${nextDateParam}`}
           aria-label="Next day"
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:border-white/20 hover:text-white"
         >
@@ -80,7 +83,7 @@ export function MarketToolbar({
         </a>
 
         <a
-          href="/market"
+          href={basePath}
           aria-disabled={isToday}
           className={
             isToday

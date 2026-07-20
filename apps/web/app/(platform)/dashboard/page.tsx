@@ -8,6 +8,7 @@ import { LiveEnergyChart } from "@/components/dashboard/LiveEnergyChart";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
+import { MarketToolbar } from "@/components/market/MarketToolbar";
 
 import { getDashboardPageData } from "./dashboard-data";
 
@@ -45,6 +46,17 @@ import { getDashboardPageData } from "./dashboard-data";
  * Inverters, Event Log. `data.market` (still computed in
  * `dashboard-data.ts`, untouched per this milestone's "don't touch the data
  * layer" constraint) is simply no longer rendered anywhere on this page.
+ *
+ * ## Dashboard UI polish (FINAL) milestone
+ *
+ * Reuses Market's own `MarketToolbar` (a `basePath` prop was added to that
+ * shared component so it can navigate `/dashboard` instead of always
+ * `/market` — not a second toolbar) for real day navigation, backed by
+ * `dashboard-data.ts` now accepting `selectedDateParam` exactly like
+ * `getMarketPageData`/`getProductionPageData` already do. Bottom row
+ * reordered to Inverters, Weather, Forecast, Event Log (card sizes
+ * unchanged). Total Yield is the one KPI displayed in MWh instead of kWh
+ * (`mwhValueLabel`) — every other KPI stays kWh.
  */
 
 /**
@@ -60,14 +72,24 @@ function energyValueLabel(kwh: number | null): string | undefined {
   return kwh !== null ? kwh.toFixed(1) : undefined;
 }
 
-export default async function DashboardPage() {
+/** Total Yield only — the one KPI shown in MWh instead of kWh, per this milestone's explicit formatting requirement. */
+function mwhValueLabel(kwh: number | null): string | undefined {
+  return kwh !== null ? (kwh / 1000).toFixed(1) : undefined;
+}
+
+type DashboardPageProps = {
+  searchParams: Promise<{ date?: string }>;
+};
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const user = await requireOnboardedUser();
+  const params = await searchParams;
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
   });
 
-  const data = await getDashboardPageData(user.organizationId, automationSettings);
+  const data = await getDashboardPageData(user.organizationId, automationSettings, params.date);
 
   return (
     <div className="mx-auto max-w-7xl space-y-3">
@@ -77,6 +99,14 @@ export default async function DashboardPage() {
           <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">Dashboard</h1>
         </div>
       </section>
+
+      <MarketToolbar
+        basePath="/dashboard"
+        selectedDate={data.selectedDate}
+        prevDateParam={data.prevDateParam}
+        nextDateParam={data.nextDateParam}
+        isToday={data.isToday}
+      />
 
       {!data.plantAvailable ? (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
@@ -97,8 +127,8 @@ export default async function DashboardPage() {
 
             <MarketSummaryCard
               eyebrow="Total Yield"
-              value={energyValueLabel(data.kpis.totalYieldKwh)}
-              valueUnit={data.kpis.totalYieldKwh !== null ? "kWh" : undefined}
+              value={mwhValueLabel(data.kpis.totalYieldKwh)}
+              valueUnit={data.kpis.totalYieldKwh !== null ? "MWh" : undefined}
               unavailableNote="Not available"
             />
 
@@ -158,9 +188,9 @@ export default async function DashboardPage() {
           </section>
 
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+            <InvertersCard inverters={data.inverters} />
             <WeatherCard />
             <GlidepathCard />
-            <InvertersCard inverters={data.inverters} />
             <MarketEventLog entries={data.eventLog} />
           </section>
         </>

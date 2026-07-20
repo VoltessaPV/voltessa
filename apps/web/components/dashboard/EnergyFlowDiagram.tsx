@@ -60,14 +60,18 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   // below, so the HTML icon nodes (positioned by percentage) and the SVG
   // lines/particles (positioned by these same numbers) always line up.
   const PV = { x: 50, y: 12 };
-  // The horizontal branches run at exactly the same y as the Load/Grid
-  // icons themselves, so each branch terminates directly at its node with
-  // zero additional vertical drop. The Load-Grid line is a distinctly
-  // separate, lower line — never the same segment as the branches above.
+  // The horizontal branches run at exactly this y (NODE_Y), so each
+  // branch terminates with zero additional vertical drop. The Load-Grid
+  // line is a distinctly separate, lower line — never the same segment as
+  // the branches above. The Load/Grid *icons* are rendered at
+  // ICON_Y, the vertical midpoint between the two — centered between both
+  // lines rather than attached to the upper branch (Dashboard visual
+  // polish milestone).
   const NODE_Y = 55;
+  const LOWER_LINE_Y = 72;
+  const ICON_Y = (NODE_Y + LOWER_LINE_Y) / 2;
   const LOAD = { x: 22, y: NODE_Y };
   const GRID = { x: 78, y: NODE_Y };
-  const LOWER_LINE_Y = 72;
 
   const INACTIVE_STROKE = "rgba(255,255,255,0.12)";
   const INACTIVE_DASH = "2 2";
@@ -88,7 +92,7 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">
-      <div className="relative aspect-square w-full max-w-[220px]">
+      <div className="relative mx-auto aspect-square h-full w-auto max-h-[300px] max-w-full">
         <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full" aria-hidden>
           {/* PV -> Load: trunk (left rail) + left branch, always this color/state */}
           <path
@@ -166,24 +170,25 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
         </svg>
 
         <FlowNode
-          icon={<SolarPanelIcon className="h-5 w-5 text-emerald-300/90" />}
+          icon={<SolarPanelIcon className="h-7 w-7 text-emerald-300/90" />}
           label="PV"
           value={`${pvKw.toFixed(1)} kW`}
+          valueFirst
           style={{ left: `${PV.x}%`, top: `${PV.y}%` }}
         />
 
         <FlowNode
-          icon={<LoadBuildingIcon className="h-5 w-5 text-slate-300" />}
+          icon={<LoadBuildingIcon className="h-7 w-7 text-slate-300" />}
           label="Load"
           value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
-          style={{ left: `${LOAD.x}%`, top: `${NODE_Y}%` }}
+          style={{ left: `${LOAD.x}%`, top: `${ICON_Y}%` }}
         />
 
         <FlowNode
-          icon={<TransmissionTowerIcon className="h-5 w-5 text-cyan-300/90" />}
+          icon={<TransmissionTowerIcon className="h-7 w-7 text-cyan-300/90" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
-          style={{ left: `${GRID.x}%`, top: `${NODE_Y}%` }}
+          style={{ left: `${GRID.x}%`, top: `${ICON_Y}%` }}
         />
       </div>
 
@@ -202,28 +207,53 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   );
 }
 
-/** Title above the icon, icon in the middle, value below — the value is the most prominent text, per this milestone's explicit label hierarchy. */
+/**
+ * Load/Grid: label above the icon, icon in the middle, value below (the
+ * value is the most prominent text). PV: the same value/icon/label stack
+ * reversed (`valueFirst`) — its power value is the most important number
+ * in the diagram, so it renders above the icon instead of below.
+ */
 function FlowNode({
   icon,
   label,
   value,
+  valueFirst,
   style,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
+  valueFirst?: boolean;
   style: CSSProperties;
 }) {
+  const valueText = <p className="text-sm font-semibold tabular-nums text-white">{value}</p>;
+  const labelText = (
+    <p className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
+  );
+  const iconCircle = (
+    <div className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-[#0f172a]/80">
+      {icon}
+    </div>
+  );
+
   return (
     <div
-      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
       style={style}
     >
-      <p className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
-      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-[#0f172a]/80">
-        {icon}
-      </div>
-      <p className="text-sm font-semibold tabular-nums text-white">{value}</p>
+      {valueFirst ? (
+        <>
+          {valueText}
+          {iconCircle}
+          {labelText}
+        </>
+      ) : (
+        <>
+          {labelText}
+          {iconCircle}
+          {valueText}
+        </>
+      )}
     </div>
   );
 }

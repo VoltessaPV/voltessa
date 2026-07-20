@@ -4,7 +4,7 @@ import { Line, ReferenceLine } from "recharts";
 
 import type { EnergyFlowPoint } from "@/app/(platform)/dashboard/dashboard-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
-import { CHART_TOOLTIP_CLASSNAME, formatSofiaTime } from "@/components/charts/chart-style";
+import { CHART_TOOLTIP_CLASSNAME, computeFixedHourlyTicks, formatSofiaTime } from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";
 
 type LiveEnergyChartProps = {
@@ -98,6 +98,10 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
   const domainEnd = data[data.length - 1]?.time;
   const nowInRange =
     domainStart !== undefined && domainEnd !== undefined && now >= domainStart && now <= domainEnd;
+  // Fixed hourly ticks (01:00, 03:00, ...), matching Market's own price
+  // chart — `data[0].time` is always the selected day's local midnight
+  // (`dashboard-data.ts`'s `buildFullDayChartSeries`).
+  const xTicks = domainStart !== undefined ? computeFixedHourlyTicks(domainStart) : undefined;
 
   // Presentation-only transform: `data` itself (from `dashboard-data.ts`)
   // keeps `gridImportKw` as the real positive magnitude — only this
@@ -136,6 +140,7 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
           yAxes={Y_AXES}
           tooltipContent={<ChartTooltip />}
           hasAnnotationMargin={Boolean(nowAnnotation)}
+          xTicks={xTicks}
         >
           {nowInRange && (
             <ReferenceLine

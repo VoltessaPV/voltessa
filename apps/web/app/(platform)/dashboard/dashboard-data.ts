@@ -44,6 +44,19 @@
  * are unaffected: they still come from the meter's cumulative counters via
  * `sumSettlementEnergy`, already within tolerance of Huawei and explicitly
  * kept as-is.
+ *
+ * ## Date navigation (Dashboard visual polish milestone)
+ *
+ * `getDashboardPageData` now accepts `selectedDateParam`, mirroring
+ * `getMarketPageData`/`getProductionPageData`'s own pattern exactly —
+ * `page.tsx` reads it from the `?date=` query param and passes it straight
+ * through to those two functions unchanged, so any day they already
+ * support (they needed no changes at all) is now viewable on Dashboard too.
+ * Category A fields (real-time inverter status, the System Overview
+ * diagram, the chart's NOW marker) are only ever fetched/shown for `today`
+ * — a live Huawei read has no meaning for a day that already happened —
+ * exactly the same convention `production-data.ts` already established for
+ * its own Category A fields.
  */
 
 import type { ExportThresholdConfig } from "@/lib/automation/export-threshold-config";
@@ -54,7 +67,7 @@ import {
 } from "@/lib/fusionsolar/get-plant-inverter-status";
 import type { MarketEventLogEntry, MarketSummaryData } from "@/app/(platform)/market/market-data";
 import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
-import { localDayBoundsUtc } from "@/lib/market-price/timezone";
+import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
@@ -123,9 +136,24 @@ export type DashboardMarketWidgetData = {
   threshold: ExportThresholdConfig;
 };
 
+/**
+ * Date-toolbar state (Dashboard visual polish milestone) — same shape and
+ * meaning as `market-data.ts`'s `MarketToolbarState`, computed the same way
+ * (duplicated intentionally, matching `production-data.ts`'s own documented
+ * precedent for this exact pattern, rather than sharing a new utility
+ * module) so Dashboard can render the same `MarketToolbar` component with
+ * real, working day navigation.
+ */
+export type DashboardToolbarState = {
+  selectedDate: string;
+  isToday: boolean;
+  prevDateParam: string;
+  nextDateParam: string;
+};
+
 export type DashboardPageData =
-  | { plantAvailable: false }
-  | {
+  | ({ plantAvailable: false } & DashboardToolbarState)
+  | ({
       plantAvailable: true;
       plantName: string;
       kpis: DashboardKpis;
@@ -137,7 +165,7 @@ export type DashboardPageData =
       latestTelemetryAt: Date | null;
       market: DashboardMarketWidgetData;
       eventLog: MarketEventLogEntry[];
-    };
+    } & DashboardToolbarState);
 
 /**
  * One point on the chart, via the same domain function
@@ -229,13 +257,45 @@ function buildNowAnnotation(energyFlow: EnergyFlowState): string | undefined {
   return `${energyFlow.pvKw} kW PV · ${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`;
 }
 
+/** Identical logic to `market-data.ts`'s own (private) `shiftDateString` — duplicated, not imported, matching `production-data.ts`'s documented precedent for this exact date-handling pattern. */
+function shiftDateString(dateStr: string, deltaDays: number): string {
+  const parts = dateStr.split("-").map(Number);
+  const year = parts[0] ?? 1970;
+  const month = parts[1] ?? 1;
+  const day = parts[2] ?? 1;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+
+  return date.toISOString().slice(0, 10);
+}
+
+function isValidDateString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
 export async function getDashboardPageData(
   organizationId: string,
   automationSettings: {
     minimumExportPrice: { toString(): string };
     currency: string;
   } | null,
+  selectedDateParam: string | undefined,
 ): Promise<DashboardPageData> {
+  // Same resolution as `market-data.ts`'s own `getMarketPageData` — see
+  // `DashboardToolbarState`'s doc comment for why this is duplicated here
+  // rather than imported.
+  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
+  const selectedDate =
+    selectedDateParam && isValidDateString(selectedDateParam) ? selectedDateParam : todayDateStr;
+  const isToday = selectedDate === todayDateStr;
+  const toolbarState: DashboardToolbarState = {
+    selectedDate,
+    isToday,
+    prevDateParam: shiftDateString(selectedDate, -1),
+    nextDateParam: shiftDateString(selectedDate, 1),
+  };
+
   const plant = await prisma.plant.findFirst({
     where: {
       organizationId,
@@ -247,33 +307,47 @@ export async function getDashboardPageData(
   });
 
   if (!plant) {
-    return { plantAvailable: false };
+    return { plantAvailable: false, ...toolbarState };
   }
 
+  const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
   const now = new Date();
-  const { start: dayStart, end: dayEnd } = localDayBoundsUtc(now, BULGARIA_TIMEZONE);
+  const { start: dayStart, end: dayEnd } = localDayBoundsUtc(referenceInstant, BULGARIA_TIMEZONE);
+  // Never show future data for "today" (the day is still in progress); a
+  // past day already fully happened, so its whole day is real data — same
+  // convention as `production-data.ts`'s own `seriesEnd`.
+  const seriesEnd = isToday ? now : dayEnd;
 
   // Reused wholesale from Market's own orchestration — never a second
   // implementation of price fetching, export-revenue math, or real-time
-  // FusionSolar reads. See each module's own doc comment.
+  // FusionSolar reads. See each module's own doc comment. Passing the real
+  // `selectedDateParam` through (instead of always `undefined`) is what
+  // makes Dashboard capable of showing any day Market/Production already
+  // support — neither function needed a single change.
   const [marketData, production, chartSeriesRaw, dailyKpi, connection] = await Promise.all([
-    getMarketPageData({ selectedDateParam: undefined, automationSettings }),
-    getProductionPageData(organizationId, undefined),
-    getPlantTelemetrySeries(plant.id, dayStart, now),
+    getMarketPageData({ selectedDateParam, automationSettings }),
+    getProductionPageData(organizationId, selectedDateParam),
+    getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
     getPlantDailyKpi(plant.id, dayStart),
-    prisma.fusionSolarConnection.findUnique({
-      where: {
-        organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" },
-      },
-      select: {
-        id: true,
-        accessToken: true,
-        refreshToken: true,
-        tokenType: true,
-        scope: true,
-        expiresAt: true,
-      },
-    }),
+    // Category A (live Huawei reads: inverter status) only ever describes
+    // "right now" — same convention `production-data.ts` already uses for
+    // its own Category A fields, so a historical day never shows a live
+    // connection's current state.
+    isToday
+      ? prisma.fusionSolarConnection.findUnique({
+          where: {
+            organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" },
+          },
+          select: {
+            id: true,
+            accessToken: true,
+            refreshToken: true,
+            tokenType: true,
+            scope: true,
+            expiresAt: true,
+          },
+        })
+      : Promise.resolve(null),
   ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
@@ -307,6 +381,11 @@ export async function getDashboardPageData(
   const chartSeries = buildFullDayChartSeries(dayStart, dayEnd, chartSeriesRaw);
   const nowAnnotation = buildNowAnnotation(energyFlow);
 
+  // "no_inverter_devices" is reused here for the historical-day case too
+  // (`connection` is deliberately `null` whenever `!isToday`, see above) —
+  // `InverterStatusResult`'s reason enum has no dedicated "historical day"
+  // value, and adding one would mean touching `get-plant-inverter-status.ts`
+  // itself, out of scope for a presentation-only milestone.
   let inverters: InverterStatusResult = {
     available: false,
     reason: "no_inverter_devices",
@@ -328,6 +407,7 @@ export async function getDashboardPageData(
 
   return {
     plantAvailable: true,
+    ...toolbarState,
     plantName: plant.name,
     kpis,
     energyFlow,
