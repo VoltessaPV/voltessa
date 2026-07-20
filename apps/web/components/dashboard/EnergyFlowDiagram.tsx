@@ -8,38 +8,32 @@ type EnergyFlowDiagramProps = {
 };
 
 /**
- * Huawei-inspired PV / Load / Grid triangle diagram (Dashboard UI
- * Refinement — Final Design Pass, second iteration). Same three nodes as
- * the previous iteration (PV top, Load bottom-left, Grid bottom-right) and
- * the same domain input (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`
- * — unchanged, this component still never modifies/clamps/floors a value),
- * but the flow topology is corrected to match how the energy actually
- * moves:
+ * Huawei-style PV / Load / Grid diagram (Dashboard visual refinement, FINAL
+ * PASS). Topology, per this milestone's explicit geometry requirement: a
+ * double vertical line drops straight down from PV to a single junction,
+ * which then splits exactly once into a horizontal bus — Load at its left
+ * end, Grid at its right end, no further vertical drops after the split.
+ * Same domain input as every prior iteration
+ * (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`, unchanged) — this
+ * component still only decides how to color/animate the two halves of the
+ * bus, never a new calculation.
  *
- * - **Case A (`exporting`, PV >= Load)**: PV splits into two independent
- *   flows — PV -> Load (serving all of Load) and PV -> Grid (the surplus,
- *   `gridKw`). There is no Load -> Grid edge active here.
- * - **Case B (`importing`, Load > PV)**: PV -> Load (all of PV, `pvKw`)
- *   and, separately, Grid -> Load (the shortfall, `gridKw`) — Grid feeds
- *   Load directly, never via PV.
+ * - **Exporting**: the trunk and both bus halves are green — PV's output
+ *   splits at the junction, part staying left to Load, part continuing
+ *   right to Grid.
+ * - **Importing**: the trunk stays green (PV is still contributing what it
+ *   can), but the whole bus turns red/orange and animates right-to-left
+ *   (Grid, through the junction, to Load) — Grid supplying the shortfall.
+ *   Never both colors on the bus at once.
+ * - Whenever `gridKw` is genuinely `0` (no real export or import
+ *   happening), the bus renders as a plain, static, light-grey line
+ *   instead of inventing a direction for a flow that isn't there.
  *
- * Never a `PV -> Load -> Grid` chain. All three edges of the triangle are
- * always drawn (matching a real Huawei-style diagram, which shows every
- * physical connection), but only the two relevant to the current
- * direction are "active" (colored, particled) — the third is rendered
- * subtle/inactive, per this milestone's explicit requirement. Which edge
- * is active depends only on `flow.direction` (a real, always-defined
- * meter reading), never on `consumption.consistent` — the Load node's own
- * displayed number is the only thing gated on that.
- *
- * Edge values reuse the exact same `flow` fields the previous iteration
- * already displayed at the nodes (`pvKw`, `gridKw`, `consumption.kw`) —
- * no new calculation. By the same energy-balance identity
- * `deriveEnergyFlow` already encodes: exporting means
- * `pvKw = consumption.kw + gridKw` (Load's share plus the export), and
- * importing means `consumption.kw = pvKw + gridKw` (PV's share plus the
- * import) — this component only decides which edge shows which
- * already-computed number, purely a presentation choice.
+ * Nodes are deliberately light — small, thin low-opacity borders, no glow —
+ * so the flow lines (not the nodes) read as the dominant visual element,
+ * per this milestone's explicit ask. Icons are custom energy-asset
+ * illustrations (`energy-icons.tsx`): a solar panel, a building, a
+ * transmission tower — never a generic sun/lightning-bolt/home glyph.
  */
 export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   if (!flow.available) {
@@ -52,117 +46,114 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
 
   const { pvKw, consumption, direction, gridKw } = flow;
   const importing = direction === "importing";
-
   const loadKw = consumption.consistent ? consumption.kw : null;
 
   // Coordinates share the same 0-100 x / 0-90 y space as the SVG viewBox
   // below, so the HTML icon nodes (positioned by percentage) and the SVG
-  // lines/particles (positioned by these same numbers) always line up
-  // regardless of the container's rendered size. Taller than the previous
-  // iteration's 2:1 box — this diagram now lives in a narrower, taller
-  // column next to Live Energy, and a taller layout uses that space
-  // better while keeping the nodes (not empty space) the visual focus.
-  const PV = { x: 50, y: 12 };
-  const LOAD = { x: 15, y: 78 };
-  const GRID = { x: 85, y: 78 };
+  // lines/particles (positioned by these same numbers) always line up.
+  const PV = { x: 50, y: 10 };
+  const JUNCTION = { x: 50, y: 55 };
+  const LOAD = { x: 12, y: 55 };
+  const GRID = { x: 88, y: 55 };
 
-  const pvLoadPath = `M${PV.x},${PV.y} L${LOAD.x},${LOAD.y}`;
-  const pvGridPath = `M${PV.x},${PV.y} L${GRID.x},${GRID.y}`;
-  const gridLoadPath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+  const trunkActive = pvKw > 0;
+  const busActive = gridKw > 0;
 
-  const pvLoadActive = pvKw > 0;
-  const secondEdgeActive = gridKw > 0;
-  // Exporting: PV -> Grid is the second active edge. Importing: Grid -> Load is.
-  const pvGridActive = !importing && secondEdgeActive;
-  const gridLoadActive = importing && secondEdgeActive;
+  const leftBusPath = `M${JUNCTION.x},${JUNCTION.y} L${LOAD.x},${LOAD.y}`;
+  const rightBusPath = `M${JUNCTION.x},${JUNCTION.y} L${GRID.x},${GRID.y}`;
+  const wholeBusPath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+
+  const busColor = !busActive ? "rgba(255,255,255,0.1)" : importing ? "#fb923c" : "#34d399";
+  const trunkColor = trunkActive ? "#34d399" : "rgba(255,255,255,0.1)";
+  const particleColor = importing ? "#fdba74" : "#6ee7b7";
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">
-      <div className="relative aspect-[10/9] w-full max-w-[240px]">
+      <div className="relative aspect-[10/9] w-full max-w-[230px]">
         <svg viewBox="0 0 100 90" className="absolute inset-0 h-full w-full" aria-hidden>
-          {/* Every physical connection is always drawn — a real Huawei-style
-              diagram shows all three edges, only the currently active ones
-              are highlighted. */}
-          <path
-            d={pvLoadPath}
-            stroke={pvLoadActive ? "#34d399" : "rgba(255,255,255,0.08)"}
-            strokeWidth={pvLoadActive ? 0.7 : 0.5}
-            fill="none"
-          />
-          <path
-            d={pvGridPath}
-            stroke={pvGridActive ? "#34d399" : "rgba(255,255,255,0.08)"}
-            strokeWidth={pvGridActive ? 0.7 : 0.5}
-            fill="none"
-          />
-          <path
-            d={gridLoadPath}
-            stroke={gridLoadActive ? "#67e8f9" : "rgba(255,255,255,0.08)"}
-            strokeWidth={gridLoadActive ? 0.7 : 0.5}
-            fill="none"
-          />
+          {/* Double vertical trunk, PV -> junction */}
+          <line x1={PV.x - 1.4} y1={PV.y + 6} x2={JUNCTION.x - 1.4} y2={JUNCTION.y} stroke={trunkColor} strokeWidth={0.6} />
+          <line x1={PV.x + 1.4} y1={PV.y + 6} x2={JUNCTION.x + 1.4} y2={JUNCTION.y} stroke={trunkColor} strokeWidth={0.6} />
 
-          {pvLoadActive &&
+          {/* Horizontal bus, junction splits once into Load (left) and Grid (right) */}
+          <path d={leftBusPath} stroke={busColor} strokeWidth={busActive ? 0.7 : 0.5} fill="none" />
+          <path d={rightBusPath} stroke={busColor} strokeWidth={busActive ? 0.7 : 0.5} fill="none" />
+
+          {trunkActive &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`pv-load-${delay}`}
-                r={1}
+                key={`trunk-${delay}`}
+                r={0.9}
                 fill="#6ee7b7"
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${pvLoadPath}')`, animationDelay: `${delay}s` }}
+                style={{
+                  offsetPath: `path('M${PV.x},${PV.y + 6} L${JUNCTION.x},${JUNCTION.y}')`,
+                  animationDelay: `${delay}s`,
+                }}
               />
             ))}
 
-          {pvGridActive &&
+          {busActive && !importing &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`pv-grid-${delay}`}
-                r={1}
-                fill="#6ee7b7"
+                key={`bus-left-${delay}`}
+                r={0.9}
+                fill={particleColor}
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${pvGridPath}')`, animationDelay: `${delay}s` }}
+                style={{ offsetPath: `path('${leftBusPath}')`, animationDelay: `${delay}s` }}
               />
             ))}
 
-          {gridLoadActive &&
+          {busActive && !importing &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`grid-load-${delay}`}
-                r={1}
-                fill="#67e8f9"
+                key={`bus-right-${delay}`}
+                r={0.9}
+                fill={particleColor}
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${gridLoadPath}')`, animationDelay: `${delay}s` }}
+                style={{ offsetPath: `path('${rightBusPath}')`, animationDelay: `${delay}s` }}
+              />
+            ))}
+
+          {busActive && importing &&
+            [0, 0.7, 1.4].map((delay) => (
+              <circle
+                key={`bus-import-${delay}`}
+                r={0.9}
+                fill={particleColor}
+                className="voltessa-flow-particle"
+                style={{ offsetPath: `path('${wholeBusPath}')`, animationDelay: `${delay}s` }}
               />
             ))}
         </svg>
 
         <FlowNode
-          icon={<SolarPanelIcon className="h-6 w-6 text-emerald-300" />}
+          icon={<SolarPanelIcon className="h-5 w-5 text-emerald-300/90" />}
           label="PV"
           value={`${pvKw.toFixed(1)} kW`}
-          borderClass="border-emerald-400/40"
+          borderClass="border-white/10"
           style={{ left: `${PV.x}%`, top: `${(PV.y / 90) * 100}%` }}
         />
 
         <FlowNode
-          icon={<LoadBuildingIcon className="h-6 w-6 text-slate-200" />}
+          icon={<LoadBuildingIcon className="h-5 w-5 text-slate-300" />}
           label="Load"
           value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
-          borderClass={loadKw !== null ? "border-white/15" : "border-amber-400/40"}
+          borderClass="border-white/10"
           style={{ left: `${LOAD.x}%`, top: `${(LOAD.y / 90) * 100}%` }}
         />
 
         <FlowNode
-          icon={<TransmissionTowerIcon className="h-6 w-6 text-cyan-300" />}
+          icon={<TransmissionTowerIcon className="h-5 w-5 text-cyan-300/90" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
-          borderClass="border-cyan-400/40"
+          borderClass="border-white/10"
           style={{ left: `${GRID.x}%`, top: `${(GRID.y / 90) * 100}%` }}
         />
       </div>
 
       <div className="flex items-center gap-2 text-sm">
-        <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-cyan-400" : "bg-emerald-400"}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-orange-400" : "bg-emerald-400"}`} />
         <span className="font-medium text-white">{importing ? "Importing" : "Exporting"}</span>
       </div>
 
@@ -191,16 +182,16 @@ function FlowNode({
 }) {
   return (
     <div
-      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+      className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-0.5"
       style={style}
     >
       <div
-        className={`flex h-12 w-12 items-center justify-center rounded-full border bg-[#0f172a] ${borderClass}`}
+        className={`flex h-9 w-9 items-center justify-center rounded-full border bg-[#0f172a]/80 ${borderClass}`}
       >
         {icon}
       </div>
-      <p className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
-      <p className="text-xs font-semibold tabular-nums text-white">{value}</p>
+      <p className="text-[9px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
+      <p className="text-[11px] font-semibold tabular-nums text-white">{value}</p>
     </div>
   );
 }

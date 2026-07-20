@@ -1,7 +1,6 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/prisma";
 
-import { DashboardMarketWidget } from "@/components/dashboard/DashboardMarketWidget";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
@@ -34,6 +33,18 @@ import { getDashboardPageData } from "./dashboard-data";
  * to Grid`, `Imported Today` -> `From Grid` — see `LiveEnergyChart.tsx` for
  * the matching real-time-chart renames), and small icons on the bottom
  * cards' headers (via `lucide-react`, already a dependency).
+ *
+ * ## Dashboard visual refinement (FINAL PASS) milestone
+ *
+ * System Overview + Live Energy now share one row (35%/65% split, identical
+ * height via CSS Grid's default stretch). The Market card
+ * (`DashboardMarketWidget`, since removed — Revenue/price already live on
+ * Market) is gone from the bottom row without a replacement; Inverters
+ * moved into that same row instead of its own full-width section below, so
+ * the bottom row is now exactly four equal cards: Weather, Forecast,
+ * Inverters, Event Log. `data.market` (still computed in
+ * `dashboard-data.ts`, untouched per this milestone's "don't touch the data
+ * layer" constraint) is simply no longer rendered anywhere on this page.
  */
 
 /**
@@ -120,7 +131,7 @@ export default async function DashboardPage() {
             />
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-[33%_1fr]">
+          <section className="grid gap-2.5 lg:grid-cols-[35%_1fr]">
             <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">System Overview</h2>
@@ -149,12 +160,8 @@ export default async function DashboardPage() {
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
             <WeatherCard />
             <GlidepathCard />
-            <DashboardMarketWidget market={data.market} />
-            <MarketEventLog entries={data.eventLog} />
-          </section>
-
-          <section>
             <InvertersCard inverters={data.inverters} />
+            <MarketEventLog entries={data.eventLog} />
           </section>
         </>
       )}
