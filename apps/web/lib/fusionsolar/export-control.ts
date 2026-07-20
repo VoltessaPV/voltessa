@@ -19,16 +19,15 @@ import {
  * response envelope (success/failCode/message/data) matches this repo's
  * existing FusionSolarApiResponse<T> shape exactly.
  *
- * NOT independently verified against the raw Huawei PDF/portal doc (which
- * needs a Huawei support-portal login this environment doesn't have) —
- * derived from multiple independently-corroborating public doc pages via
- * search, not a single authoritative fetch. The one specific thing that
- * should be treated as unconfirmed until the first real manual test:
- * whether the request body's top-level shape is a bare array of per-plant
- * objects or a wrapped `{ plantList: [...] }`-style object — the docs say
- * "a task supports a maximum of 10 plants" but the exact wrapper key was
- * not confirmable via search. Wrapped in `plantList` below as the more
- * likely shape; check the response body (or a 4xx) on first call.
+ * Request body wrapper key CONFIRMED against the live SmartPVMS 25.4.0
+ * Northbound API Reference page (verbatim example fetched directly, not
+ * just search-indexed summaries): the top-level array is `tasks`, not
+ * `plantList`. The first real manual test call (see the Huawei Control
+ * milestone) failed with `api_path_not_allowed`, which prompted this
+ * verification and correction. Everything else this file assumed
+ * (endpoint paths, the async-task model, controlMode values, controlInfo
+ * fields, the success/failCode/message/data response envelope) matched
+ * the same confirmed doc page's example exactly and is unchanged.
  *
  * Requires the FusionSolar OAuth connection to have been granted the
  * `pvms.openapi.control` scope (in addition to `pvms.openapi.basic`) by the
@@ -101,7 +100,7 @@ async function deliverActivePowerControlTask(
       {
         path: ACTIVE_POWER_CONTROL_TASK_PATH,
         body: {
-          plantList: [
+          tasks: [
             {
               plantCode,
               controlMode,

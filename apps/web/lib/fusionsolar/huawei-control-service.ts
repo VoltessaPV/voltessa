@@ -11,7 +11,7 @@ import { prisma } from "@/lib/prisma";
  * Huawei Control (Testing) milestone: a thin, logging-heavy wrapper around
  * `export-control.ts`'s `setExportLimit`/`restoreExport` - it does NOT
  * reimplement the Huawei request (that file remains the single source of
- * truth for the plantList/controlMode/controlInfo shape), only resolves
+ * truth for the tasks/controlMode/controlInfo shape), only resolves
  * which plant/connection to send it to and records exactly what was sent
  * and what came back, since this is the first real exercise of code that
  * was previously never wired to anything.
