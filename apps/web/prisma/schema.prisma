@@ -89,6 +89,7 @@ model Organization {
 
   automationSettings AutomationSettings?
   deviceTelemetry    DeviceTelemetry[]
+  plantDailyKpis     PlantDailyKpi[]
 }
 
 model Plant {
@@ -121,8 +122,16 @@ model Plant {
 
   devices Device[]
 
+  /// Deprecated (Telemetry Architecture Finalization milestone, ADR-010):
+  /// no longer read or written by any code path — `syncFusionSolarPlantTelemetry`
+  /// and the routes that called it were removed, replaced by
+  /// `PlantDailyKpi`. Kept, table and relation both, purely as a historical
+  /// record; a dedicated future cleanup migration will drop it once
+  /// `PlantDailyKpi` has run in production for a while. Do not write to
+  /// this relation.
   telemetrySnapshots PlantTelemetrySnapshot[]
   deviceTelemetry    DeviceTelemetry[]
+  dailyKpis          PlantDailyKpi[]
 
   @@unique([organizationId, stationCode])
 }
@@ -287,6 +296,15 @@ model MarketPriceImport {
   @@index([biddingZone, importedAt])
 }
 
+/// DEPRECATED (Telemetry Architecture Finalization milestone, ADR-010): the
+/// pipeline that wrote this table (`syncFusionSolarPlantTelemetry`,
+/// `ingestFusionSolarPlantTelemetry`, and the routes that called them) has
+/// been removed — it called the same Huawei endpoint (`getStationRealKpi`)
+/// `PlantDailyKpi` now owns, which would otherwise have meant two code
+/// paths calling Huawei for the same data. No code reads or writes this
+/// table anymore. Kept, table and data both, purely as a historical
+/// record — dropping it is an explicit future cleanup migration, not done
+/// here, so the 906 already-stored rows aren't lost.
 model PlantTelemetrySnapshot {
   id String @id @default(cuid())
 
@@ -307,6 +325,70 @@ model PlantTelemetrySnapshot {
   plant Plant @relation(fields: [plantId], references: [id], onDelete: Cascade)
 
   @@index([plantId, collectedAt])
+}
+
+/// Huawei's station-level daily KPI counters (`getStationRealKpi`),
+/// persisted once per Scaleway ingestion cycle
+/// (`bootstrap-device-telemetry` -> `import-plant-daily-kpi.ts`) — see
+/// ADR-010. This is the authoritative source for Produced Today / Consumed
+/// Today (`pvYieldKwh`/`consumptionKwh` = Huawei's own `day_power`/
+/// `day_use_energy` counters), replacing the local power-integration
+/// reconstruction that was found to disagree with Huawei by ~28%
+/// (docs/research/energy-data-audit.md). Exported/Imported Today keep
+/// coming from the meter's cumulative counters in `DeviceTelemetry`
+/// (already within tolerance) — `exportedEnergyKwh` here is stored for
+/// reference/reporting only, never as the Dashboard/Market display source.
+///
+/// Replaces the old `PlantTelemetrySnapshot` pipeline (dormant, unscheduled
+/// — see ADR-008/ADR-009), which called this same Huawei endpoint
+/// independently; that pipeline's code has been removed (keeping both would
+/// have meant two code paths calling Huawei for the same data), though the
+/// `PlantTelemetrySnapshot` table/data itself is kept as a historical
+/// record — see that model's own doc comment. Only fields Huawei's
+/// `getStationRealKpi` actually returns become typed columns; everything else in that response
+/// (total_income/total_power/day_income/real_health_state/month_power) is
+/// preserved unmodified in `rawPayload`, the same discipline
+/// `DeviceTelemetry.rawPayload` already follows — no invented/calculated
+/// fields. `importedEnergyKwh` has no corresponding Huawei field in this
+/// endpoint's response and is always null; never derived locally.
+model PlantDailyKpi {
+  id String @id @default(cuid())
+
+  organizationId String
+  plantId        String
+
+  /// The local (Europe/Sofia) calendar day this row represents, stored as
+  /// that day's own UTC midnight instant (`localDayBoundsUtc`'s `start`) —
+  /// must be computed with the exact same timezone convention every reader
+  /// of this table uses (see `lib/telemetry/plant-daily-kpi.ts`), so the
+  /// unique key always matches.
+  localDate DateTime
+
+  /// Huawei `day_power` — cumulative PV yield for the local day, kWh.
+  pvYieldKwh Decimal @db.Decimal(12, 3)
+  /// Huawei `day_use_energy` — cumulative site consumption for the local
+  /// day, kWh.
+  consumptionKwh Decimal @db.Decimal(12, 3)
+  /// Huawei `day_on_grid_energy` — cumulative export for the local day,
+  /// kWh. Reference only; display continues to use the meter counter.
+  exportedEnergyKwh Decimal? @db.Decimal(12, 3)
+  /// No Huawei station-KPI field currently provides this — always null.
+  importedEnergyKwh Decimal? @db.Decimal(12, 3)
+
+  source String @default("HuaweiFusionSolar")
+
+  /// The complete, unmodified `dataItemMap` from `getStationRealKpi` for
+  /// this station — same discipline as `DeviceTelemetry.rawPayload`.
+  rawPayload Json
+
+  ingestedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plant        Plant        @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@unique([plantId, localDate])
+  @@index([organizationId, plantId, localDate])
 }
 
 /// Resolution of a `DeviceTelemetry` sample. Only "5m" is populated as of the

@@ -488,3 +488,97 @@ data on genuinely different real-world cadences:
   which timestamps already exist purely to log accurate "records inserted" vs. "duplicates skipped"
   counts; it does not change write behavior, so ENTSO-E revising an already-published value (rare,
   not observed, but not ruled out) still self-heals on the next scheduled run exactly as before.
+
+## ADR-010: `PlantDailyKpi` — Huawei's own daily counters are authoritative for Produced/Consumed Today
+
+### Status
+
+Accepted (Telemetry Architecture Finalization milestone; see `docs/research/energy-data-audit.md`
+for the full field-by-field investigation and side-by-side comparison this decision is based on).
+
+### Context
+
+Two prior investigation-only milestones found that Dashboard/Market's "Produced Today" and
+"Consumed Today" — computed by numerically integrating 5-minute inverter power samples
+(`energy-metrics.ts`'s `integrateKwh`/`computeEnergyMetricsFromSeries`) — disagreed with Huawei's
+own station-level daily counters (`getStationRealKpi`'s `day_power`/`day_use_energy`) by
+approximately 28%, even after an earlier, unrelated inverter unit-conversion bug had already been
+fixed. The gap was root-caused to the integration methodology itself (sampling/quantization error
+inherent to reconstructing a cumulative daily total from instantaneous 5-minute power readings),
+not to a data or timezone bug — Huawei's own counters are simply a more accurate source for a
+cumulative daily total than reconstructing one locally ever can be.
+
+The same investigation found a **dormant, unscheduled pipeline already calling this exact Huawei
+endpoint**: `syncFusionSolarPlantTelemetry` wrote `getStationRealKpi` responses into
+`PlantTelemetrySnapshot`, but nothing had triggered it on a schedule since before ADR-008/ADR-009
+retargeted the one production scheduler at `bootstrap-device-telemetry`/`DeviceTelemetry` instead.
+Reviving that pipeline as-is was explicitly rejected: `PlantTelemetrySnapshot` has no
+`organizationId` (violates ADR-002), and running it alongside a new pipeline calling the same
+Huawei endpoint would have meant two code paths making the same external call — exactly the
+duplication this codebase's engineering principles rule out.
+
+Exported/Imported Today were investigated separately and found to already be sound: they are
+derived from the meter's real cumulative energy counters (`DeviceTelemetry.activeEnergy`/
+`reverseActiveEnergy`, via `getPlantSettlementEnergySeries`/`sumSettlementEnergy`), not from power
+integration, and already sit within tolerance of Huawei's own figures. Revenue Today is, and
+remains, a Voltessa market-price calculation (`computeExportRevenue`) — Huawei's own `day_income`/
+`total_income` fields are unconfigured (read `0`) for this plant and aren't a substitute for
+Voltessa's own market-rate revenue model regardless.
+
+### Decision
+
+- **`PlantDailyKpi`** is a new table, written once per Scaleway ingestion cycle (every 5 minutes,
+  the same `voltessa-telemetry-ingestion.timer` from ADR-008) by
+  `lib/fusionsolar/import-plant-daily-kpi.ts`, called from
+  `lib/fusionsolar/bootstrap-device-telemetry.ts` alongside the existing `DeviceTelemetry` import —
+  an extension of the existing pipeline, not a second scheduler. It carries `organizationId` (per
+  ADR-002) and upserts on `(plantId, localDate)`, so repeated cycles within the same local day
+  update the same row rather than accumulating snapshots.
+- Only fields Huawei's `getStationRealKpi` response actually contains for this plant become typed
+  columns (`pvYieldKwh` = `day_power`, `consumptionKwh` = `day_use_energy`, `exportedEnergyKwh` =
+  `day_on_grid_energy`, reference-only); no calculated/derived field (self-consumption,
+  self-sufficiency, power profit) is invented, since none of those appear anywhere in this
+  integration's confirmed responses. The full `dataItemMap` is preserved unmodified in `rawPayload`
+  — the same discipline `DeviceTelemetry.rawPayload` already follows — so no real Huawei field is
+  ever silently discarded even though it isn't a typed column today.
+- **Source of truth per KPI, going forward:**
+  - Produced Today, Consumed Today → `PlantDailyKpi` (Huawei's own daily counters).
+  - Exported Today, Imported Today → unchanged, the meter's cumulative counters in
+    `DeviceTelemetry`.
+  - Revenue Today → unchanged, Voltessa's own market-price calculation.
+  - Realtime values (current PV/consumption/import/export, per-inverter power), the System
+    Overview diagram, and the Live Energy chart → unchanged, `DeviceTelemetry` real-time samples via
+    `deriveEnergyFlow`.
+- **The presentation layer never calls Huawei directly for these KPIs.** `dashboard-data.ts` reads
+  Produced/Consumed Today through `lib/telemetry/plant-daily-kpi.ts`'s `getPlantDailyKpi` — a
+  read-only query against `PlantDailyKpi`, nothing else. This is the one function Dashboard,
+  Market, Automation, and Reporting are all expected to call for these two KPIs, so no second
+  calculation or second Huawei call is ever introduced for the same figures. (Market does not
+  currently display Produced/Consumed Today at all, so there was no existing Market code path to
+  migrate — only Dashboard's.)
+- **`PlantTelemetrySnapshot`'s pipeline (`syncFusionSolarPlantTelemetry`,
+  `ingestFusionSolarPlantTelemetry`, and the two routes that called them) was removed outright** —
+  keeping it would have meant two code paths calling `getStationRealKpi`. The table and its 906
+  already-stored rows were deliberately **not** dropped in this milestone (would require
+  `--accept-data-loss`); it is kept as an inert historical record until a dedicated future cleanup
+  migration removes it.
+
+### Consequences
+
+- Produced/Consumed Today now match Huawei's own portal figures directly (same counters, same
+  source), instead of a locally-reconstructed approximation with a known ~28% error band.
+- Exactly one code path in this codebase calls `getStationRealKpi` (`import-plant-daily-kpi.ts`);
+  exactly one code path reads `PlantDailyKpi` for these two KPIs (`getPlantDailyKpi`).
+- `producedTodayKwh`/`consumedTodayKwh` can now show `available: false` (rendered as "Waiting for
+  telemetry", the same treatment every other KPI card already uses) for a short window right after
+  local midnight, before the first ingestion cycle of the new day has run — this is a deliberate
+  trade-off of the "never fabricate" principle, not a regression: no row exists yet for that
+  `localDate`, so no number is shown rather than showing a stale or synthetic one.
+- `energy-metrics.ts`'s `computeEnergyMetricsFromSeries`/`computePlantEnergyMetrics`/`integrateKwh`
+  are no longer called from anywhere in the codebase as of this change (their last caller,
+  `dashboard-data.ts`, was migrated to `getPlantDailyKpi`) — left in place, not deleted, since
+  removing now-unused code is a separate cleanup decision from this milestone's scope, not folded
+  in as a drive-by change.
+- A second vendor's daily-KPI ingestion would add its own `import-<vendor>-daily-kpi.ts` writing
+  into the same `PlantDailyKpi` shape (already vendor-labeled via `source`), not a parallel table —
+  consistent with this codebase's vendor-abstraction principle.

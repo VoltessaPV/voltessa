@@ -1,4 +1,5 @@
 import { importDeviceTelemetry } from "@/lib/fusionsolar/import-device-telemetry";
+import { importPlantDailyKpi } from "@/lib/fusionsolar/import-plant-daily-kpi";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 
@@ -40,6 +41,8 @@ export type DeviceTelemetryBootstrapResult = {
   samplesInserted: number;
   duplicatesSkipped: number;
   unmatchedSamples: number;
+  /** `PlantDailyKpi` rows written this cycle (Telemetry Architecture Finalization milestone, ADR-010) — Huawei's own daily Produced/Consumed counters, alongside the device-level telemetry this bootstrap already wrote. */
+  dailyKpisUpserted: number;
   perPlant: Array<{
     organizationId: string;
     plantId: string;
@@ -50,6 +53,7 @@ export type DeviceTelemetryBootstrapResult = {
     unmatchedSamples: number;
     errors: Array<{ devTypeId: number; collectTime: number; reason: string }>;
   }>;
+  dailyKpiErrors: Array<{ organizationId: string; stationCode: string; reason: string }>;
   failures: Array<{ organizationId: string; reason: string }>;
 };
 
@@ -57,12 +61,22 @@ export type DeviceTelemetryBootstrapResult = {
  * Bootstrap/backfill: imports `daysBack` complete local (Europe/Sofia)
  * calendar days plus today's 5-minute device telemetry, for every
  * organization with a FusionSolar connection. `daysBack` defaults to `1`
- * (yesterday + today — the original bootstrap window). Manual/
- * externally-triggered execution only — not wired to any cron/scheduler.
- * Safe to re-run with any `daysBack` value, including a smaller or larger
- * one than a previous call: the underlying importer is idempotent
- * (`(deviceId, timestamp, resolution)` unique constraint,
+ * (yesterday + today — the original bootstrap window). This is the one
+ * production scheduler for Huawei ingestion (ADR-009's
+ * `voltessa-telemetry-ingestion.service`, a Scaleway systemd timer, calls
+ * this route every 5 minutes) — not the manual/one-off tool the name might
+ * suggest. Safe to re-run with any `daysBack` value, including a smaller or
+ * larger one than a previous call: the underlying device-telemetry importer
+ * is idempotent (`(deviceId, timestamp, resolution)` unique constraint,
  * `skipDuplicates: true`).
+ *
+ * Telemetry Architecture Finalization milestone (ADR-010): every cycle also
+ * fetches and upserts Huawei's station-level daily KPIs
+ * (`import-plant-daily-kpi.ts` -> `PlantDailyKpi`) — the authoritative
+ * source for Produced/Consumed Today. This is an extension of the existing
+ * ingestion pipeline, not a second scheduler: exactly one Scaleway timer,
+ * one route, one execution per cycle, matching ADR-009's "exactly one
+ * production scheduler" decision.
  */
 export async function bootstrapDeviceTelemetry(
   daysBack = 1,
@@ -89,8 +103,10 @@ export async function bootstrapDeviceTelemetry(
   let samplesInserted = 0;
   let duplicatesSkipped = 0;
   let unmatchedSamples = 0;
+  let dailyKpisUpserted = 0;
 
   const perPlant: DeviceTelemetryBootstrapResult["perPlant"] = [];
+  const dailyKpiErrors: DeviceTelemetryBootstrapResult["dailyKpiErrors"] = [];
   const failures: DeviceTelemetryBootstrapResult["failures"] = [];
 
   for (const connection of connections) {
@@ -137,6 +153,28 @@ export async function bootstrapDeviceTelemetry(
         });
       }
 
+      const dailyKpiResult = await importPlantDailyKpi(
+        connection.organizationId,
+        connection,
+      );
+
+      dailyKpisUpserted += dailyKpiResult.kpisUpserted;
+
+      for (const error of dailyKpiResult.errors) {
+        dailyKpiErrors.push({
+          organizationId: connection.organizationId,
+          stationCode: error.stationCode,
+          reason: error.reason,
+        });
+      }
+
+      console.log("[FusionSolar Plant Daily KPI] Organization processed", {
+        organizationId: connection.organizationId,
+        plantsRequested: dailyKpiResult.plantsRequested,
+        kpisUpserted: dailyKpiResult.kpisUpserted,
+        errors: dailyKpiResult.errors,
+      });
+
       organizationsSucceeded += 1;
     } catch (error) {
       failures.push({
@@ -160,7 +198,9 @@ export async function bootstrapDeviceTelemetry(
     samplesInserted,
     duplicatesSkipped,
     unmatchedSamples,
+    dailyKpisUpserted,
     perPlant,
+    dailyKpiErrors,
     failures,
   };
 }

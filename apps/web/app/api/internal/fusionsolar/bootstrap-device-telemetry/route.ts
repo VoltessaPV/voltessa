@@ -108,6 +108,8 @@ async function handleBootstrap(request: Request) {
       samplesInserted: result.samplesInserted,
       duplicatesSkipped: result.duplicatesSkipped,
       unmatchedSamples: result.unmatchedSamples,
+      dailyKpisUpserted: result.dailyKpisUpserted,
+      dailyKpiErrors: result.dailyKpiErrors,
       failures: result.failures,
     });
 

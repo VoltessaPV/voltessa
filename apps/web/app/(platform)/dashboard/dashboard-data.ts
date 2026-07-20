@@ -24,13 +24,26 @@
  * per-plant-configurable field here while every sibling module hardcodes
  * the same zone was a latent parallel-implementation risk this audit
  * closes: `dayStart` must be identical across `chartSeries` (this module)
- * and `settlementEnergySeries` (`production-data.ts`) for Produced/
- * Consumed/Exported/Imported to add up consistently and for the chart to
- * show the same day Market shows. Produced/Consumed/Exported/Imported,
- * the chart, and Revenue are now all derived from exactly two queries -
- * `getPlantTelemetrySeries` and `production.settlementEnergySeries` - over
- * the identical `[dayStart, now)` window; nothing recomputes a third,
- * independent version of "today."
+ * and `settlementEnergySeries` (`production-data.ts`) for the chart to show
+ * the same day Market shows and for Exported/Imported to add up
+ * consistently. The System Overview / Live Energy chart (real-time,
+ * unchanged) derive from `getPlantTelemetrySeries` and
+ * `production.settlementEnergySeries` over the identical `[dayStart, now)`
+ * window; nothing recomputes a third, independent version of "today."
+ *
+ * ## Produced/Consumed Today (Telemetry Architecture Finalization
+ * milestone, ADR-010)
+ *
+ * `producedTodayKwh`/`consumedTodayKwh` no longer come from integrating
+ * this page's own power series — that reconstruction was found to disagree
+ * with Huawei's own daily counters by ~28% (docs/research/energy-data-audit.md).
+ * They now read `PlantDailyKpi` (`lib/telemetry/plant-daily-kpi.ts`'s
+ * `getPlantDailyKpi`), the table a Scaleway-scheduled ingestion cycle
+ * writes Huawei's `day_power`/`day_use_energy` counters into — this page
+ * never calls FusionSolar for these two figures. Exported/Imported Today
+ * are unaffected: they still come from the meter's cumulative counters via
+ * `sumSettlementEnergy`, already within tolerance of Huawei and explicitly
+ * kept as-is.
  */
 
 import type { ExportThresholdConfig } from "@/lib/automation/export-threshold-config";
@@ -45,11 +58,11 @@ import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
-  computeEnergyMetricsFromSeries,
   getPlantTelemetrySeries,
   sumSettlementEnergy,
   type PlantTelemetrySeriesPoint,
 } from "@/lib/telemetry/energy-metrics";
+import { getPlantDailyKpi } from "@/lib/telemetry/plant-daily-kpi";
 
 import { getMarketPageData } from "@/app/(platform)/market/market-data";
 import { getProductionPageData, type ProductionReading } from "@/app/(platform)/market/production-data";
@@ -231,10 +244,11 @@ export async function getDashboardPageData(
   // Reused wholesale from Market's own orchestration — never a second
   // implementation of price fetching, export-revenue math, or real-time
   // FusionSolar reads. See each module's own doc comment.
-  const [marketData, production, chartSeriesRaw, connection] = await Promise.all([
+  const [marketData, production, chartSeriesRaw, dailyKpi, connection] = await Promise.all([
     getMarketPageData({ selectedDateParam: undefined, automationSettings }),
     getProductionPageData(organizationId, undefined),
     getPlantTelemetrySeries(plant.id, dayStart, now),
+    getPlantDailyKpi(plant.id, dayStart),
     prisma.fusionSolarConnection.findUnique({
       where: {
         organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" },
@@ -254,28 +268,17 @@ export async function getDashboardPageData(
     ? computeExportRevenue(marketData.series, production.settlementEnergySeries)
     : { available: false };
 
-  // Same two building blocks `computePlantEnergyMetrics` itself composes
-  // (energy-metrics.ts) — reused directly against data already fetched
-  // above instead of issuing a second, redundant DeviceTelemetry query for
-  // the same [dayStart, now) window. This is the one telemetry snapshot
-  // every KPI, the energy-flow diagram's "today" total, and the chart all
-  // derive from - see this module's top doc comment.
-  const productionMetrics = computeEnergyMetricsFromSeries(chartSeriesRaw);
+  // Exported/Imported Today: unchanged, still the meter's cumulative
+  // counters (energy-metrics.ts) — reused directly against data already
+  // fetched above instead of issuing a second, redundant DeviceTelemetry
+  // query for the same [dayStart, now) window.
   const settlementTotals = sumSettlementEnergy(production.settlementEnergySeries);
 
   const kpis: DashboardKpis = {
-    producedTodayKwh: productionMetrics.available ? productionMetrics.producedKwh : null,
+    producedTodayKwh: dailyKpi.available ? dailyKpi.producedKwh : null,
+    consumedTodayKwh: dailyKpi.available ? dailyKpi.consumedKwh : null,
     exportedTodayKwh: settlementTotals.available ? settlementTotals.exportedKwh : null,
     importedTodayKwh: settlementTotals.available ? settlementTotals.importedKwh : null,
-    consumedTodayKwh:
-      productionMetrics.available && settlementTotals.available
-        ? Math.round(
-            (productionMetrics.producedKwh +
-              settlementTotals.importedKwh -
-              settlementTotals.exportedKwh) *
-              100,
-          ) / 100
-        : null,
     revenue,
   };
 
