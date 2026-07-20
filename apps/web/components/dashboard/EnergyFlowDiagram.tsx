@@ -1,41 +1,50 @@
-import { Home, Sun, Zap } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 
 import type { EnergyFlowState } from "@/app/(platform)/dashboard/dashboard-data";
+import { LoadBuildingIcon, SolarPanelIcon, TransmissionTowerIcon } from "@/components/dashboard/energy-icons";
 
 type EnergyFlowDiagramProps = {
   flow: EnergyFlowState;
 };
 
 /**
- * Compact PV / Load / Grid triangle diagram (Dashboard UI Refinement — Final
- * Design Pass milestone), replacing the previous wide horizontal
- * PV -> Home -> Grid layout. Matches the Huawei-style layout the milestone
- * asked for: PV top-center, Load bottom-left, Grid bottom-right — icons
- * (`lucide-react`, already a dependency) instead of plain text circles.
- * "Load", never "Home" — this product isn't house-only.
+ * Huawei-inspired PV / Load / Grid triangle diagram (Dashboard UI
+ * Refinement — Final Design Pass, second iteration). Same three nodes as
+ * the previous iteration (PV top, Load bottom-left, Grid bottom-right) and
+ * the same domain input (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`
+ * — unchanged, this component still never modifies/clamps/floors a value),
+ * but the flow topology is corrected to match how the energy actually
+ * moves:
  *
- * Exactly two states, never a third "idle" one, unchanged from the
- * original implementation (see `lib/telemetry/energy-flow.ts`'s
- * `deriveEnergyFlow` — this component still only renders what that
- * function returns, never modifies/clamps/floors a value itself):
+ * - **Case A (`exporting`, PV >= Load)**: PV splits into two independent
+ *   flows — PV -> Load (serving all of Load) and PV -> Grid (the surplus,
+ *   `gridKw`). There is no Load -> Grid edge active here.
+ * - **Case B (`importing`, Load > PV)**: PV -> Load (all of PV, `pvKw`)
+ *   and, separately, Grid -> Load (the shortfall, `gridKw`) — Grid feeds
+ *   Load directly, never via PV.
  *
- * - Case A (`exporting`): PV -> Load -> Grid. The Load -> Grid segment
- *   flows outward (Load feeds Grid).
- * - Case B (`importing`): PV -> Load, Grid -> Load. The same segment
- *   reverses (Grid feeds Load).
+ * Never a `PV -> Load -> Grid` chain. All three edges of the triangle are
+ * always drawn (matching a real Huawei-style diagram, which shows every
+ * physical connection), but only the two relevant to the current
+ * direction are "active" (colored, particled) — the third is rendered
+ * subtle/inactive, per this milestone's explicit requirement. Which edge
+ * is active depends only on `flow.direction` (a real, always-defined
+ * meter reading), never on `consumption.consistent` — the Load node's own
+ * displayed number is the only thing gated on that.
  *
- * The PV -> Load segment always flows in one direction (down from PV)
- * regardless of state — only the Load <-> Grid segment's direction and
- * particle travel depend on `flow.direction`. Small glowing particles
- * travel along both segments via the same CSS motion-path technique
- * already established in `app/globals.css` (`voltessa-flow-particle`) —
- * reused, not reinvented.
+ * Edge values reuse the exact same `flow` fields the previous iteration
+ * already displayed at the nodes (`pvKw`, `gridKw`, `consumption.kw`) —
+ * no new calculation. By the same energy-balance identity
+ * `deriveEnergyFlow` already encodes: exporting means
+ * `pvKw = consumption.kw + gridKw` (Load's share plus the export), and
+ * importing means `consumption.kw = pvKw + gridKw` (PV's share plus the
+ * import) — this component only decides which edge shows which
+ * already-computed number, purely a presentation choice.
  */
 export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   if (!flow.available) {
     return (
-      <div className="flex h-[160px] items-center justify-center text-sm text-slate-500">
+      <div className="flex h-full min-h-[180px] items-center justify-center text-sm text-slate-500">
         Live meter data unavailable
       </div>
     );
@@ -44,86 +53,111 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   const { pvKw, consumption, direction, gridKw } = flow;
   const importing = direction === "importing";
 
-  // Coordinates share the same 0-100 x / 0-50 y space as the SVG viewBox
+  const loadKw = consumption.consistent ? consumption.kw : null;
+
+  // Coordinates share the same 0-100 x / 0-90 y space as the SVG viewBox
   // below, so the HTML icon nodes (positioned by percentage) and the SVG
   // lines/particles (positioned by these same numbers) always line up
-  // regardless of the container's rendered size.
-  const PV = { x: 50, y: 9 };
-  const LOAD = { x: 14, y: 41 };
-  const GRID = { x: 86, y: 41 };
+  // regardless of the container's rendered size. Taller than the previous
+  // iteration's 2:1 box — this diagram now lives in a narrower, taller
+  // column next to Live Energy, and a taller layout uses that space
+  // better while keeping the nodes (not empty space) the visual focus.
+  const PV = { x: 50, y: 12 };
+  const LOAD = { x: 15, y: 78 };
+  const GRID = { x: 85, y: 78 };
 
-  const pvToLoadPath = `M${PV.x},${PV.y} L${LOAD.x},${LOAD.y}`;
-  const loadGridForwardPath = `M${LOAD.x},${LOAD.y} L${GRID.x},${GRID.y}`;
-  const loadGridReversePath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+  const pvLoadPath = `M${PV.x},${PV.y} L${LOAD.x},${LOAD.y}`;
+  const pvGridPath = `M${PV.x},${PV.y} L${GRID.x},${GRID.y}`;
+  const gridLoadPath = `M${GRID.x},${GRID.y} L${LOAD.x},${LOAD.y}`;
+
+  const pvLoadActive = pvKw > 0;
+  const secondEdgeActive = gridKw > 0;
+  // Exporting: PV -> Grid is the second active edge. Importing: Grid -> Load is.
+  const pvGridActive = !importing && secondEdgeActive;
+  const gridLoadActive = importing && secondEdgeActive;
 
   return (
-    <div className="flex flex-col items-center gap-3">
-      <div className="relative aspect-[2/1] w-full max-w-[360px]">
-        <svg viewBox="0 0 100 50" className="absolute inset-0 h-full w-full" aria-hidden>
-          <line
-            x1={PV.x}
-            y1={PV.y}
-            x2={LOAD.x}
-            y2={LOAD.y}
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth={0.6}
+    <div className="flex h-full flex-col items-center justify-center gap-3">
+      <div className="relative aspect-[10/9] w-full max-w-[240px]">
+        <svg viewBox="0 0 100 90" className="absolute inset-0 h-full w-full" aria-hidden>
+          {/* Every physical connection is always drawn — a real Huawei-style
+              diagram shows all three edges, only the currently active ones
+              are highlighted. */}
+          <path
+            d={pvLoadPath}
+            stroke={pvLoadActive ? "#34d399" : "rgba(255,255,255,0.08)"}
+            strokeWidth={pvLoadActive ? 0.7 : 0.5}
+            fill="none"
           />
-          <line
-            x1={LOAD.x}
-            y1={LOAD.y}
-            x2={GRID.x}
-            y2={GRID.y}
-            stroke="rgba(255,255,255,0.1)"
-            strokeWidth={0.6}
+          <path
+            d={pvGridPath}
+            stroke={pvGridActive ? "#34d399" : "rgba(255,255,255,0.08)"}
+            strokeWidth={pvGridActive ? 0.7 : 0.5}
+            fill="none"
+          />
+          <path
+            d={gridLoadPath}
+            stroke={gridLoadActive ? "#67e8f9" : "rgba(255,255,255,0.08)"}
+            strokeWidth={gridLoadActive ? 0.7 : 0.5}
+            fill="none"
           />
 
-          {pvKw > 0 &&
+          {pvLoadActive &&
             [0, 0.7, 1.4].map((delay) => (
               <circle
-                key={`pv-${delay}`}
+                key={`pv-load-${delay}`}
                 r={1}
                 fill="#6ee7b7"
                 className="voltessa-flow-particle"
-                style={{ offsetPath: `path('${pvToLoadPath}')`, animationDelay: `${delay}s` }}
+                style={{ offsetPath: `path('${pvLoadPath}')`, animationDelay: `${delay}s` }}
               />
             ))}
 
-          {[0, 0.7, 1.4].map((delay) => (
-            <circle
-              key={`grid-${delay}`}
-              r={1}
-              fill="#67e8f9"
-              className="voltessa-flow-particle"
-              style={{
-                offsetPath: `path('${importing ? loadGridReversePath : loadGridForwardPath}')`,
-                animationDelay: `${delay}s`,
-              }}
-            />
-          ))}
+          {pvGridActive &&
+            [0, 0.7, 1.4].map((delay) => (
+              <circle
+                key={`pv-grid-${delay}`}
+                r={1}
+                fill="#6ee7b7"
+                className="voltessa-flow-particle"
+                style={{ offsetPath: `path('${pvGridPath}')`, animationDelay: `${delay}s` }}
+              />
+            ))}
+
+          {gridLoadActive &&
+            [0, 0.7, 1.4].map((delay) => (
+              <circle
+                key={`grid-load-${delay}`}
+                r={1}
+                fill="#67e8f9"
+                className="voltessa-flow-particle"
+                style={{ offsetPath: `path('${gridLoadPath}')`, animationDelay: `${delay}s` }}
+              />
+            ))}
         </svg>
 
         <FlowNode
-          icon={<Sun className="h-5 w-5 text-emerald-300" />}
+          icon={<SolarPanelIcon className="h-6 w-6 text-emerald-300" />}
           label="PV"
           value={`${pvKw.toFixed(1)} kW`}
           borderClass="border-emerald-400/40"
-          style={{ left: `${PV.x}%`, top: `${PV.y * 2}%` }}
+          style={{ left: `${PV.x}%`, top: `${(PV.y / 90) * 100}%` }}
         />
 
         <FlowNode
-          icon={<Home className="h-5 w-5 text-slate-200" />}
+          icon={<LoadBuildingIcon className="h-6 w-6 text-slate-200" />}
           label="Load"
-          value={consumption.consistent ? `${consumption.kw.toFixed(1)} kW` : "Inconsistent"}
-          borderClass={consumption.consistent ? "border-white/15" : "border-amber-400/40"}
-          style={{ left: `${LOAD.x}%`, top: `${LOAD.y * 2}%` }}
+          value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
+          borderClass={loadKw !== null ? "border-white/15" : "border-amber-400/40"}
+          style={{ left: `${LOAD.x}%`, top: `${(LOAD.y / 90) * 100}%` }}
         />
 
         <FlowNode
-          icon={<Zap className="h-5 w-5 text-cyan-300" />}
+          icon={<TransmissionTowerIcon className="h-6 w-6 text-cyan-300" />}
           label="Grid"
           value={`${gridKw.toFixed(1)} kW`}
           borderClass="border-cyan-400/40"
-          style={{ left: `${GRID.x}%`, top: `${GRID.y * 2}%` }}
+          style={{ left: `${GRID.x}%`, top: `${(GRID.y / 90) * 100}%` }}
         />
       </div>
 
@@ -132,10 +166,10 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
         <span className="font-medium text-white">{importing ? "Importing" : "Exporting"}</span>
       </div>
 
-      {!consumption.consistent && (
-        <p className="max-w-md text-center text-xs text-amber-400/80">
+      {loadKw === null && (
+        <p className="max-w-[220px] text-center text-xs text-amber-400/80">
           PV and grid readings are momentarily inconsistent — Load can&apos;t be derived right
-          now. PV and Grid above are the real measured values, unmodified.
+          now.
         </p>
       )}
     </div>
@@ -161,7 +195,7 @@ function FlowNode({
       style={style}
     >
       <div
-        className={`flex h-11 w-11 items-center justify-center rounded-full border bg-[#0f172a] ${borderClass}`}
+        className={`flex h-12 w-12 items-center justify-center rounded-full border bg-[#0f172a] ${borderClass}`}
       >
         {icon}
       </div>

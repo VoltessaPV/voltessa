@@ -120,31 +120,29 @@ export default async function DashboardPage() {
             />
           </section>
 
-          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-            <div className="flex items-center justify-between">
+          <section className="grid gap-2.5 lg:grid-cols-[33%_1fr]">
+            <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">System Overview</h2>
                 <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
               </div>
+
+              <div className="mt-2 min-h-0 flex-1">
+                <EnergyFlowDiagram flow={data.energyFlow} />
+              </div>
             </div>
 
-            <div className="mt-3">
-              <EnergyFlowDiagram flow={data.energyFlow} />
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">Live Energy</h2>
                 <p className="mt-0.5 text-xs text-slate-500">
                   Today&apos;s production, consumption, and grid exchange
                 </p>
               </div>
-            </div>
 
-            <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
-              <LiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
+              <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
+                <LiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
+              </div>
             </div>
           </section>
 
