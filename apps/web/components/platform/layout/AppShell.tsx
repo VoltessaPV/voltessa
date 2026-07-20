@@ -10,19 +10,15 @@ type AppShellProps = {
     email: string | null;
     role: string;
   };
-  organization: {
-    name: string;
-  };
 };
 
 export function AppShell({
   children,
   user,
-  organization,
 }: AppShellProps) {
   return (
     <div className="min-h-screen bg-[#050816] text-white">
-      <AppSidebar organizationName={organization.name} />
+      <AppSidebar />
 
       <div className="min-h-screen pl-64">
         <AppHeader user={user} />

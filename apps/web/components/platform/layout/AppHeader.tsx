@@ -10,13 +10,7 @@ export function AppHeader({
   user,
 }: AppHeaderProps) {
   return (
-    <header className="flex h-16 items-center justify-between border-b border-white/10 px-6">
-      <div>
-        <p className="text-sm text-white/50">
-          Voltessa Platform
-        </p>
-      </div>
-
+    <header className="flex h-16 items-center justify-end border-b border-white/10 px-6">
       <div className="text-right">
         <p className="text-sm font-medium">
           {user.name ?? user.email ?? "User"}

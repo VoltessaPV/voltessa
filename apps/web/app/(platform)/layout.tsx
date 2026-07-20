@@ -19,9 +19,6 @@ export default async function PlatformLayout({
         email: user.email,
         role: user.role,
       }}
-      organization={{
-        name: user.organization.name,
-      }}
     >
       {children}
     </AppShell>
