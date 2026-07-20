@@ -22,11 +22,26 @@ import { getFusionSolarDeviceRealTimeKpi } from "@/lib/fusionsolar/device-real-t
  * the grid while producing nothing. Negative = importing from the grid;
  * positive = exporting to it.
  *
- * Every reading is independently `available`/`unavailable` because the
- * two device types are fetched via separate Huawei API calls that fail
- * independently in production (confirmed: this plant's meter and inverter
- * calls succeed while its SDongle call fails with a different failCode —
- * see docs/research/fusionsolar-active-power-control.md).
+ * ## Unit conversion — NOT the same for both device types (Design-System
+ * Consistency milestone, data-correctness fix)
+ *
+ * The meter's `active_power` is in **watts** — confirmed against real data
+ * (a reading of `-1962` corresponds to a physically sane `-1.96` kW
+ * standby-import load). This was previously assumed to also hold for
+ * inverters and applied uniformly; it does not. Cross-checked directly
+ * against production: these are `SUN2000-50KTL-M3` inverters (50 kW
+ * rated), whose real-time `active_power` reads `31`-`44` at genuine
+ * mid-morning production (confirmed via both the live `getDevRealKpi` call
+ * and 8 independently-stored historical `DeviceTelemetry` rows spanning
+ * multiple timestamps) — physically sane read directly as **kW** (31-44
+ * kW from a 50 kW inverter), physically absurd read as watts (`0.03`-`0.04`
+ * kW would mean the inverter is essentially off, while the meter
+ * simultaneously shows tens of kW genuinely flowing to the grid — energy
+ * that has to originate somewhere). The old uniform `/1000` conversion
+ * therefore under-reported every "Produced" figure across the app by
+ * roughly 1000x; see `docs/research/fusionsolar-active-power-control.md`
+ * for the full investigation and `import-device-telemetry.ts`'s doc
+ * comment for the corresponding historical-data backfill.
  */
 
 const INVERTER_DEV_TYPE_ID = 1;
@@ -42,13 +57,22 @@ export type PlantPowerStatus = {
   currentImport: PlantPowerReading;
 };
 
-/** Huawei reports `active_power` in watts (confirmed against real data) — never assumed to already be kW. */
-function wattsToKw(raw: number | null | undefined): number | null {
+/** The meter's `active_power` is in watts (confirmed against real data) — never assumed to already be kW. */
+function meterWattsToKw(raw: number | null | undefined): number | null {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return null;
   }
 
   return Math.round((raw / 1000) * 100) / 100;
+}
+
+/** An inverter's `active_power` is already in kW for this device type/model (confirmed against real data — see this module's top doc comment) — never divided by 1000. */
+function inverterKw(raw: number | null | undefined): number | null {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return null;
+  }
+
+  return Math.round(raw * 100) / 100;
 }
 
 function huaweiDeviceIds(
@@ -83,7 +107,7 @@ async function getInverterProductionKw(
   }
 
   const readings = kpi
-    .map((item) => wattsToKw(item.dataItemMap.active_power))
+    .map((item) => inverterKw(item.dataItemMap.active_power))
     .filter((kw): kw is number => kw !== null);
 
   if (readings.length === 0) {
@@ -119,7 +143,7 @@ async function getMeterGridPowerKw(
   }
 
   const readings = kpi
-    .map((item) => wattsToKw(item.dataItemMap.active_power))
+    .map((item) => meterWattsToKw(item.dataItemMap.active_power))
     .filter((kw): kw is number => kw !== null);
 
   if (readings.length === 0) {

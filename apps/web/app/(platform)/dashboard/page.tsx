@@ -131,10 +131,10 @@ export default async function DashboardPage() {
           </section>
 
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-            <MarketEventLog entries={data.eventLog} />
             <WeatherCard />
             <GlidepathCard />
             <DashboardMarketWidget market={data.market} />
+            <MarketEventLog entries={data.eventLog} />
           </section>
 
           <section>

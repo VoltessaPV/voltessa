@@ -14,12 +14,17 @@ type EnergyFlowDiagramProps = {
  * - Case B (`importing`): Consumption > PV. `PV -> Home <- Grid`, Grid
  *   shows imported power.
  *
- * Direction is read directly from `flow` (derived in `dashboard-data.ts`
- * from the real current meter reading, never inferred from configuration).
- * Pure CSS motion-path animation (see `app/globals.css`'s
- * `voltessa-flow-particle` keyframes, the same subtle animation style used
- * elsewhere) — no client JS needed for particles moving along a fixed path
- * at a constant rate, so this stays a plain server component.
+ * Direction and every value are read directly from `flow`
+ * (`lib/telemetry/energy-flow.ts`'s `deriveEnergyFlow`, the one documented
+ * domain calculation) — this component never modifies, clamps, or floors
+ * anything itself. PV/Grid are always the real measured readings; Home
+ * shows "Inconsistent" instead of a number on the rare occasion the two
+ * independently-read devices momentarily disagree (`consumption.consistent
+ * === false`) — never a fabricated or clamped value. Pure CSS motion-path
+ * animation (see `app/globals.css`'s `voltessa-flow-particle` keyframes,
+ * the same subtle animation style used elsewhere) — no client JS needed
+ * for particles moving along a fixed path at a constant rate, so this
+ * stays a plain server component.
  */
 export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
   if (!flow.available) {
@@ -30,7 +35,7 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
     );
   }
 
-  const { pvKw, consumptionKw, direction, gridKw } = flow;
+  const { pvKw, consumption, direction, gridKw } = flow;
   const importing = direction === "importing";
 
   return (
@@ -117,16 +122,31 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
         </text>
 
         {/* Home node */}
-        <circle cx={320} cy={100} r={44} fill="#0f172a" stroke="rgba(255,255,255,0.15)" strokeWidth={1.5} />
+        <circle
+          cx={320}
+          cy={100}
+          r={44}
+          fill="#0f172a"
+          stroke={consumption.consistent ? "rgba(255,255,255,0.15)" : "rgba(251,191,36,0.4)"}
+          strokeWidth={1.5}
+        />
         <text x={320} y={92} textAnchor="middle" fontSize={11} fontWeight={600} fill="#e2e8f0">
           Home
         </text>
-        <text x={320} y={110} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f8fafc">
-          {consumptionKw.toFixed(1)}
-        </text>
-        <text x={320} y={124} textAnchor="middle" fontSize={9} fill="#64748b">
-          kW
-        </text>
+        {consumption.consistent ? (
+          <>
+            <text x={320} y={110} textAnchor="middle" fontSize={13} fontWeight={700} fill="#f8fafc">
+              {consumption.kw.toFixed(1)}
+            </text>
+            <text x={320} y={124} textAnchor="middle" fontSize={9} fill="#64748b">
+              kW
+            </text>
+          </>
+        ) : (
+          <text x={320} y={112} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fbbf24">
+            Inconsistent
+          </text>
+        )}
 
         {/* Grid node */}
         <circle cx={550} cy={100} r={44} fill="#0f172a" stroke="rgba(34,211,238,0.4)" strokeWidth={1.5} />
@@ -146,6 +166,13 @@ export function EnergyFlowDiagram({ flow }: EnergyFlowDiagramProps) {
         <span className="font-medium text-white">{importing ? "Importing" : "Exporting"}</span>
         <span className="tabular-nums text-slate-400">{gridKw.toFixed(1)} kW</span>
       </div>
+
+      {!consumption.consistent && (
+        <p className="max-w-md text-center text-xs text-amber-400/80">
+          PV and grid readings are momentarily inconsistent — consumption can&apos;t be derived
+          right now. PV and Grid above are the real measured values, unmodified.
+        </p>
+      )}
     </div>
   );
 }

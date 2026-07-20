@@ -67,20 +67,32 @@ import {
  * ## `peakExport` (Final Market UI Polish milestone)
  *
  * `peakExport` is the plant's peak *meter* export power (`exportKw` —
- * `max(meterActivePower, 0)`), not peak *inverter* production power.
- * This was a real, found-and-fixed bug: the field used to be called
- * `peakProduction` and was computed from inverter `productionKw`, which
- * for this plant's inverters reads consistently near-zero (confirmed:
- * 0.07 kW all day) even while the meter shows genuine export up to
- * ~60 kW at the same timestamps — a real, plant-specific inverter-vs-meter
- * measurement discrepancy (see the `activeEnergy`/`reverseActiveEnergy`
- * investigation above for the same inverter-telemetry quirk surfacing
- * elsewhere). Both `dashboard/page.tsx` and the Market page read this same
- * field, so they can never diverge — the discrepancy the milestone
- * reported (Market showing ~0.07 kW, Dashboard showing a much larger
- * number) was exactly this: two different underlying quantities
- * (production vs. export) rendered under confusingly similar labels, not
- * a data or timing bug.
+ * `max(meterActivePower, 0)`), not peak *inverter* production power. The
+ * field used to be called `peakProduction` and was computed from inverter
+ * `productionKw`, which for this plant's inverters read consistently
+ * near-zero (confirmed: `0.07` kW all day) even while the meter showed
+ * genuine export up to ~60 kW at the same timestamps. Both
+ * `dashboard/page.tsx` and the Market page read this same field, so they
+ * can never diverge on it.
+ *
+ * **Correction (Design-System Consistency milestone):** the milestone that
+ * introduced this field concluded the `0.07` kW inverter reading was "a
+ * real, plant-specific inverter-vs-meter measurement discrepancy... not a
+ * data or timing bug" — i.e. two legitimately different physical
+ * quantities. That conclusion was wrong. It was a unit-conversion bug: an
+ * inverter's `active_power` is already in kW for this device type/model
+ * (these are `SUN2000-50KTL-M3`, 50 kW-rated, confirmed reading `31`-`44`
+ * at genuine mid-morning production — sane as kW, absurd as watts), not
+ * watts like the meter's `active_power`. The code divided both by 1000
+ * uniformly, silently under-reporting every inverter production reading by
+ * ~1000x. Fixed in `get-plant-power-status.ts`/`get-plant-inverter-status.ts`/
+ * `import-device-telemetry.ts` (see their doc comments) with a one-time
+ * backfill of every already-stored `DeviceTelemetry.activePower` inverter
+ * row, recomputed from its own preserved `rawPayload` — see
+ * `docs/research/fusionsolar-active-power-control.md`. `peakExport`
+ * itself is unaffected (it was already meter-based, never inverter-based)
+ * — this correction only changes `producedKwh`/`productionKw` and anything
+ * derived from them.
  */
 
 /**

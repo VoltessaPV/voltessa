@@ -45,13 +45,22 @@ export type InverterStatusResult =
   | { available: true; inverters: InverterStatus[] }
   | { available: false; reason: "no_inverter_devices" | "request_failed" };
 
-/** Huawei reports `active_power` in watts (confirmed against real production data elsewhere in this integration). */
-function wattsToKw(raw: number | null | undefined): number | null {
+/**
+ * An inverter's `active_power` is already in kW for this device type/model
+ * — confirmed against real data (these are `SUN2000-50KTL-M3`, 50 kW-rated,
+ * inverters reading `31`-`44` at genuine mid-morning production; reading
+ * that as watts would mean under 0.05 kW, physically absurd while the
+ * meter simultaneously shows tens of kW genuinely flowing to the grid).
+ * Never divided by 1000 — that conversion is only correct for the meter
+ * (`get-plant-power-status.ts`'s `meterWattsToKw`). See that module's doc
+ * comment for the full investigation.
+ */
+function inverterKw(raw: number | null | undefined): number | null {
   if (typeof raw !== "number" || !Number.isFinite(raw)) {
     return null;
   }
 
-  return Math.round((raw / 1000) * 100) / 100;
+  return Math.round(raw * 100) / 100;
 }
 
 /**
@@ -153,7 +162,7 @@ export async function getPlantInverterStatuses(
       deviceId: device.id,
       name: device.devName,
       online: classification.online,
-      powerKw: kpi ? wattsToKw(kpi.dataItemMap.active_power) : null,
+      powerKw: kpi ? inverterKw(kpi.dataItemMap.active_power) : null,
       statusColor: classification.color,
       statusLabel: classification.label,
     };

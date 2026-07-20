@@ -55,19 +55,45 @@ function toInt(value: unknown): number | null {
 }
 
 /**
- * Huawei reports `active_power` in watts, never kW (confirmed against real
- * production data — see `get-plant-power-status.ts`'s `wattsToKw`, the
- * origin of this same conversion for the real-time endpoint; the historical
- * endpoint was cross-checked against this diagnostic milestone's captured
- * meter data and shows the same scale/sign). The untouched raw watts value
- * is preserved in `rawPayload` regardless.
+ * The meter's `active_power` is in watts (confirmed against real production
+ * data — see `get-plant-power-status.ts`'s `meterWattsToKw`, the origin of
+ * this same conversion for the real-time endpoint; the historical endpoint
+ * was cross-checked against this same meter data and shows the same
+ * scale/sign). The untouched raw watts value is preserved in `rawPayload`
+ * regardless. This conversion is meter-only — see `inverterKw` below for
+ * why inverters use a different one.
  */
-function wattsToKw(value: unknown): Prisma.Decimal | null {
+function meterWattsToKw(value: unknown): Prisma.Decimal | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
   }
 
   return new Prisma.Decimal(Math.round((value / 1000) * 100) / 100);
+}
+
+/**
+ * An inverter's `active_power` is already in kW for this device type/model
+ * (Design-System Consistency milestone, data-correctness fix) — NOT watts
+ * like the meter. This was previously assumed to share the meter's
+ * conversion and divided by 1000, which silently under-reported every
+ * stored "produced" figure by ~1000x. Confirmed against real data: these
+ * are `SUN2000-50KTL-M3` (50 kW-rated) inverters, whose `active_power`
+ * reads `31`-`44` at genuine mid-morning production in both the live
+ * `getDevRealKpi` call and multiple already-stored historical rows -
+ * physically sane read directly as kW, physically absurd read as watts
+ * (would mean the inverter is essentially off while the meter
+ * simultaneously shows tens of kW genuinely flowing to the grid). See
+ * `get-plant-power-status.ts`'s top doc comment for the full investigation
+ * and `docs/research/fusionsolar-active-power-control.md`. The untouched
+ * raw value is preserved in `rawPayload` regardless, so this correction
+ * (and any future one) is always re-derivable from source truth.
+ */
+function inverterKw(value: unknown): Prisma.Decimal | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return new Prisma.Decimal(Math.round(value * 100) / 100);
 }
 
 function computeCollectTimeAnchors(
@@ -216,14 +242,14 @@ export async function importDeviceTelemetry(params: {
           resolution: TelemetryResolution.FIVE_MIN,
           source: "HuaweiFusionSolar",
           activePower: isInverter
-            ? wattsToKw(dataItemMap.active_power)
+            ? inverterKw(dataItemMap.active_power)
             : null,
           inverterState: isInverter
             ? toInt(dataItemMap.inverter_state)
             : null,
           temperature: isInverter ? toDecimal(dataItemMap.temperature) : null,
           meterActivePower: isMeter
-            ? wattsToKw(dataItemMap.active_power)
+            ? meterWattsToKw(dataItemMap.active_power)
             : null,
           meterStatus: isMeter ? toInt(dataItemMap.meter_status) : null,
           activeEnergy: isMeter ? toDecimal(dataItemMap.active_cap) : null,

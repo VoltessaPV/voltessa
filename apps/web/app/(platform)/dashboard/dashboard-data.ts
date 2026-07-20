@@ -43,6 +43,7 @@ import type { MarketEventLogEntry, MarketSummaryData } from "@/app/(platform)/ma
 import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
   computeEnergyMetricsFromSeries,
   getPlantTelemetrySeries,
@@ -75,30 +76,12 @@ export type DashboardKpis = {
 };
 
 /**
- * The three-node PV -> Home -> Grid flow, exactly two possible states
- * (Design-System Consistency milestone) - never a third "idle" state.
- * Direction is derived purely from the real current meter reading
- * (`getPlantCurrentPowerStatus`, Category A - a live Huawei read), never
- * inferred from configuration:
- *
- * - Case A (`exporting`): PV >= Consumption. Grid displays exported power.
- * - Case B (`importing`): Consumption > PV. Grid displays imported power.
- *
- * `currentExport`/`currentImport` are already mutually exclusive at the
- * source (one is always exactly `0` - see `get-plant-power-status.ts`), so
- * checking `importKw > 0` alone is a complete, exhaustive test - the `else`
- * branch is exactly "PV >= Consumption" (covers both real export and the
- * exact-zero-net tie), matching Case A's own "`>=`" definition.
+ * The three-node PV -> Home -> Grid flow. See
+ * `lib/telemetry/energy-flow.ts` for the one documented domain calculation
+ * this is derived from — this page never modifies, clamps, or floors a
+ * measured value itself.
  */
-export type EnergyFlowState =
-  | { available: false }
-  | {
-      available: true;
-      pvKw: number;
-      consumptionKw: number;
-      direction: "importing" | "exporting";
-      gridKw: number;
-    };
+export type EnergyFlowState = EnergyFlowResult;
 
 /** One point on the Live Energy Chart — `null` fields mean no real sample at that exact timestamp (a gap, or a not-yet-happened future time), never fabricated/interpolated. */
 export type EnergyFlowPoint = {
@@ -132,75 +115,31 @@ export type DashboardPageData =
     };
 
 /**
- * Enforces exact energy conservation - exactly one of these two equations
- * always holds, never an inconsistent combination of the three nodes:
- *
- * - Case A (exporting): `PV = Home + Export`
- * - Case B (importing): `Home = PV + Import`
- *
- * There is no independent "Home" meter anywhere in this integration -
- * consumption has always been a derived quantity (see
- * `energy-metrics.ts`'s own `producedKwh + importedKwh - exportedKwh`
- * identity). The previous version of this function derived Home this way
- * and then clamped a negative result to zero - which satisfies neither
- * equation (e.g. the real production incident this milestone was written
- * to fix: PV 0.1 kW, Home clamped to 0.0 kW, Export 33.9 kW - `0.1 != 0 +
- * 33.9`, an impossible combination that just happened to not be negative).
- *
- * The real root cause: this plant's real-time inverter power reading is
- * already documented elsewhere (`energy-metrics.ts`'s `peakExport` doc
- * comment) as reading near-zero even during genuine substantial export,
- * since it's a different measurement point than the meter - not sensor
- * noise, a confirmed, persistent discrepancy. The meter (Export/Import) is
- * the reliable reading everywhere else in this app (revenue, KPIs), so in
- * Case A the displayed PV is floored at Export - you cannot export more
- * than you produce, so real PV is *at least* Export whenever Export > 0,
- * even if the inverter's instantaneous reading momentarily under-reports.
- * This is not fabricating a value: it's a physically necessary lower bound
- * applied to a reading already known to sometimes be too low, chosen so
- * the *displayed* PV is what makes the equation hold exactly. Case B never
- * needs this adjustment - addition of two non-negative readings can't
- * produce an inconsistent result.
+ * One point on the chart, via the same domain function
+ * (`deriveEnergyFlow`) the live snapshot uses. `consumptionKw` is `null`
+ * both for a genuine data gap (handled before this is called) and for a
+ * measurement inconsistency (`consumption.consistent === false`) — either
+ * way, "no honest number to show," never a fabricated one. `pvKw`/grid
+ * values are always the real measured readings for that timestamp,
+ * unmodified, even when consumption can't be derived.
  */
-function conserveEnergyFlow(
-  rawPvKw: number,
-  exportKw: number,
-  importKw: number,
-): { pvKw: number; consumptionKw: number; gridImportKw: number; gridExportKw: number; direction: "importing" | "exporting" } {
-  if (importKw > 0) {
-    return {
-      pvKw: rawPvKw,
-      consumptionKw: Math.round((rawPvKw + importKw) * 100) / 100,
-      gridImportKw: importKw,
-      gridExportKw: 0,
-      direction: "importing",
-    };
-  }
-
-  const pvKw = Math.max(rawPvKw, exportKw);
-
-  return {
-    pvKw,
-    consumptionKw: Math.round((pvKw - exportKw) * 100) / 100,
-    gridImportKw: 0,
-    gridExportKw: exportKw,
-    direction: "exporting",
-  };
-}
-
 function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
   if (point.productionKw === null || point.exportKw === null || point.importKw === null) {
     return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
   }
 
-  const flow = conserveEnergyFlow(point.productionKw, point.exportKw, point.importKw);
+  const flow = deriveEnergyFlow(point.productionKw, point.exportKw, point.importKw);
+
+  if (!flow.available) {
+    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+  }
 
   return {
     time: point.timestamp.getTime(),
     pvKw: flow.pvKw,
-    consumptionKw: flow.consumptionKw,
-    gridImportKw: flow.gridImportKw,
-    gridExportKw: flow.gridExportKw,
+    consumptionKw: flow.consumption.consistent ? flow.consumption.kw : null,
+    gridImportKw: flow.direction === "importing" ? flow.gridKw : 0,
+    gridExportKw: flow.direction === "exporting" ? flow.gridKw : 0,
   };
 }
 
@@ -249,33 +188,20 @@ function buildEnergyFlow(production: {
     return { available: false };
   }
 
-  const flow = conserveEnergyFlow(
+  return deriveEnergyFlow(
     production.currentProduction.kw,
     production.currentExport.kw,
     production.currentImport.kw,
   );
-
-  return {
-    available: true,
-    pvKw: flow.pvKw,
-    consumptionKw: flow.consumptionKw,
-    direction: flow.direction,
-    gridKw: flow.direction === "importing" ? flow.gridImportKw : flow.gridExportKw,
-  };
 }
 
-/** Uses `energyFlow`'s already-conserved `pvKw` (never the raw inverter reading) so the chart's NOW marker never contradicts the System Overview diagram above it. */
+/** Uses `energyFlow`'s real measured `pvKw`/`gridKw` (the same values the System Overview diagram shows) so the chart's NOW marker never contradicts it. */
 function buildNowAnnotation(energyFlow: EnergyFlowState): string | undefined {
-  const parts: string[] = [];
-
-  if (energyFlow.available) {
-    parts.push(`${energyFlow.pvKw} kW PV`);
-    parts.push(
-      `${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`,
-    );
+  if (!energyFlow.available) {
+    return undefined;
   }
 
-  return parts.length > 0 ? parts.join(" · ") : undefined;
+  return `${energyFlow.pvKw} kW PV · ${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`;
 }
 
 export async function getDashboardPageData(

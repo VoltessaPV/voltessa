@@ -421,6 +421,67 @@ These are considered infrastructure for future automation work, not dead code to
 
 ---
 
+## 13. Inverter `active_power` unit-conversion bug (Design-System Consistency milestone)
+
+New evidence on a different question than §12's scope (the `20609` configuration-endpoint
+mystery, still open) — this section is about `active_power`'s **unit**, not the configuration
+endpoint, and does not reopen or contradict §12's rules.
+
+### What was previously assumed
+
+Every consumer of inverter `active_power` (`get-plant-power-status.ts`, `import-device-telemetry.ts`,
+and the later `get-plant-inverter-status.ts`) divided the raw value by 1000, on the stated
+assumption "Huawei reports `active_power` in watts" — a conversion originally confirmed only for
+the **meter's** `active_power` (a real reading of `-1962` matching a physically sane `-1.96` kW
+standby-import load) and generalized, without separate verification, to inverters too. §5's own
+production observation above (`~55.9 kW` meter matching `~57.4 kW` summed inverters) reinforced
+this assumption at the time.
+
+### What was actually found
+
+Investigating a Dashboard energy-conservation bug report led to querying
+`/api/diag/fusionsolar-device-realtime` directly against production and separately reading 8 raw,
+already-stored `DeviceTelemetry` rows (`rawPayload.dataItemMap.active_power`) for this plant's
+inverters. Both sources agree, consistently, across multiple independent timestamps:
+
+| Device | raw `active_power` | ÷1000 (previous code) | as-is (kW) |
+|---|---|---|---|
+| 4× `SUN2000-50KTL-M3` (50 kW-rated) inverters | `31`-`44` | `0.03`-`0.04` kW | `31`-`44` kW |
+| Meter1 | `58862` | `58.86` kW | (not applicable — meter is watts) |
+
+`0.03`-`0.04` kW from a 50 kW-rated inverter at genuine mid-morning production (with the meter
+simultaneously showing ~59 kW flowing to the grid — energy that has to originate somewhere) is
+physically absurd. `31`-`44` kW from the same inverter at the same moment is exactly the range a
+50 kW inverter operating at 62-88% of rated capacity would show. **The inverter's `active_power` is
+already in kW for this device type/model — the meter's field of the same name is in watts, but
+they are not the same unit despite the shared Huawei field name** (already flagged as a real risk in
+this document's own architecture notes — see the `meterActivePower`/`activePower` schema comment's
+"same Huawei field name... but a different physical quantity" note, which correctly separated the
+columns but not their units).
+
+### Consequence and fix
+
+Every "Produced"/production-power figure computed from `DeviceTelemetry.activePower` (Dashboard,
+Market, and their shared `lib/telemetry/energy-metrics.ts`) had been under-reported by ~1000x since
+the DeviceTelemetry table existed. `exportedKwh`/`importedKwh`/revenue were never affected — those
+are derived exclusively from the meter's `activeEnergy`/`reverseActiveEnergy` counters, never from
+`activePower`. Fixed by removing the `/1000` conversion for inverter `active_power` specifically
+(`get-plant-power-status.ts`'s `inverterKw`, `get-plant-inverter-status.ts`'s `inverterKw`,
+`import-device-telemetry.ts`'s `inverterKw`), keeping it unchanged for the meter
+(`meterWattsToKw`), and backfilling every already-stored inverter `DeviceTelemetry.activePower` row
+by recomputing it directly from that row's own preserved `rawPayload` (no re-fetch from Huawei
+needed — the raw truth was never lost, only mis-scaled on the way into the typed column).
+
+### What was deliberately not re-opened
+
+This does not touch §9-§12's conclusions about the configuration endpoint (`20609`),
+`inverter_state`'s enumeration, or the SDongle failure (`20013`) — those remain the canonical
+baseline. It also does not change `activeEnergy`/`reverseActiveEnergy`'s counter semantics (ADR-007,
+`energy-metrics.ts`'s own doc comment) — that was a labeling bug (export vs import), a completely
+independent finding from this one (a scale bug).
+
+---
+
 # Next investigation
 
 Future work on this topic should focus **only** on understanding why the documented configuration
