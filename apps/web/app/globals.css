@@ -14,3 +14,31 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/*
+ * Dashboard energy-flow particle animation (Final Dashboard UX Refinement
+ * milestone). Pure CSS keyframes so the flow diagram stays a plain server
+ * component - no client JS/state needed for a particle moving along a
+ * fixed path at a constant rate.
+ */
+@keyframes voltessa-flow-particle {
+  0% {
+    offset-distance: 0%;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    offset-distance: 100%;
+    opacity: 0;
+  }
+}
+
+.voltessa-flow-particle {
+  offset-rotate: 0deg;
+  animation: voltessa-flow-particle 2.2s linear infinite;
+}

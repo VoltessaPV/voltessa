@@ -1,65 +1,27 @@
-import { resolveExportThreshold } from "@/lib/automation/export-threshold-config";
 import { requireOnboardedUser } from "@/lib/auth/session";
-import {
-  describeConfiguredExportMode,
-  getPlantConfiguredExportControlMode,
-} from "@/lib/fusionsolar/get-export-control-status";
-import {
-  getPlantCurrentPowerStatus,
-  type PlantPowerStatus,
-} from "@/lib/fusionsolar/get-plant-power-status";
-import { dbMarketPriceProvider } from "@/lib/market-price/provider";
-import { getMarketPriceStatus } from "@/lib/market-price/status";
-import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
-import { computePlantEnergyMetrics } from "@/lib/telemetry/energy-metrics";
 
-import { getMarketPageData } from "@/app/(platform)/market/market-data";
-import { MarketPriceChart } from "@/components/market/MarketPriceChart";
+import { DashboardMarketWidget } from "@/components/dashboard/DashboardMarketWidget";
+import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
+import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
+import { InvertersCard } from "@/components/dashboard/InvertersCard";
+import { LiveEnergyChart } from "@/components/dashboard/LiveEnergyChart";
+import { WeatherCard } from "@/components/dashboard/WeatherCard";
+import { MarketEventLog } from "@/components/market/MarketEventLog";
+import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 
-/**
- * Per the Telemetry Consumer Migration milestone (ADR-007,
- * docs/research/telemetry-platform-foundation.md): every FusionSolar read
- * on this page is one of two explicit categories.
- *
- * - **Category A — real-time operational state, still a live Huawei
- *   read**: `getPlantConfiguredExportControlMode` (the configured
- *   export-control badge) and `getPlantCurrentPowerStatus` (the "Current
- *   Power" card — reused as-is from `market/production-data.ts`, no new
- *   Huawei call introduced). No historical equivalent exists to read
- *   instead — both describe "right now."
- * - **Category B — historical/trend data, now DeviceTelemetry-only**:
- *   Today's production/exported/imported energy, and the "Last telemetry"
- *   timestamp, all come from `lib/telemetry/energy-metrics.ts` — no
- *   Huawei call, no FusionSolar connection needed. "This Month"/"Lifetime"
- *   still read the older `PlantTelemetrySnapshot` table (itself already a
- *   Postgres read, not a live Huawei call) because DeviceTelemetry has no
- *   monthly/lifetime data yet — only today+yesterday have been bootstrapped
- *   (see the telemetry foundation milestone) — not because they're
- *   Category A.
- */
+import { getDashboardPageData } from "./dashboard-data";
 
 /**
- * Configured export-control badge — reads through `describeConfiguredExportMode`
- * (the single shared label mapping, also used by Market's `production-data.ts`)
- * rather than a second, locally-duplicated mapping. Final Market UX Completion
- * milestone: this file used to keep its own copy of this switch statement,
- * with different wording ("No Export Limit" vs. the shared "Unlimited",
- * "Export Mode: Other" vs. "Other") — a real, confirmed instance of
- * duplicated business logic the milestone's consistency audit flagged.
+ * Final Dashboard UX Refinement milestone: Market is the finished visual
+ * reference (financial decisions); this page is the operational control
+ * center (live plant operation). Every KPI/card here reads from
+ * `dashboard-data.ts`, which composes Market's own already-proven
+ * functions (`getMarketPageData`, `getProductionPageData`,
+ * `computeExportRevenue`, `energy-metrics.ts`) rather than recomputing
+ * anything — see that module's doc comment. No metric appears more than
+ * once across Dashboard + Market combined.
  */
-const UNAVAILABLE_EXPORT_MODE = {
-  available: false as const,
-  reason: "configuration_endpoint_failed" as const,
-};
-
-function sofiaTimeLabel(date: Date): string {
-  return date.toLocaleTimeString("en-GB", {
-    timeZone: "Europe/Sofia",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /**
  * Full date+time, always in Europe/Sofia — never the bare
@@ -70,562 +32,121 @@ function sofiaDateTimeLabel(date: Date): string {
   return date.toLocaleString("en-GB", { timeZone: "Europe/Sofia" });
 }
 
-function formatEnergy(value: { toString(): string } | null | undefined) {
-  if (value == null) {
-    return "—";
-  }
-
-  const numericValue = Number(value.toString());
-
-  if (!Number.isFinite(numericValue)) {
-    return "—";
-  }
-
-  return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
-  }).format(numericValue);
+function energyValueLabel(kwh: number | null): string | undefined {
+  return kwh !== null ? kwh.toFixed(1) : undefined;
 }
 
 export default async function DashboardPage() {
   const user = await requireOnboardedUser();
 
-  const plants = await prisma.plant.findMany({
-    where: {
-      organizationId: user.organizationId,
-    },
-    include: {
-      telemetrySnapshots: {
-        orderBy: {
-          collectedAt: "desc",
-        },
-        take: 1,
-      },
-    },
-    orderBy: {
-      name: "asc",
-    },
+  const automationSettings = await prisma.automationSettings.findUnique({
+    where: { organizationId: user.organizationId },
   });
 
-  const connection = await prisma.fusionSolarConnection.findUnique({
-    where: {
-      organizationId_provider: {
-        organizationId: user.organizationId,
-        provider: "HuaweiFusionSolar",
-      },
-    },
-    select: {
-      id: true,
-      accessToken: true,
-      refreshToken: true,
-      tokenType: true,
-      scope: true,
-      expiresAt: true,
-    },
-  });
-
-  // Category B — DeviceTelemetry only, never depends on `connection`.
-  const telemetryEntries = await Promise.all(
-    plants.map(async (plant) => {
-      const { start: dayStart } = localDayBoundsUtc(
-        new Date(),
-        plant.timezone,
-      );
-      const metrics = await computePlantEnergyMetrics(
-        plant.id,
-        dayStart,
-        new Date(),
-      );
-
-      return [plant.id, metrics] as const;
-    }),
-  );
-  const telemetryByPlantId = new Map(telemetryEntries);
-
-  // Category A — real-time operational state, still a live Huawei read.
-  const exportControlEntries = await Promise.all(
-    plants.map(async (plant) => {
-      if (!connection || !plant.plantCode) {
-        return [plant.id, null] as const;
-      }
-
-      try {
-        const status = await getPlantConfiguredExportControlMode(
-          connection,
-          plant.plantCode,
-        );
-
-        return [plant.id, status] as const;
-      } catch (error) {
-        // Never let an unexpected FusionSolar error break the dashboard —
-        // degrade to "unavailable" and log for operators. Not a fallback
-        // to another data source — just an explicit "unavailable" render.
-        console.error(
-          "[Dashboard] Configured export control mode failed unexpectedly",
-          {
-            plantId: plant.id,
-            error:
-              error instanceof Error
-                ? { name: error.name, message: error.message }
-                : String(error),
-          },
-        );
-
-        return [plant.id, null] as const;
-      }
-    }),
-  );
-
-  const exportControlByPlantId = new Map(exportControlEntries);
-
-  // Category A — real-time operational state, still a live Huawei read.
-  // Same function Market's production-data.ts uses; degrades to an
-  // explicit unavailable state per device type rather than ever falling
-  // back to a stale DeviceTelemetry sample ("current power" must mean now).
-  const powerStatusEntries = await Promise.all(
-    plants.map(async (plant) => {
-      if (!connection) {
-        return [plant.id, null] as const;
-      }
-
-      const [inverters, meters] = await Promise.all([
-        prisma.device.findMany({
-          where: { plantId: plant.id, devTypeId: 1 },
-          select: { huaweiDeviceId: true },
-        }),
-        prisma.device.findMany({
-          where: { plantId: plant.id, devTypeId: 47 },
-          select: { huaweiDeviceId: true },
-        }),
-      ]);
-
-      try {
-        const status = await getPlantCurrentPowerStatus(connection, {
-          inverters,
-          meters,
-        });
-
-        return [plant.id, status] as const;
-      } catch (error) {
-        console.error(
-          "[Dashboard] Current power status failed unexpectedly",
-          {
-            plantId: plant.id,
-            error:
-              error instanceof Error
-                ? { name: error.name, message: error.message }
-                : String(error),
-          },
-        );
-
-        return [plant.id, null] as const;
-      }
-    }),
-  );
-
-  const powerStatusByPlantId = new Map<string, PlantPowerStatus | null>(
-    powerStatusEntries,
-  );
-
-  const [currentMarketPrice, dayAheadMarketPrices, marketImportStatus, automationSettings] =
-    await Promise.all([
-      dbMarketPriceProvider.getCurrentPrice(),
-      dbMarketPriceProvider.getDayAheadPrices(),
-      dbMarketPriceProvider.getLatestImportStatus(),
-      prisma.automationSettings.findUnique({
-        where: { organizationId: user.organizationId },
-      }),
-    ]);
-
-  const marketPriceStatus = getMarketPriceStatus(currentMarketPrice);
-
-  const nextIntervalPrice =
-    currentMarketPrice.available && dayAheadMarketPrices.available
-      ? (dayAheadMarketPrices.prices.find(
-          (price) =>
-            price.timestamp.getTime() >
-            currentMarketPrice.price.timestamp.getTime(),
-        ) ?? null)
-      : null;
-
-  const lowestPriceToday = dayAheadMarketPrices.available
-    ? dayAheadMarketPrices.prices.reduce((lowest, price) =>
-        price.price < lowest.price ? price : lowest,
-      )
-    : null;
-
-  const highestPriceToday = dayAheadMarketPrices.available
-    ? dayAheadMarketPrices.prices.reduce((highest, price) =>
-        price.price > highest.price ? price : highest,
-      )
-    : null;
-
-  const exportThreshold = resolveExportThreshold(automationSettings);
-
-  // The Dashboard's own "Recommended Export" visualization reuses Market's
-  // exact page-data loader and chart component (Final Market UX Completion
-  // milestone) — not a second implementation. `getMarketPageData` is the
-  // single place price series + threshold-crossing ("recommended export")
-  // bands are computed; rendering the same `series`/`threshold` through the
-  // same `MarketPriceChart` here guarantees the green highlighting can
-  // never diverge from what the Market page shows for today.
-  const marketChartData = await getMarketPageData({
-    selectedDateParam: undefined,
-    automationSettings,
-  });
-
-  // "This Month"/"Lifetime" still read PlantTelemetrySnapshot — DeviceTelemetry
-  // has no monthly/lifetime data yet (see the module doc comment above).
-  const latestSnapshots = plants
-    .map((plant) => plant.telemetrySnapshots[0])
-    .filter((telemetry) => telemetry !== undefined);
-
-  const totalLifetimeEnergy = latestSnapshots.reduce(
-    (sum, telemetry) => sum + Number(telemetry.totalPower?.toString() ?? 0),
-    0,
-  );
-
-  const totalMonthEnergy = latestSnapshots.reduce(
-    (sum, telemetry) => sum + Number(telemetry.monthPower?.toString() ?? 0),
-    0,
-  );
-
-  // "Energy Today" and "Last telemetry" now come from DeviceTelemetry —
-  // the fresher, device-level source of truth (see ADR-007).
-  const telemetryMetricsList = [...telemetryByPlantId.values()];
-
-  const totalTodayEnergy = telemetryMetricsList.reduce(
-    (sum, metrics) => sum + metrics.producedKwh,
-    0,
-  );
-
-  const latestSampleTimestamps = telemetryMetricsList
-    .map((metrics) => metrics.latestSampleAt)
-    .filter((timestamp): timestamp is Date => timestamp !== null);
-
-  const latestUpdate =
-    latestSampleTimestamps.length > 0
-      ? new Date(
-          Math.max(...latestSampleTimestamps.map((timestamp) => timestamp.getTime())),
-        )
-      : null;
-
-  const kpis = [
-    {
-      label: "Plants",
-      value: plants.length.toString(),
-      unit: "connected",
-    },
-    {
-      label: "Energy Today",
-      value: formatEnergy({ toString: () => totalTodayEnergy.toString() }),
-      unit: "kWh",
-    },
-    {
-      label: "Energy This Month",
-      value: formatEnergy({ toString: () => totalMonthEnergy.toString() }),
-      unit: "kWh",
-    },
-    {
-      label: "Lifetime Energy",
-      value: formatEnergy({ toString: () => totalLifetimeEnergy.toString() }),
-      unit: "kWh",
-    },
-  ];
+  const data = await getDashboardPageData(user.organizationId, automationSettings);
 
   return (
-    <div className="mx-auto max-w-7xl space-y-8">
-      <section>
-        <p className="text-sm font-medium text-cyan-400">Portfolio overview</p>
+    <div className="mx-auto max-w-7xl space-y-3">
+      <section className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-medium text-cyan-400">Live plant operation</p>
+          <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
+            Dashboard
+          </h1>
+        </div>
+      </section>
 
-        <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">
-              Dashboard
-            </h1>
+      {!data.plantAvailable ? (
+        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+          <p className="text-sm font-medium text-white">No plant connected</p>
+          <p className="mt-1 text-xs text-slate-500">
+            Connect a FusionSolar plant to see live operational data.
+          </p>
+        </section>
+      ) : (
+        <>
+          <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+            <MarketSummaryCard
+              eyebrow="Produced Today"
+              value={energyValueLabel(data.kpis.producedTodayKwh)}
+              valueUnit={data.kpis.producedTodayKwh !== null ? "kWh" : undefined}
+              unavailableNote="Waiting for telemetry"
+            />
 
-            <p className="mt-2 text-sm text-slate-400">
-              Live operational overview for {user.organization?.name}
-            </p>
-          </div>
+            <MarketSummaryCard
+              eyebrow="Consumed Today"
+              value={energyValueLabel(data.kpis.consumedTodayKwh)}
+              valueUnit={data.kpis.consumedTodayKwh !== null ? "kWh" : undefined}
+              unavailableNote="Waiting for telemetry"
+            />
 
-          <p className="text-sm text-slate-500">
+            <MarketSummaryCard
+              eyebrow="Exported Today"
+              value={energyValueLabel(data.kpis.exportedTodayKwh)}
+              valueUnit={data.kpis.exportedTodayKwh !== null ? "kWh" : undefined}
+              unavailableNote="Waiting for telemetry"
+            />
+
+            <MarketSummaryCard
+              eyebrow="Imported Today"
+              value={energyValueLabel(data.kpis.importedTodayKwh)}
+              valueUnit={data.kpis.importedTodayKwh !== null ? "kWh" : undefined}
+              unavailableNote="Waiting for telemetry"
+            />
+
+            <MarketSummaryCard
+              eyebrow="Revenue Today"
+              value={data.kpis.revenue.available ? data.kpis.revenue.revenueEur.toFixed(2) : undefined}
+              valueUnit={data.kpis.revenue.available ? "EUR" : undefined}
+              unavailableNote="Waiting for production telemetry"
+            />
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white">System Overview</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
+            </div>
+
+            <div className="mt-3">
+              <EnergyFlowDiagram flow={data.energyFlow} />
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Live Energy</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Today&apos;s production, consumption, and grid exchange
+              </p>
+            </div>
+
+            <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
+              <LiveEnergyChart data={data.chartSeries} />
+            </div>
+          </section>
+
+          <section className="grid gap-2.5 lg:grid-cols-3">
+            <WeatherCard weather={data.weather} />
+            <GlidepathCard glidepath={data.glidepath} />
+            <DashboardMarketWidget market={data.market} />
+          </section>
+
+          <section className="grid gap-2.5 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <InvertersCard inverters={data.inverters} />
+            </div>
+            <MarketEventLog entries={data.eventLog} />
+          </section>
+
+          <p className="text-xs text-slate-500">
             Last telemetry:{" "}
             <span className="text-slate-300">
-              {latestUpdate ? sofiaDateTimeLabel(latestUpdate) : "No data"}
+              {data.latestTelemetryAt ? sofiaDateTimeLabel(data.latestTelemetryAt) : "No data"}
             </span>
           </p>
-        </div>
-      </section>
-
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((kpi) => (
-          <div
-            key={kpi.label}
-            className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 shadow-sm"
-          >
-            <p className="text-sm text-slate-400">{kpi.label}</p>
-
-            <div className="mt-4 flex items-baseline gap-2">
-              <p className="text-2xl font-semibold tracking-tight text-white">
-                {kpi.value}
-              </p>
-
-              <span className="text-xs text-slate-500">{kpi.unit}</span>
-            </div>
-          </div>
-        ))}
-      </section>
-
-      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-white">
-              Bulgarian Day-Ahead Market
-            </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Data source: ENTSO-E
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 text-sm text-slate-300">
-            <span
-              className={`h-2 w-2 rounded-full ${marketPriceStatus.colorClass}`}
-            />
-            {marketPriceStatus.label}
-          </div>
-        </div>
-
-        {marketImportStatus.available && marketImportStatus.isPartial && (
-          <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
-            Latest import is partial: {marketImportStatus.importedIntervals}/
-            {marketImportStatus.expectedIntervals} intervals available (
-            {marketImportStatus.missingIntervalsCount} missing from
-            ENTSO-E). Missing intervals are not shown — never fabricated or
-            interpolated.
-          </p>
-        )}
-
-        <div className="mt-6 grid gap-px overflow-hidden rounded-xl bg-white/10 sm:grid-cols-2 xl:grid-cols-5">
-          <div className="bg-[#080c1a] p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Current Hour
-            </p>
-            <p className="mt-3 text-lg font-medium text-white">
-              {currentMarketPrice.available
-                ? `${currentMarketPrice.price.price} ${currentMarketPrice.price.currency}/MWh`
-                : "—"}
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {currentMarketPrice.available
-                ? `From ${currentMarketPrice.price.timestamp.toLocaleTimeString("en-GB", { timeZone: "Europe/Sofia", hour: "2-digit", minute: "2-digit" })} (Europe/Sofia)`
-                : marketPriceStatus.detail}
-            </p>
-          </div>
-
-          <div className="bg-[#080c1a] p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Next Hour Price
-            </p>
-            <p className="mt-3 text-lg font-medium text-white">
-              {nextIntervalPrice
-                ? `${nextIntervalPrice.price} ${nextIntervalPrice.currency}/MWh`
-                : "—"}
-            </p>
-          </div>
-
-          <div className="bg-[#080c1a] p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Lowest Today
-            </p>
-            <p className="mt-3 text-lg font-medium text-white">
-              {lowestPriceToday
-                ? `${lowestPriceToday.price} ${lowestPriceToday.currency}/MWh`
-                : "—"}
-            </p>
-          </div>
-
-          <div className="bg-[#080c1a] p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Highest Today
-            </p>
-            <p className="mt-3 text-lg font-medium text-white">
-              {highestPriceToday
-                ? `${highestPriceToday.price} ${highestPriceToday.currency}/MWh`
-                : "—"}
-            </p>
-          </div>
-
-          <div className="bg-[#080c1a] p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Export Threshold
-            </p>
-            <p className="mt-3 text-lg font-medium text-white">
-              {exportThreshold.minimumExportPrice} {exportThreshold.currency}
-              /MWh
-            </p>
-          </div>
-        </div>
-
-        {marketChartData.dataAvailable && (
-          <div className="mt-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">
-              Recommended Export
-            </p>
-            <div className="mt-2 h-[180px]">
-              <MarketPriceChart
-                series={marketChartData.series}
-                thresholdPrice={marketChartData.threshold.minimumExportPrice}
-              />
-            </div>
-          </div>
-        )}
-
-        <p className="mt-4 text-xs text-slate-500">
-          Last successful update:{" "}
-          {marketImportStatus.available
-            ? sofiaDateTimeLabel(marketImportStatus.importedAt)
-            : "No import has run yet"}
-        </p>
-      </section>
-
-      <section>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-white">Plants</h2>
-
-          <p className="mt-1 text-sm text-slate-500">
-            Latest stored FusionSolar telemetry
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          {plants.map((plant) => {
-            const telemetry = plant.telemetrySnapshots[0];
-            const metrics = telemetryByPlantId.get(plant.id);
-            const exportControl =
-              exportControlByPlantId.get(plant.id) ?? UNAVAILABLE_EXPORT_MODE;
-            const exportBadge = describeConfiguredExportMode(exportControl);
-            const powerStatus = powerStatusByPlantId.get(plant.id) ?? null;
-
-            const lastUpdatedLabel = metrics?.latestSampleAt
-              ? sofiaDateTimeLabel(metrics.latestSampleAt)
-              : telemetry
-                ? sofiaDateTimeLabel(telemetry.collectedAt)
-                : "No telemetry available";
-
-            return (
-              <article
-                key={plant.id}
-                className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
-              >
-                <div className="flex flex-col gap-3 border-b border-white/10 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h3 className="text-lg font-semibold text-white">
-                      {plant.name}
-                    </h3>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      {plant.vendor}
-                      {plant.city ? ` · ${plant.city}` : ""}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col items-start gap-1 sm:items-end">
-                    <div className="flex items-center gap-2 text-sm text-slate-400">
-                      <span
-                        className={`h-2 w-2 rounded-full ${metrics?.available ? "bg-cyan-400" : "bg-slate-500"}`}
-                      />
-                      {metrics?.available
-                        ? "Telemetry available"
-                        : "No telemetry for today yet"}
-                    </div>
-
-                    <div className="flex items-center gap-2 text-sm text-slate-300">
-                      <span
-                        className={`h-2 w-2 rounded-full ${exportBadge.colorClass}`}
-                      />
-                      {exportBadge.label}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-px bg-white/10 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-                  {[
-                    ["Today", metrics?.available ? metrics.producedKwh : null, "kWh"],
-                    ["This Month", telemetry?.monthPower, "kWh"],
-                    ["Lifetime", telemetry?.totalPower, "kWh"],
-                    ["Exported Today", metrics?.available ? metrics.exportedKwh : null, "kWh"],
-                    ["Imported Today", metrics?.available ? metrics.importedKwh : null, "kWh"],
-                  ].map(([label, value, unit]) => (
-                    <div key={label?.toString()} className="bg-[#080c1a] p-5">
-                      <p className="text-xs uppercase tracking-wide text-slate-500">
-                        {label?.toString()}
-                      </p>
-
-                      <p className="mt-3 text-lg font-medium text-white">
-                        {formatEnergy(
-                          value as { toString(): string } | null | undefined,
-                        )}{" "}
-                        <span className="text-xs font-normal text-slate-500">
-                          {unit?.toString()}
-                        </span>
-                      </p>
-                    </div>
-                  ))}
-
-                  <div className="bg-[#080c1a] p-5">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">
-                      Peak Production
-                    </p>
-                    <p className="mt-3 text-lg font-medium text-white">
-                      {metrics?.available && metrics.peakExport
-                        ? metrics.peakExport.kw
-                        : "—"}{" "}
-                      <span className="text-xs font-normal text-slate-500">
-                        kW
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {metrics?.available && metrics.peakExport
-                        ? `at ${sofiaTimeLabel(metrics.peakExport.timestamp)}`
-                        : "No production yet today"}
-                    </p>
-                  </div>
-
-                  <div className="bg-[#080c1a] p-5">
-                    <p className="text-xs uppercase tracking-wide text-slate-500">
-                      Current Power
-                    </p>
-                    <p className="mt-3 text-lg font-medium text-white">
-                      {powerStatus?.currentProduction.available
-                        ? powerStatus.currentProduction.kw
-                        : "—"}{" "}
-                      <span className="text-xs font-normal text-slate-500">
-                        kW
-                      </span>
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {powerStatus?.currentExport.available &&
-                      powerStatus.currentExport.kw > 0
-                        ? `Exporting ${powerStatus.currentExport.kw} kW`
-                        : powerStatus?.currentImport.available &&
-                            powerStatus.currentImport.kw > 0
-                          ? `Importing ${powerStatus.currentImport.kw} kW`
-                          : powerStatus?.currentProduction.available
-                            ? "No grid exchange"
-                            : "FusionSolar data unavailable"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="px-6 py-4 text-xs text-slate-500">
-                  Last updated: {lastUpdatedLabel}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
+        </>
+      )}
     </div>
   );
 }
