@@ -23,7 +23,7 @@ export function AppShell({
       <div className="min-h-screen pl-64">
         <AppHeader user={user} />
 
-        <main className="pt-0 pr-6 pb-6 pl-6">
+        <main className="pt-0 pr-6 pb-6 pl-12">
           {children}
         </main>
       </div>
