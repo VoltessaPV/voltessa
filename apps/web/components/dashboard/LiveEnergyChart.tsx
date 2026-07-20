@@ -4,6 +4,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -11,31 +12,39 @@ import {
 } from "recharts";
 
 import type { EnergyFlowPoint } from "@/app/(platform)/dashboard/dashboard-data";
+import {
+  CHART_AXIS_LINE,
+  CHART_AXIS_TICK,
+  CHART_GRID_STROKE,
+  CHART_MARGIN,
+  CHART_MARGIN_WITH_ANNOTATION,
+  CHART_TOOLTIP_CLASSNAME,
+  formatSofiaTime,
+} from "@/components/charts/chart-style";
+import { NowLabel } from "@/components/charts/NowMarker";
 
 type LiveEnergyChartProps = {
   data: EnergyFlowPoint[];
+  /** Same live reading `energyFlow` uses — never a second real-time read, see `dashboard-data.ts`. */
+  nowAnnotation?: string;
 };
 
 /**
  * Today's PV production / consumption / grid import / grid export power
- * (kW) — the Dashboard's own operational chart, visually consistent with
- * Market's `MarketPriceChart` (same grid/axis/tooltip styling, same
- * `recharts` usage) but a genuinely different chart: this one is real-time
- * plant power, never price or exported energy (that split is Market's, per
- * the Mathematical Correctness milestone). Import and export are mutually
- * exclusive at every timestamp (`energy-metrics.ts`'s
+ * (kW) — architecturally identical to Market's `MarketPriceChart` (Design-
+ * System Consistency milestone: same grid/axis/tooltip/legend/NOW-marker
+ * building blocks, imported from `components/charts/*`, not a second,
+ * independently-styled chart). Only the plotted series differ: this is
+ * real-time plant power, never price or exported energy (that split is
+ * Market's, per the Mathematical Correctness milestone). Full 00:00-24:00
+ * timeline, exactly like Market's price chart - `data` already covers the
+ * whole calendar day with `null` for anything not yet happened (see
+ * `dashboard-data.ts`'s `buildFullDayChartSeries`). Import and export are
+ * mutually exclusive at every timestamp (`energy-metrics.ts`'s
  * `exportKw = max(meterKw, 0)` / `importKw = max(-meterKw, 0)`) — there is
  * only one grid connection, rendered as two lines because a single signed
  * line would need a zero-crossing legend of its own to read at a glance.
  */
-function formatSofiaTime(time: number): string {
-  return new Date(time).toLocaleTimeString("en-GB", {
-    timeZone: "Europe/Sofia",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function ChartTooltip({
   active,
   payload,
@@ -56,8 +65,13 @@ function ChartTooltip({
     { key: "gridExportKw", text: "Grid export" },
   ];
 
+  const hasAnything = rows.some((row) => {
+    const entry = payload.find((p) => p.dataKey === row.key);
+    return entry && entry.value !== null && entry.value !== undefined;
+  });
+
   return (
-    <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-xs shadow-[0_12px_28px_-16px_rgba(0,0,0,0.7)]">
+    <div className={CHART_TOOLTIP_CLASSNAME}>
       <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
 
       {rows.map(({ key, text }) => {
@@ -74,11 +88,19 @@ function ChartTooltip({
           </p>
         );
       })}
+
+      {!hasAnything && <p className="mt-1 text-slate-500">No data</p>}
     </div>
   );
 }
 
-export function LiveEnergyChart({ data }: LiveEnergyChartProps) {
+export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
+  const now = Date.now();
+  const domainStart = data[0]?.time;
+  const domainEnd = data[data.length - 1]?.time;
+  const nowInRange =
+    domainStart !== undefined && domainEnd !== undefined && now >= domainStart && now <= domainEnd;
+
   return (
     <div className="flex h-full w-full flex-col">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
@@ -102,8 +124,11 @@ export function LiveEnergyChart({ data }: LiveEnergyChartProps) {
 
       <div className="mt-2 min-h-0 flex-1">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={data} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
-            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+          <LineChart
+            data={data}
+            margin={nowAnnotation ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}
+          >
+            <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
 
             <XAxis
               dataKey="time"
@@ -111,15 +136,15 @@ export function LiveEnergyChart({ data }: LiveEnergyChartProps) {
               scale="time"
               domain={["dataMin", "dataMax"]}
               tickFormatter={formatSofiaTime}
-              tick={{ fill: "#64748b", fontSize: 11 }}
+              tick={CHART_AXIS_TICK}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+              axisLine={CHART_AXIS_LINE}
               tickMargin={10}
               minTickGap={48}
             />
 
             <YAxis
-              tick={{ fill: "#64748b", fontSize: 11 }}
+              tick={CHART_AXIS_TICK}
               tickLine={false}
               axisLine={false}
               width={44}
@@ -134,6 +159,16 @@ export function LiveEnergyChart({ data }: LiveEnergyChartProps) {
             />
 
             <Tooltip content={<ChartTooltip />} />
+
+            {nowInRange && (
+              <ReferenceLine
+                x={now}
+                stroke="#22d3ee"
+                strokeOpacity={0.55}
+                strokeWidth={1.5}
+                label={<NowLabel annotation={nowAnnotation} />}
+              />
+            )}
 
             <Line
               type="monotone"

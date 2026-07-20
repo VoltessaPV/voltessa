@@ -122,13 +122,13 @@ export default async function DashboardPage() {
             </div>
 
             <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
-              <LiveEnergyChart data={data.chartSeries} />
+              <LiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
             </div>
           </section>
 
           <section className="grid gap-2.5 lg:grid-cols-3">
-            <WeatherCard weather={data.weather} />
-            <GlidepathCard glidepath={data.glidepath} />
+            <WeatherCard />
+            <GlidepathCard />
             <DashboardMarketWidget market={data.market} />
           </section>
 

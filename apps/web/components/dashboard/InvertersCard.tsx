@@ -12,11 +12,13 @@ const STATUS_DOT_CLASS: Record<string, string> = {
 };
 
 /**
- * Every inverter shown individually — never aggregated into one number,
- * per this milestone's explicit requirement. See
- * `lib/fusionsolar/get-plant-inverter-status.ts` for the real-time data
- * source and the Green/Yellow/Red/Gray classification of Huawei's
- * documented `inverter_state` enumeration.
+ * Every inverter shown individually — never aggregated into one number —
+ * simplified to one compact row per inverter (Design-System Consistency
+ * milestone): status dot, name, current power. No "Online · Grid-
+ * connected" subtitle — the dot's color already represents online state
+ * (green = online/producing, gray = offline/no data, per
+ * `get-plant-inverter-status.ts`'s classification), so a redundant text
+ * label next to it repeated the same fact twice.
  */
 export function InvertersCard({ inverters }: InvertersCardProps) {
   return (
@@ -32,24 +34,14 @@ export function InvertersCard({ inverters }: InvertersCardProps) {
       ) : (
         <ul className="mt-3 divide-y divide-white/5">
           {inverters.inverters.map((inverter) => (
-            <li
-              key={inverter.deviceId}
-              className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0"
-            >
+            <li key={inverter.deviceId} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
               <div className="flex min-w-0 items-center gap-2.5">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[inverter.statusColor]}`}
-                />
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-white">{inverter.name}</p>
-                  <p className="text-[11px] text-slate-500">
-                    {inverter.online ? "Online" : "Offline"} · {inverter.statusLabel}
-                  </p>
-                </div>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[inverter.statusColor]}`} />
+                <p className="truncate text-sm font-medium text-white">{inverter.name}</p>
               </div>
 
               <p className="shrink-0 text-sm font-medium tabular-nums text-white">
-                {inverter.powerKw !== null ? `${inverter.powerKw.toFixed(2)} kW` : "—"}
+                {inverter.powerKw !== null ? `${inverter.powerKw.toFixed(1)} kW` : "—"}
               </p>
             </li>
           ))}

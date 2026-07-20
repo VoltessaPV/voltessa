@@ -14,6 +14,16 @@ import {
 } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
+import {
+  CHART_AXIS_LINE,
+  CHART_AXIS_TICK,
+  CHART_GRID_STROKE,
+  CHART_MARGIN,
+  CHART_MARGIN_WITH_ANNOTATION,
+  CHART_TOOLTIP_CLASSNAME,
+  formatSofiaTime,
+} from "@/components/charts/chart-style";
+import { NowLabel } from "@/components/charts/NowMarker";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 /**
@@ -69,14 +79,6 @@ type UnifiedDatum = {
   price: number | null;
   exportedKwh: number | null;
 };
-
-function formatSofiaTime(time: number): string {
-  return new Date(time).toLocaleTimeString("en-GB", {
-    timeZone: "Europe/Sofia",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /** Groups consecutive export-enabled intervals into contiguous [start, end) ranges for shading. */
 function getExportBands(
@@ -160,7 +162,7 @@ function ChartTooltip({
   const hasAnything = price !== null || exportedKwh !== null;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-[#0b1020] px-3 py-2 text-xs shadow-[0_12px_28px_-16px_rgba(0,0,0,0.7)]">
+    <div className={CHART_TOOLTIP_CLASSNAME}>
       <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
 
       {price !== null && (
@@ -211,84 +213,6 @@ function ThresholdLabel(props: {
       </text>
       <text x={-8} y={22} fontSize={10} fill="#fcd34d">
         {thresholdPrice} EUR/MWh
-      </text>
-    </g>
-  );
-}
-
-/**
- * Custom label for the NOW marker — a small pill badge with a pulsing
- * dot, like a live terminal cursor. Optionally carries a short real-time
- * production/grid-power annotation — a point-in-time annotation on the
- * current moment, not a fabricated time series, since only a single
- * current reading exists, not historical production data at price-
- * interval resolution.
- */
-function NowLabel(props: {
-  viewBox?: { x?: number; y?: number };
-  annotation?: string;
-}) {
-  const { viewBox, annotation } = props;
-  if (!viewBox || viewBox.x === undefined || viewBox.y === undefined) {
-    return null;
-  }
-
-  if (!annotation) {
-    return (
-      <g transform={`translate(${viewBox.x}, ${viewBox.y - 6})`}>
-        <rect x={-20} y={-16} width={40} height={16} rx={8} fill="#0891b2" />
-        <circle cx={-11} cy={-8} r={2.5} fill="#5eead4">
-          <animate
-            attributeName="opacity"
-            values="1;0.35;1"
-            dur="1.6s"
-            repeatCount="indefinite"
-          />
-        </circle>
-        <text x={4} y={-4} textAnchor="middle" fontSize={9} fontWeight={700} fill="#ecfeff">
-          NOW
-        </text>
-      </g>
-    );
-  }
-
-  const pillWidth = Math.max(70, annotation.length * 5.2 + 20);
-
-  return (
-    <g transform={`translate(${viewBox.x}, ${viewBox.y - 34})`}>
-      <rect
-        x={-pillWidth / 2}
-        y={-1}
-        width={pillWidth}
-        height={30}
-        rx={6}
-        fill="#0891b2"
-      />
-      <circle cx={-pillWidth / 2 + 10} cy={11} r={2.5} fill="#5eead4">
-        <animate
-          attributeName="opacity"
-          values="1;0.35;1"
-          dur="1.6s"
-          repeatCount="indefinite"
-        />
-      </circle>
-      <text
-        x={-pillWidth / 2 + 18}
-        y={14}
-        fontSize={9}
-        fontWeight={700}
-        fill="#ecfeff"
-      >
-        NOW
-      </text>
-      <text
-        x={0}
-        y={24}
-        textAnchor="middle"
-        fontSize={9}
-        fill="#cffafe"
-      >
-        {annotation}
       </text>
     </g>
   );
@@ -386,9 +310,9 @@ export function MarketPriceChart({
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart
             data={data}
-            margin={{ top: nowAnnotation ? 46 : 30, right: 12, bottom: 0, left: 0 }}
+            margin={nowAnnotation ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}
           >
-            <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
+            <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
 
             {bands.map((band) => (
               <ReferenceArea
@@ -408,16 +332,16 @@ export function MarketPriceChart({
               scale="time"
               domain={["dataMin", "dataMax"]}
               tickFormatter={formatSofiaTime}
-              tick={{ fill: "#64748b", fontSize: 11 }}
+              tick={CHART_AXIS_TICK}
               tickLine={false}
-              axisLine={{ stroke: "rgba(255,255,255,0.1)" }}
+              axisLine={CHART_AXIS_LINE}
               tickMargin={10}
               minTickGap={48}
             />
 
             <YAxis
               yAxisId="price"
-              tick={{ fill: "#64748b", fontSize: 11 }}
+              tick={CHART_AXIS_TICK}
               tickLine={false}
               axisLine={false}
               width={52}
@@ -435,7 +359,7 @@ export function MarketPriceChart({
               <YAxis
                 yAxisId="energy"
                 orientation="right"
-                tick={{ fill: "#64748b", fontSize: 11 }}
+                tick={CHART_AXIS_TICK}
                 tickLine={false}
                 axisLine={false}
                 width={52}
