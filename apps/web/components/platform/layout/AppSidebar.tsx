@@ -31,7 +31,7 @@ const navigation = [
 
 export function AppSidebar() {
   return (
-    <aside className="fixed inset-y-0 left-0 w-56 border-r border-white/10 bg-[#070B18]">
+    <aside className="fixed inset-y-0 left-0 w-64 border-r border-white/10 bg-[#070B18]">
       <div className="flex h-16 items-center border-b border-white/10 px-6">
         <span className="text-lg font-semibold">
           Voltessa
