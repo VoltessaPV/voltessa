@@ -1,5 +1,6 @@
 import type { DeviceTelemetry } from "@prisma/client";
 
+import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -8,10 +9,54 @@ import { prisma } from "@/lib/prisma";
  * Market compose these functions instead of calling `prisma.deviceTelemetry`
  * themselves — this is a pure read layer, no HTTP, no business math (see
  * `lib/telemetry/energy-metrics.ts` for derived computations built on top).
+ *
+ * Database-First Telemetry Architecture milestone: every exported function
+ * here calls `ensurePlantTelemetryFresh` first. Synchronization is
+ * therefore invisible to Dashboard/Market — they ask this repository for
+ * telemetry, never for a sync; this is the one layer that knows both
+ * "telemetry lives in the database" and "the database might need
+ * refreshing first." The actual freshness/lease/Huawei decision lives
+ * entirely in `lib/fusionsolar/telemetry-sync-service.ts` — this helper
+ * only resolves which connection owns a plant and delegates.
  */
 
 export const INVERTER_DEV_TYPE_ID = 1;
 export const METER_DEV_TYPE_ID = 47;
+
+/**
+ * Resolves the plant's `FusionSolarConnection` and asks the sync service
+ * whether it needs refreshing — never contacts Huawei itself, never
+ * throws (the sync service already contains every failure). A plant with
+ * no connection (not yet onboarded, or connection revoked) is a no-op:
+ * historical data already in the database should keep rendering either
+ * way.
+ */
+export async function ensurePlantTelemetryFresh(plantId: string): Promise<void> {
+  const plant = await prisma.plant.findUnique({
+    where: { id: plantId },
+    select: { organizationId: true },
+  });
+
+  if (!plant) {
+    return;
+  }
+
+  const connection = await prisma.fusionSolarConnection.findUnique({
+    where: {
+      organizationId_provider: {
+        organizationId: plant.organizationId,
+        provider: "HuaweiFusionSolar",
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!connection) {
+    return;
+  }
+
+  await synchronizeFusionSolarConnection(connection.id);
+}
 
 /** All telemetry rows for a plant within `[start, end)`, ascending by timestamp. */
 export async function getPlantTelemetryRange(params: {
@@ -20,6 +65,8 @@ export async function getPlantTelemetryRange(params: {
   end: Date;
   devTypeId?: number;
 }): Promise<DeviceTelemetry[]> {
+  await ensurePlantTelemetryFresh(params.plantId);
+
   return prisma.deviceTelemetry.findMany({
     where: {
       plantId: params.plantId,
@@ -37,6 +84,8 @@ export async function getLatestTelemetry(params: {
   plantId: string;
   devTypeId?: number;
 }): Promise<DeviceTelemetry | null> {
+  await ensurePlantTelemetryFresh(params.plantId);
+
   return prisma.deviceTelemetry.findFirst({
     where: {
       plantId: params.plantId,
@@ -65,6 +114,8 @@ export async function getLatestMeterTelemetry(
 export async function getLatestInverterTelemetry(
   plantId: string,
 ): Promise<DeviceTelemetry[]> {
+  await ensurePlantTelemetryFresh(plantId);
+
   const devices = await prisma.device.findMany({
     where: { plantId, devTypeId: INVERTER_DEV_TYPE_ID },
     select: { id: true },

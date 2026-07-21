@@ -85,9 +85,12 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
 - `app/(marketing)` is the public marketing site; `app/(platform)` is the authenticated
   operator/owner app (dashboard, plants, market, automations, alerts, settings), gated by
   `proxy.ts` (NextAuth middleware) for `/dashboard/:path*`.
-- Every component under `app/` and `components/` is currently a React Server Component — there is
-  no `"use client"` anywhere in the codebase yet. Add it only when you introduce genuine
-  interactivity (state, effects, event handlers, browser APIs).
+- Almost every component under `app/` and `components/` is a React Server Component. A small,
+  deliberate set of `"use client"` components exist for genuine interactivity (state, effects, event
+  handlers): `components/automations/HuaweiControlCard.tsx` (manual control dispatch) and
+  `components/dashboard/RefreshButton.tsx` (the manual "synchronize now" action, Database-First
+  Telemetry Architecture milestone, ADR-011) — both follow the same `useTransition`/pending-state/
+  toast pattern; follow it too rather than introducing a new client-component convention.
 
 ## Commands
 
@@ -184,6 +187,12 @@ these two:
 
 - `voltessa-telemetry-ingestion.timer` — every 5 minutes, calls
   `app/api/internal/fusionsolar/bootstrap-device-telemetry` (writes `DeviceTelemetry`). See ADR-008.
+  Since ADR-011 (Database-First Telemetry Architecture), this route no longer synchronizes
+  anything itself — it delegates, per connection, to
+  `lib/fusionsolar/telemetry-sync-service.ts`'s `synchronizeFusionSolarConnection`, the single
+  synchronization entry point the whole application shares (Dashboard/Market's on-demand path and
+  the manual Refresh action call the exact same function). Dashboard and Market never call Huawei
+  directly during rendering — see ADR-011 and `docs/research/telemetry-platform-foundation.md` §9.
 - `voltessa-market-price-scheduler.timer` — triggers once daily at `14:00 Europe/Sofia` (shortly
   after ENTSO-E's real day-ahead publication window), running a script that polls
   `app/api/internal/market-price/refresh-prices?target=tomorrow` (writes

@@ -102,18 +102,35 @@ journalctl -u voltessa-fusionsolar-proxy -f
 
 ## `voltessa-telemetry-ingestion.timer`
 
+**Database-First Telemetry Architecture milestone (ADR-011)**: this timer's cadence is unchanged
+(still every 5 minutes), but the route it calls no longer synchronizes anything itself — it
+delegates to the same shared synchronization service Dashboard/Market's on-demand path also calls.
+See `docs/research/telemetry-platform-foundation.md` §9 for the full record.
+
 ```
-voltessa-telemetry-ingestion.timer  (OnCalendar=*:0/5 — every 5 minutes)
+voltessa-telemetry-ingestion.timer  (OnCalendar=*:0/5 — every 5 minutes, unchanged)
   -> voltessa-telemetry-ingestion.service  (curl, Bearer CRON_SECRET)
   -> POST https://app.voltessa.ai/api/internal/fusionsolar/bootstrap-device-telemetry?days=1
   -> route.ts: crypto.timingSafeEqual auth check
-  -> bootstrapDeviceTelemetry() (apps/web/lib/fusionsolar/bootstrap-device-telemetry.ts)
-  -> importDeviceTelemetry() (apps/web/lib/fusionsolar/import-device-telemetry.ts)
-  -> Huawei getDevFiveMinutes, via the FusionSolar gateway (this same VM)
-  -> DeviceTelemetry table (createMany, skipDuplicates: true)
-  -> Dashboard / Market read it via lib/telemetry/queries.ts
+  -> for every FusionSolarConnection:
+       synchronizeFusionSolarConnection(connectionId)  (apps/web/lib/fusionsolar/telemetry-sync-service.ts)
+         -> freshness check against FUSIONSOLAR_SYNC_FRESHNESS_MS -- if fresh, skipped, no Huawei call
+         -> otherwise: lease claim -> importDeviceTelemetry() + importPlantDailyKpi() -> Huawei
+         -> DeviceTelemetry / PlantDailyKpi tables
+  -> Dashboard / Market read via lib/telemetry/queries.ts / lib/telemetry/plant-daily-kpi.ts,
+     which themselves call the same synchronizeFusionSolarConnection() before every read --
+     this timer is a background cache-warmer, not what keeps the UI alive (ADR-011)
 ```
 
+- The `?days=1` query parameter is now **inert** — the sync service's window is a fixed internal
+  constant (`DAYS_BACK = 1`, same "yesterday + today" shape as before). The systemd service's
+  existing invocation does not need to change; the parameter is simply no longer read.
+- **The scheduler is not special-cased** — it goes through the identical freshness gate as a
+  Dashboard/Market page render (`synchronizeFusionSolarConnection(connectionId)`, no `force`). A
+  tick that finds the connection already synced within `FUSIONSOLAR_SYNC_FRESHNESS_MS` (e.g. a user
+  loaded Dashboard moments before this tick fired) **correctly skips contacting Huawei** — this is
+  expected behavior, not a missed cycle. Only the manual Refresh action and deliberately-invoked
+  diagnostics ever pass `force: true`.
 - **EnvironmentFile**: `/etc/voltessa-telemetry-scheduler.env` (root-only, `chmod 600`) — holds this
   service's own `CRON_SECRET` copy. This is a **separate file** from the gateway's
   `/etc/voltessa-fusionsolar-proxy.env` — don't confuse them.
@@ -250,6 +267,64 @@ different debugging path, not a gateway problem, and not something a gateway con
 
 ---
 
+# Engineering diagnostics
+
+## `scripts/diagnostics/huawei-control.ts`
+
+A CLI that invokes the real, production Huawei Control implementation
+(`apps/web/lib/fusionsolar/huawei-control-service.ts`'s `setZeroExport`/`setNoLimit`) directly,
+without going through the "Huawei Control (Testing)" UI card's NextAuth-gated server action
+(`app/(platform)/automations/actions.ts`). It exists because that server action is deliberately
+manual/session-only (see the "Deliberately manual-only" comment in `huawei-control-service.ts`) —
+there is no `CRON_SECRET`-style bypass for it, and none should be added. Before this script, the
+only way to exercise that code path was clicking the button in a real browser session.
+
+The script does not reimplement any Huawei/control logic. It:
+
+1. Resolves a Huawei plant (and its `organizationId`) from a `--plant` name — the one thing that
+   necessarily differs from the server action, which starts from a session's `organizationId`
+   instead. Same constraints as `findOrgHuaweiPlantId`/`findControllablePlant`
+   (`vendor: "Huawei"`, `plantCode` set), just keyed by name.
+2. Calls the existing, unmodified `setZeroExport`/`setNoLimit`, which loads the
+   `FusionSolarConnection`, builds the request, and dispatches it through
+   `export-control.ts` → `api-client.ts` → the FusionSolar gateway → Huawei — identical to the UI
+   path.
+
+All request/response/`failCode`/`message`/`taskId`/`result[]`/duration logging comes from that
+file's own `logDetail()` calls (unmodified) — the script does not duplicate or reformat any of it,
+it just lets that logging print to its own stdout/stderr since it runs in a plain Node process.
+
+Usage (from the repo root):
+
+```
+pnpm tsx --tsconfig apps/web/tsconfig.json scripts/diagnostics/huawei-control.ts --plant Atlanta --mode zero-export
+pnpm tsx --tsconfig apps/web/tsconfig.json scripts/diagnostics/huawei-control.ts --plant Atlanta --mode no-limit
+```
+
+The `--tsconfig apps/web/tsconfig.json` flag is required — `huawei-control-service.ts` and the
+files it imports use the `@/*` path alias defined in `apps/web/tsconfig.json`, and `tsx` does not
+discover that automatically when the entry script lives outside `apps/web`.
+
+The script loads `apps/web/.env.local` (falling back to `apps/web/.env`) itself, mirroring
+Next.js's own precedence, since a standalone script has no framework doing this automatically.
+Confirmed in this environment: local `DATABASE_URL` is a real, working connection to production
+Postgres (resolves real plants/organizations), but `FUSIONSOLAR_GATEWAY_URL`/
+`FUSIONSOLAR_GATEWAY_SECRET` are not set locally by design (same local-dev gap `AI_PLAYBOOK.md`
+already documents for gateway-dependent code) — so a local run reaches the real dispatch call and
+fails there with `FusionSolar gateway environment variables are not configured`, rather than
+silently no-op'ing or hitting Huawei. Completing a live run therefore needs those two values from
+somewhere with real access to them (e.g. the VM's `/etc/voltessa-fusionsolar-proxy.env` for the
+gateway secret) — treat supplying them the same as any other live control command: confirm with
+the user first, since a successful `zero-export` call has direct, real financial consequences for
+the plant it targets (see `CLAUDE.md`, `docs/AI_PLAYBOOK.md`).
+
+**Engineering diagnostics only** — never called by production users, never scheduled, never wired
+into automation or a route. Prefer this script over manual UI clicks for all future Huawei Control
+experiments; it produces the same complete, structured log output every time instead of relying on
+someone reading the Vercel dashboard live.
+
+---
+
 # Production Debugging Checklist
 
 ## Huawei gateway issues
@@ -271,15 +346,25 @@ different debugging path, not a gateway problem, and not something a gateway con
    disabled/failed.
 2. `systemctl list-timers` — confirm the "next" fire time is within 5 minutes of now, not stalled.
 3. `journalctl -u voltessa-telemetry-ingestion.service --since "15 min ago"` — check the last few
-   runs. Look for `ok:true` with a per-plant summary (samples fetched/inserted/duplicates), or an
-   error.
+   runs. Since ADR-011 (Database-First Telemetry Architecture), the response is `ok:true` with a
+   `results` array, one entry per `FusionSolarConnection`, each carrying a `status`:
+   `"synced"` (a real sync ran — includes samples fetched/inserted/duplicates),
+   `"skipped_fresh"` (the connection was already synced within `FUSIONSOLAR_SYNC_FRESHNESS_MS` —
+   **expected, not an error**, e.g. a Dashboard/Market visit already refreshed it moments earlier),
+   `"skipped_already_running"` (another request's sync was already in flight for that connection),
+   or `"failed"` (a genuine error, with `reason`).
 4. **HTTP 401** in the logs → `CRON_SECRET` mismatch. Rotate it (see "Systemd Timers" above) — the
    old value cannot be read back, only replaced.
-5. **HTTP 200 but stale data anyway** → check whether the route being called is actually
-   `bootstrap-device-telemetry` (writes `DeviceTelemetry`, what Dashboard/Market read) and not the
-   legacy `ingest-plant-telemetry` route (writes the unrelated `PlantTelemetrySnapshot` table —
-   confirmed dormant, not scheduled by anything, per `docs/research/telemetry-platform-foundation.md`
-   §8.2). Check the service's `ExecStart`/script target URL if this is ever in doubt.
+5. **HTTP 200 but stale data anyway** → first check whether every connection's entry actually says
+   `"skipped_fresh"`/`"synced"` rather than `"failed"`. If `"failed"`, tail
+   `journalctl -u voltessa-fusionsolar-proxy` for the same window — a sync failure is almost always a
+   downstream gateway problem (see "Huawei gateway issues" above), not a scheduler problem, since
+   `telemetry-sync-service.ts` never throws for its own reasons. If every connection shows `"synced"`
+   with real sample counts but Dashboard/Market still look stale, confirm the route being hit is
+   still `bootstrap-device-telemetry` (writes `DeviceTelemetry`/`PlantDailyKpi`, what Dashboard/Market
+   read) and not the legacy `ingest-plant-telemetry` route (writes the unrelated
+   `PlantTelemetrySnapshot` table — confirmed dormant, not scheduled by anything, per
+   `docs/research/telemetry-platform-foundation.md` §8.2).
 6. If the gateway itself is down, telemetry ingestion will fail too (it calls Huawei through the
    same gateway) — check gateway health first if telemetry errors mention FusionSolar/Huawei rather
    than the Vercel endpoint itself.

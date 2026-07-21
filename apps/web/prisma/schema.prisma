@@ -151,12 +151,35 @@ model FusionSolarConnection {
 
   expiresAt DateTime?
 
+  /// Database-First Telemetry Architecture milestone: synchronization
+  /// coordination state, scoped to this connection (the correct boundary —
+  /// this token and Huawei's own per-account rate limit are shared across
+  /// every plant beneath it). Owned exclusively by
+  /// `lib/fusionsolar/telemetry-sync-service.ts` — nothing else reads or
+  /// writes these three fields.
+  telemetrySyncStatus         SyncStatus @default(IDLE)
+  /// Set when a sync run claims the lease; informational only.
+  telemetrySyncStartedAt      DateTime?
+  /// Claim expiry — lets a crashed/timed-out sync's lease be reclaimed by a
+  /// later request instead of deadlocking this connection forever.
+  telemetrySyncLeaseExpiresAt DateTime?
+  /// Set only when a sync completes successfully. Freshness (whether a new
+  /// sync is needed) is measured against this timestamp.
+  telemetryLastSyncedAt       DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, provider])
+}
+
+/// Database-First Telemetry Architecture milestone —
+/// `FusionSolarConnection.telemetrySyncStatus` only.
+enum SyncStatus {
+  IDLE
+  RUNNING
 }
 
 model Device {

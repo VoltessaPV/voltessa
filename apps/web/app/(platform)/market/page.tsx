@@ -5,6 +5,7 @@ import {
 } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
 
+import { RefreshButton } from "@/components/dashboard/RefreshButton";
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketInfo } from "@/components/market/MarketInfo";
@@ -106,12 +107,18 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
   return (
     <div className="mr-auto max-w-7xl space-y-3">
-      <MarketToolbar
-        selectedDate={data.selectedDate}
-        prevDateParam={data.prevDateParam}
-        nextDateParam={data.nextDateParam}
-        isToday={data.isToday}
-      />
+      <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
+        <div className="min-w-0 flex-1">
+          <MarketToolbar
+            selectedDate={data.selectedDate}
+            prevDateParam={data.prevDateParam}
+            nextDateParam={data.nextDateParam}
+            isToday={data.isToday}
+          />
+        </div>
+
+        <RefreshButton />
+      </div>
 
       {!data.dataAvailable ? (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">

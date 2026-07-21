@@ -290,3 +290,69 @@ ts`'s Huawei request logic, `DeviceTelemetry`'s schema, or any financial/settlem
 legacy `ingest-plant-telemetry` route/`PlantTelemetrySnapshot` path was left in place (still dormant,
 no longer invoked by anything scheduled) — retiring it outright is a separate decision, not made
 here.
+
+## 9. Database-First Telemetry Architecture (follow-up milestone)
+
+Status: **Implemented and verified against production data.** See ADR-011
+(`docs/ARCHITECT_DECISIONS.md`) for the full decision record — this section records the
+investigation trail and production evidence, not repeated there.
+
+### 9.1 Why this exists
+
+A multi-session investigation (Huawei request inventory, a full Dashboard/Market render-graph trace,
+Huawei's own documented rate limits, and a from-scratch architecture redesign pass) found that
+Dashboard issued 4 live Huawei calls per render and Market 3, none cached, none deduplicated across
+a browser refresh — and that Huawei's own documented per-account daily quota for the 5-minute
+interface is plausibly already exceeded by the unchanged 5-minute scheduler alone (§8.9's own
+reasoning for choosing 5 minutes did not weigh this quota, since it wasn't yet known at the time).
+Correlated against real production evidence: the same day this investigation began, a burst of
+manual Active Power Control experiments (Zero Export / No Limit × Plant DN / Smart Dongle DN) landed
+on the same Huawei account/token as the scheduler and Dashboard/Market traffic, coinciding with
+observed `failCode 407` (Huawei's documented "access frequency exceeded" code) and an intermittently
+disappearing System Overview card.
+
+### 9.2 What changed
+
+Huawei is now a synchronization-only backend for Dashboard/Market — see ADR-011 for the full
+decision. In one sentence: `Huawei -> lib/fusionsolar/telemetry-sync-service.ts -> Postgres ->
+Dashboard/Market`, never `Huawei -> UI` directly.
+
+### 9.3 Production verification
+
+Run directly against the real database (`getDashboardPageData`, no `FUSIONSOLAR_GATEWAY_*`
+configured locally — the standing local-dev condition this investigation already relied on
+repeatedly):
+
+- **First call** (connection's telemetry stale): the sync service attempted a real sync, every
+  Huawei-calling step failed with `FusionSolar gateway environment variables are not configured`
+  (expected — no local gateway credentials), each failure was caught and logged by the *existing*
+  `importDeviceTelemetry`/`importPlantDailyKpi` per-item error handling (unchanged, reused) rather
+  than thrown, and the page still rendered complete, real, non-fabricated data
+  (`producedTodayKwh: 480.04`, `energyFlow.pvKw: 109.83`, `inverters.available: true`, etc.) straight
+  from `DeviceTelemetry`/`PlantDailyKpi`.
+- **Second call, immediately after**: zero sync attempt logged at all — `telemetryLastSyncedAt`
+  from the first call was still within `FUSIONSOLAR_SYNC_FRESHNESS_MS`, so the freshness gate
+  short-circuited before any Huawei-calling code ran, and the page rendered identical real values.
+- **Lease state after both calls**: `telemetrySyncStatus: "IDLE"` — the lease was correctly released
+  in both cases (the `finally` block), never left stuck.
+
+This is the primary acceptance criterion, proven directly rather than only reasoned about: Dashboard
+renders correctly from the database even when Huawei is completely unreachable, provided the
+required telemetry already exists in Postgres.
+
+### 9.4 What was deliberately not done this milestone
+
+- **Scheduler cadence unchanged** — still every 5 minutes (`voltessa-telemetry-ingestion.timer`,
+  ADR-008). Reducing it is an explicitly separate, later milestone; `FUSIONSOLAR_SYNC_FRESHNESS_MS`
+  is the one constant that milestone will raise.
+- **Configured Export Mode persistence** — deferred; no new table/columns added for it. Dashboard/
+  Market render the same "unavailable" state this field already showed in production (`failCode
+  20609`, throughout the whole Active Power Control investigation) — zero regression, since live and
+  cached both resolved to "unavailable" for the one real plant regardless.
+- **The `bootstrap-device-telemetry` route's `?days=N` one-time-backfill parameter** was not carried
+  forward into the new per-connection sync service — a future large historical backfill needs a
+  dedicated one-off script.
+- **Manual Huawei Control and engineering diagnostics** — untouched. Control dispatch
+  (`huawei-control-service.ts`) and diagnostics (`app/api/diag/*`, `scripts/diagnostics/
+  huawei-control.ts`) are not wired to the sync gate in either direction, per this milestone's
+  explicit constraint (control commands and synchronization are separate concerns).

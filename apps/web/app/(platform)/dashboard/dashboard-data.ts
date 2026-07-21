@@ -52,17 +52,32 @@
  * `page.tsx` reads it from the `?date=` query param and passes it straight
  * through to those two functions unchanged, so any day they already
  * support (they needed no changes at all) is now viewable on Dashboard too.
- * Category A fields (real-time inverter status, the System Overview
- * diagram, the chart's NOW marker) are only ever fetched/shown for `today`
- * — a live Huawei read has no meaning for a day that already happened —
- * exactly the same convention `production-data.ts` already established for
- * its own Category A fields.
+ * Category A fields (inverter status, the System Overview diagram, the
+ * chart's NOW marker) are only ever fetched/shown for `today` — "current
+ * state" has no meaning for a day that already happened — exactly the
+ * same convention `production-data.ts` already established for its own
+ * Category A fields.
+ *
+ * ## Database-First Telemetry Architecture milestone
+ *
+ * This module never imports `lib/fusionsolar/telemetry-sync-service.ts`
+ * or any live Huawei-calling function. Inverter status now comes from
+ * `DeviceTelemetry`'s newest row per inverter device (via
+ * `lib/telemetry/queries.ts`, which transparently ensures the connection
+ * is synchronized before returning) instead of a live `getDevRealKpi`
+ * call — the same `classifyInverterState` enumeration
+ * (`get-plant-inverter-status.ts`, exported and reused, not duplicated)
+ * decodes the stored `inverterState` value exactly as it decoded the live
+ * one. `energyFlow`/`currentProduction`/`currentExport`/`currentImport`
+ * were already sourced from `production-data.ts`, which underwent the
+ * same migration — see that module's doc comment.
  */
 
 import type { ExportThresholdConfig } from "@/lib/automation/export-threshold-config";
 import { isExportRecommended } from "@/lib/automation/export-threshold-config";
 import {
-  getPlantInverterStatuses,
+  classifyInverterState,
+  type InverterStatus,
   type InverterStatusResult,
 } from "@/lib/fusionsolar/get-plant-inverter-status";
 import type { MarketEventLogEntry, MarketSummaryData } from "@/app/(platform)/market/market-data";
@@ -75,6 +90,7 @@ import {
   sumSettlementEnergy,
   type PlantTelemetrySeriesPoint,
 } from "@/lib/telemetry/energy-metrics";
+import { getLatestInverterTelemetry } from "@/lib/telemetry/queries";
 import { getPlantDailyKpi } from "@/lib/telemetry/plant-daily-kpi";
 
 import { getMarketPageData } from "@/app/(platform)/market/market-data";
@@ -324,31 +340,25 @@ export async function getDashboardPageData(
   // `selectedDateParam` through (instead of always `undefined`) is what
   // makes Dashboard capable of showing any day Market/Production already
   // support — neither function needed a single change.
-  const [marketData, production, chartSeriesRaw, dailyKpi, connection] = await Promise.all([
-    getMarketPageData({ selectedDateParam, automationSettings }),
-    getProductionPageData(organizationId, selectedDateParam),
-    getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
-    getPlantDailyKpi(plant.id, dayStart),
-    // Category A (live Huawei reads: inverter status) only ever describes
-    // "right now" — same convention `production-data.ts` already uses for
-    // its own Category A fields, so a historical day never shows a live
-    // connection's current state.
-    isToday
-      ? prisma.fusionSolarConnection.findUnique({
-          where: {
-            organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" },
-          },
-          select: {
-            id: true,
-            accessToken: true,
-            refreshToken: true,
-            tokenType: true,
-            scope: true,
-            expiresAt: true,
-          },
-        })
-      : Promise.resolve(null),
-  ]);
+  const [marketData, production, chartSeriesRaw, dailyKpi, inverterDevices] =
+    await Promise.all([
+      getMarketPageData({ selectedDateParam, automationSettings }),
+      getProductionPageData(organizationId, selectedDateParam),
+      getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
+      getPlantDailyKpi(plant.id, dayStart),
+      // Category A (inverter status) only ever describes "right now" —
+      // same convention `production-data.ts` already uses for its own
+      // Category A fields, so a historical day never shows current state.
+      // No FusionSolarConnection lookup needed here at all —
+      // `getLatestInverterTelemetry` transparently ensures the connection
+      // is synchronized before returning.
+      isToday
+        ? prisma.device.findMany({
+            where: { plantId: plant.id, devTypeId: 1 },
+            select: { id: true, devName: true },
+          })
+        : Promise.resolve([]),
+    ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
     ? computeExportRevenue(marketData.series, production.settlementEnergySeries)
@@ -381,24 +391,39 @@ export async function getDashboardPageData(
   const chartSeries = buildFullDayChartSeries(dayStart, dayEnd, chartSeriesRaw);
   const nowAnnotation = buildNowAnnotation(energyFlow);
 
-// A live Huawei read has no meaning for a day that already happened
-  // (`connection` is deliberately `null` whenever `!isToday`, see above) —
-  // `"historical_day"` (added to `InverterStatusResult` for exactly this,
-  // Dashboard UI final polish milestone) lets `InvertersCard` show
-  // accurate wording instead of misreporting "no inverter devices
-  // configured" for a historical view.
+// "Current state" has no meaning for a day that already happened
+  // (`inverterDevices` is deliberately `[]` whenever `!isToday`, see
+  // above) — `"historical_day"` (added to `InverterStatusResult` for
+  // exactly this, Dashboard UI final polish milestone) lets
+  // `InvertersCard` show accurate wording instead of misreporting "no
+  // inverter devices configured" for a historical view.
   let inverters: InverterStatusResult = {
     available: false,
     reason: isToday ? "no_inverter_devices" : "historical_day",
   };
 
-  if (connection) {
-    const inverterDevices = await prisma.device.findMany({
-      where: { plantId: plant.id, devTypeId: 1 },
-      select: { id: true, devName: true, huaweiDeviceId: true },
+  if (isToday && inverterDevices.length > 0) {
+    const telemetryRows = await getLatestInverterTelemetry(plant.id);
+    const telemetryByDeviceId = new Map(
+      telemetryRows.map((row) => [row.deviceId, row] as const),
+    );
+
+    const statuses: InverterStatus[] = inverterDevices.map((device) => {
+      const row = telemetryByDeviceId.get(device.id);
+      const rawState = row?.inverterState ?? null;
+      const classification = classifyInverterState(rawState);
+
+      return {
+        deviceId: device.id,
+        name: device.devName,
+        online: classification.online,
+        powerKw: row?.activePower ? row.activePower.toNumber() : null,
+        statusColor: classification.color,
+        statusLabel: classification.label,
+      };
     });
 
-    inverters = await getPlantInverterStatuses(connection, inverterDevices);
+    inverters = { available: true, inverters: statuses };
   }
 
   const currentPrice = marketData.dataAvailable ? marketData.summary.currentPrice : null;

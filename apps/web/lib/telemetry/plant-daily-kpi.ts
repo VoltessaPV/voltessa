@@ -1,13 +1,18 @@
+import { ensurePlantTelemetryFresh } from "@/lib/telemetry/queries";
 import { prisma } from "@/lib/prisma";
 
 /**
  * The one place Dashboard, Market, Automation, and Reporting read Produced
  * Today / Consumed Today from (Telemetry Architecture Finalization
- * milestone, ADR-010). Reads only `PlantDailyKpi` — the table the Scaleway
- * ingestion pipeline (`bootstrap-device-telemetry.ts` ->
- * `import-plant-daily-kpi.ts`) writes Huawei's own daily counters into every
- * cycle. Never calls FusionSolar directly; the presentation layer must not
- * either (see CLAUDE.md / this milestone's architecture requirement).
+ * milestone, ADR-010). Reads only `PlantDailyKpi` — the table the
+ * synchronization pipeline (`lib/fusionsolar/telemetry-sync-service.ts` ->
+ * `import-plant-daily-kpi.ts`) writes Huawei's own daily counters into.
+ * Never calls FusionSolar directly; the presentation layer must not either
+ * (see CLAUDE.md / this milestone's architecture requirement).
+ *
+ * Database-First Telemetry Architecture milestone: calls
+ * `ensurePlantTelemetryFresh` first, same as every other function in the
+ * telemetry repository layer — synchronization stays invisible to callers.
  *
  * Returns `available: false` — never a fabricated `0` — when no row exists
  * yet for `localDate` (e.g. the first ingestion cycle after local midnight
@@ -44,6 +49,8 @@ export async function getPlantDailyKpi(
   plantId: string,
   localDate: Date,
 ): Promise<PlantDailyKpiResult> {
+  await ensurePlantTelemetryFresh(plantId);
+
   const row = await prisma.plantDailyKpi.findUnique({
     where: { plantId_localDate: { plantId, localDate } },
     select: { pvYieldKwh: true, consumptionKwh: true, rawPayload: true },

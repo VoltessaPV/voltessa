@@ -83,7 +83,13 @@ function inverterKw(raw: number | null | undefined): number | null {
  * curves, terminal test, AFCI self-check, etc., or a genuinely unrecognized
  * code) falls into a neutral "Other" gray bucket rather than guessing.
  */
-function classifyInverterState(rawValue: number | null): {
+/**
+ * Exported (Database-First Telemetry Architecture milestone) so
+ * `dashboard-data.ts` can build the same classification from
+ * `DeviceTelemetry.inverterState` instead of a live `getDevRealKpi` call —
+ * same documented enumeration either way, no new meaning invented.
+ */
+export function classifyInverterState(rawValue: number | null): {
   color: InverterStatusColor;
   label: string;
   online: boolean;

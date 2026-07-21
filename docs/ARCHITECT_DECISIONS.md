@@ -582,3 +582,115 @@ Voltessa's own market-rate revenue model regardless.
 - A second vendor's daily-KPI ingestion would add its own `import-<vendor>-daily-kpi.ts` writing
   into the same `PlantDailyKpi` shape (already vendor-labeled via `source`), not a parallel table —
   consistent with this codebase's vendor-abstraction principle.
+
+## ADR-011: Huawei becomes a synchronization-only backend — Dashboard/Market render exclusively from Postgres
+
+### Status
+
+Accepted (Database-First Telemetry Architecture milestone).
+
+### Context
+
+An investigation spanning several sessions (request-inventory, render-graph tracing, Huawei
+rate-limit research, and an architectural redesign pass) established, with direct evidence:
+
+- Dashboard and Market issued 4 and 3 live Huawei calls per page render respectively
+  (`getPlantCurrentPowerStatus`'s two `getDevRealKpi` calls, `getPlantInverterStatuses`'s duplicate
+  `getDevRealKpi` call, and `getPlantConfiguredExportControlMode`), none cached, none deduplicated —
+  every browser refresh repeated all of them, with no framework-level protection (Next.js's
+  automatic fetch memoization is documented to apply only to `GET` requests; the FusionSolar gateway
+  client uses `POST`).
+- Huawei's own documented per-account daily quota for the 5-minute interface (approximately
+  `Roundup(devices/10) + 24`, sourced from search-summarized Huawei documentation — this
+  environment's `WebFetch` still cannot retrieve `support.huawei.com`/`.cn` pages directly, the same
+  systemic limitation recorded in `docs/research/fusionsolar-active-power-control.md`) is
+  plausibly already exceeded by the unchanged 5-minute scheduler alone, before any interactive
+  traffic.
+- `getDevFiveMinutes` returns every already-elapsed 5-minute sample for the *entire calendar day* of
+  the requested `collectTime` anchor, not an incremental "since last call" feed; `getStationRealKpi`
+  returns cumulative day/lifetime counters. Neither endpoint's completeness depends on polling
+  frequency — confirmed both from documented request semantics and from production data (a single
+  bootstrap call returning 1378 samples across two anchors).
+- No value rendered on Dashboard or Market is fundamentally impossible to persist. Every live
+  read has (or can have) a `DeviceTelemetry`/`PlantDailyKpi` equivalent, with one exception
+  (Configured Export Mode — no persisted equivalent exists yet, deferred below).
+- `FusionSolarConnection` — not `Plant` or `Organization` — is the correct synchronization
+  coordination boundary: the OAuth token and Huawei's own per-account rate limit are both scoped to
+  the connection (`@@unique([organizationId, provider])`), and one connection already covers every
+  plant beneath it in a single pass.
+
+### Decision
+
+- **Huawei is a synchronization-only backend for Dashboard/Market.** Neither page, nor their data
+  orchestration modules (`dashboard-data.ts`, `production-data.ts`), nor the telemetry repository
+  layer they call (`lib/telemetry/queries.ts`, `lib/telemetry/plant-daily-kpi.ts`) ever import a
+  live-Huawei-calling function. Rendering is exclusively from Postgres.
+- **`lib/fusionsolar/telemetry-sync-service.ts` is the single, exclusive synchronization entry
+  point for the entire application** — modeled directly on `getValidFusionSolarAccessToken()`.
+  Nothing else calls `importDeviceTelemetry`/`importPlantDailyKpi` directly. It alone decides:
+  whether a sync is needed (freshness, against the single shared `FUSIONSOLAR_SYNC_FRESHNESS_MS`
+  constant), force vs. normal, whether one is already running (a lease claimed via a single atomic
+  conditional `UPDATE` on `FusionSolarConnection` — correct under Vercel's stateless/multi-instance
+  model, unlike an in-memory lock), logging, and Huawei/network error containment (a sync failure is
+  caught and logged, never rethrown — the primary acceptance criterion this milestone was built
+  against: Dashboard/Market must keep rendering from the database even when Huawei is temporarily
+  unavailable).
+- **Synchronization is invisible to the presentation layer.** The sync trigger lives inside the
+  telemetry repository (`ensurePlantTelemetryFresh`, called by every exported read function in
+  `lib/telemetry/queries.ts`/`plant-daily-kpi.ts`), not in `dashboard-data.ts`/`production-data.ts` —
+  those files only ever ask "give me telemetry."
+- **If another request already holds the lease for a connection, the caller does not poll or wait**
+  — it returns immediately and renders whatever is currently in the database. The in-flight sync's
+  own completion is what the *next* request sees.
+- **The scheduler is not special-cased.** `app/api/internal/fusionsolar/bootstrap-device-telemetry/
+  route.ts` (URL unchanged — an external Scaleway systemd timer contract, ADR-008) now enumerates
+  every connection and calls the same service, without `force`, exactly like a page render. `force:
+  true` is reserved exclusively for the explicit Refresh action (`app/(platform)/dashboard/
+  actions.ts`'s `refreshFusionSolarTelemetry`) and deliberately-invoked engineering diagnostics.
+- **Scheduler cadence is deliberately unchanged this milestone** (`OnCalendar=*:0/5`, still every 5
+  minutes) — reducing it is an explicitly separate, later milestone. `FUSIONSOLAR_SYNC_FRESHNESS_MS`
+  (4 minutes) is chosen so the unchanged cadence still performs a real sync on effectively every
+  tick in practice; raising this one constant later is the entire mechanism for that future
+  reduction.
+- **Configured Export Mode persistence is explicitly deferred.** It has no `DeviceTelemetry`/
+  `PlantDailyKpi` equivalent; rather than add a new persistence model for it in this milestone (out
+  of scope per this milestone's own constraints), Dashboard/Market render the same explicit
+  "unavailable" state this field already showed in production throughout the whole Active Power
+  Control investigation (`failCode 20609`) — a zero-regression simplification, not a feature
+  removal.
+- **`lib/fusionsolar/bootstrap-device-telemetry.ts` is retired** as a standalone, externally
+  importable module; its per-connection logic (looping a connection's plants, calling
+  `importDeviceTelemetry`/`importPlantDailyKpi`) moved unchanged into
+  `telemetry-sync-service.ts` as a private implementation detail.
+
+### Consequences
+
+- A single Dashboard or Market render (and any number of subsequent browser refreshes) generates
+  **zero** Huawei API requests whenever the connection's telemetry is already fresh — verified
+  directly: a real `getDashboardPageData` call against production data, run twice in immediate
+  succession with no `FUSIONSOLAR_GATEWAY_*` credentials configured (this environment's standing
+  local-dev condition), rendered identical real KPI/energy-flow/inverter values both times, with the
+  second call issuing no sync attempt at all (`telemetrySyncStatus`/`telemetryLastSyncedAt`
+  unchanged).
+- Dashboard's previously-proven duplicate `getDevRealKpi(devTypeId=1)` call (once via
+  `getPlantCurrentPowerStatus`, once via `getPlantInverterStatuses`) is eliminated as a direct
+  consequence — both now read the same `DeviceTelemetry` rows.
+- `get-plant-power-status.ts`, `get-plant-inverter-status.ts`, `get-export-control-status.ts`, and
+  `get-active-power-control-mode.ts` are no longer called by Dashboard/Market — left in place, not
+  deleted (consistent with this codebase's existing "diagnostics preservation" precedent in
+  `docs/research/fusionsolar-active-power-control.md` §10/§11), since they remain the single source
+  of truth the sync pipeline itself calls, and `get-plant-inverter-status.ts`'s
+  `classifyInverterState` is now exported and reused by `dashboard-data.ts` rather than duplicated.
+- The `bootstrap-device-telemetry` route's response shape changed (per-connection
+  `SynchronizeFusionSolarConnectionResult` entries instead of one aggregated
+  `DeviceTelemetryBootstrapResult`) — the operator runbook's debugging checklist
+  (`docs/infrastructure/scaleway-production.md`) has been updated to match.
+- The route's former `?days=N` one-time-backfill parameter is not carried forward — a future
+  large historical backfill would need a dedicated one-off script, not this route. Flagged here as a
+  deliberate scope reduction, not an oversight.
+- Manual Huawei Control (`huawei-control-service.ts`, `export-control.ts`) and engineering
+  diagnostics (`app/api/diag/*`, `scripts/diagnostics/huawei-control.ts`) are untouched — per this
+  milestone's explicit constraint, control dispatch and diagnostics are not wired to the sync gate in
+  either direction.
+- Reducing the Scaleway timer's actual `OnCalendar` cadence remains a separate, later milestone —
+  this ADR's scope is the application-side architecture only.

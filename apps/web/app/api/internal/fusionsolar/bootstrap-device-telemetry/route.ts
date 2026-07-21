@@ -2,36 +2,35 @@ import crypto from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { bootstrapDeviceTelemetry } from "@/lib/fusionsolar/bootstrap-device-telemetry";
+import { prisma } from "@/lib/prisma";
+import {
+  synchronizeFusionSolarConnection,
+  type SynchronizeFusionSolarConnectionResult,
+} from "@/lib/fusionsolar/telemetry-sync-service";
 
 /**
- * Manual/externally-triggered ingestion of the DeviceTelemetry table
- * (today + yesterday by default) for every organization with a FusionSolar
- * connection. Bearer-token gated (`CRON_SECRET`), same convention as
- * `ingest-plant-telemetry`. Idempotent: `bootstrapDeviceTelemetry` ->
- * `importDeviceTelemetry` writes via `createMany({ skipDuplicates: true })`,
- * so calling this any number of times never duplicates a row.
+ * The Scaleway systemd timer's HTTP entry point (`voltessa-telemetry-
+ * ingestion.timer`, `OnCalendar=*:0/5`, ADR-008/ADR-009). URL unchanged —
+ * this is an externally-configured contract the VM's timer/service files
+ * depend on. Bearer-token gated (`CRON_SECRET`), same convention as
+ * `ingest-plant-telemetry`.
  *
- * Accepts an optional `?days=N` query parameter (complete local
- * Europe/Sofia calendar days to backfill, plus today) — added for the
- * Historical Backfill + Timeline Alignment milestone, which needed a
- * one-time 7-day-plus-today backfill without changing the default
- * "yesterday + today" shape any other caller relies on.
+ * Database-First Telemetry Architecture milestone: this route no longer
+ * synchronizes anything itself. It enumerates every `FusionSolarConnection`
+ * and delegates to `synchronizeFusionSolarConnection` — the single
+ * synchronization entry point the whole application shares (see
+ * `lib/fusionsolar/telemetry-sync-service.ts`). Deliberately called
+ * *without* `force`: the scheduler is not special-cased — it goes through
+ * the identical freshness gate as a Dashboard/Market render or the manual
+ * Refresh action. `FUSIONSOLAR_SYNC_FRESHNESS_MS` is chosen so the
+ * unchanged 5-minute cron still performs a real sync on effectively every
+ * tick this milestone; only that one shared constant governs how often
+ * Huawei is actually contacted, from any caller.
  *
- * NOT wired to Vercel's native `crons` config. Confirmed (not assumed) via
- * a real deployment attempt in the Telemetry Reliability & Market Chart
- * Completion milestone: adding a `crons` entry to `vercel.json` for this
- * route made the production deployment fail outright — the failure
- * shortlink Vercel attached to the failed GitHub status pointed directly
- * at `vercel.com/docs/cron-jobs/usage-and-pricing`, confirming a plan-tier
- * cron restriction, the same cause a prior identical attempt (commit
- * `6643255`, reverted as `853893d`) almost certainly hit. Continuous
- * ingestion therefore requires either upgrading the Vercel plan or an
- * external scheduler (e.g. a GitHub Actions cron workflow calling this
- * route with the real `CRON_SECRET` as a repository secret) — both are
- * manual account/cloud-configuration steps outside what this codebase
- * alone can decide or perform. See
- * docs/research/telemetry-consumer-migration.md for the full writeup.
+ * NOT wired to Vercel's native `crons` config — confirmed blocked on this
+ * plan tier (see `docs/research/telemetry-consumer-migration.md` §11 and
+ * `docs/research/telemetry-platform-foundation.md` §8 for the full
+ * history); this Scaleway-hosted timer is the one production scheduler.
  */
 
 export const runtime = "nodejs";
@@ -66,10 +65,15 @@ function isAuthorized(request: Request): boolean {
   return secretsMatch(providedSecret, cronSecret);
 }
 
+type ConnectionSyncSummary = {
+  connectionId: string;
+  organizationId: string;
+} & SynchronizeFusionSolarConnectionResult;
+
 async function handleBootstrap(request: Request) {
   if (!process.env.CRON_SECRET) {
     console.error(
-      "[FusionSolar Device Telemetry Bootstrap] CRON_SECRET is not configured",
+      "[FusionSolar Telemetry Sync] CRON_SECRET is not configured",
     );
 
     return NextResponse.json(
@@ -84,41 +88,44 @@ async function handleBootstrap(request: Request) {
 
   const startedAt = new Date();
 
-  console.log("[FusionSolar Device Telemetry Bootstrap] Starting scheduled execution", {
+  console.log("[FusionSolar Telemetry Sync] Starting scheduled execution", {
     startedAt: startedAt.toISOString(),
   });
 
   try {
-    const daysParam = new URL(request.url).searchParams.get("days");
-    const daysBack =
-      daysParam !== null && Number.isFinite(Number(daysParam)) && Number(daysParam) > 0
-        ? Number(daysParam)
-        : undefined;
+    const connections = await prisma.fusionSolarConnection.findMany({
+      where: { provider: "HuaweiFusionSolar" },
+      select: { id: true, organizationId: true },
+    });
 
-    const result = await bootstrapDeviceTelemetry(daysBack);
+    const results: ConnectionSyncSummary[] = [];
 
-    console.log("[FusionSolar Device Telemetry Bootstrap] Completed", {
+    for (const connection of connections) {
+      const result = await synchronizeFusionSolarConnection(connection.id);
+
+      results.push({
+        connectionId: connection.id,
+        organizationId: connection.organizationId,
+        ...result,
+      });
+    }
+
+    const failures = results.filter((result) => result.status === "failed");
+
+    console.log("[FusionSolar Telemetry Sync] Completed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
-      organizationsProcessed: result.organizationsProcessed,
-      organizationsSucceeded: result.organizationsSucceeded,
-      organizationsFailed: result.organizationsFailed,
-      plantsProcessed: result.plantsProcessed,
-      samplesFetched: result.samplesFetched,
-      samplesInserted: result.samplesInserted,
-      duplicatesSkipped: result.duplicatesSkipped,
-      unmatchedSamples: result.unmatchedSamples,
-      dailyKpisUpserted: result.dailyKpisUpserted,
-      dailyKpiErrors: result.dailyKpiErrors,
-      failures: result.failures,
+      connectionsProcessed: results.length,
+      results,
     });
 
     return NextResponse.json({
-      ok: result.organizationsFailed === 0,
-      ...result,
+      ok: failures.length === 0,
+      connectionsProcessed: results.length,
+      results,
     });
   } catch (error) {
-    console.error("[FusionSolar Device Telemetry Bootstrap] Failed", {
+    console.error("[FusionSolar Telemetry Sync] Failed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
       error,
@@ -127,7 +134,7 @@ async function handleBootstrap(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: "fusionsolar_device_telemetry_bootstrap_failed",
+        error: "fusionsolar_telemetry_sync_failed",
         reason: error instanceof Error ? error.message : "unknown_error",
       },
       { status: 500 },

@@ -5,6 +5,7 @@ import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { LiveEnergyChart } from "@/components/dashboard/LiveEnergyChart";
+import { RefreshButton } from "@/components/dashboard/RefreshButton";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
@@ -128,13 +129,19 @@ export default async function DashboardPage({
 
   return (
     <div className="mr-auto max-w-7xl space-y-3">
-      <MarketToolbar
-        basePath="/dashboard"
-        selectedDate={data.selectedDate}
-        prevDateParam={data.prevDateParam}
-        nextDateParam={data.nextDateParam}
-        isToday={data.isToday}
-      />
+      <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
+        <div className="min-w-0 flex-1">
+          <MarketToolbar
+            basePath="/dashboard"
+            selectedDate={data.selectedDate}
+            prevDateParam={data.prevDateParam}
+            nextDateParam={data.nextDateParam}
+            isToday={data.isToday}
+          />
+        </div>
+
+        <RefreshButton />
+      </div>
 
       {!data.plantAvailable ? (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">

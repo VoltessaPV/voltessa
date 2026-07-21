@@ -5,20 +5,25 @@
  * Market Price Provider and the telemetry/FusionSolar integration
  * decoupled, per this milestone's architecture requirement.
  *
- * Per the Telemetry Consumer Migration milestone (see ADR-007,
- * docs/research/telemetry-platform-foundation.md), reads are split into
- * two explicit categories:
+ * Database-First Telemetry Architecture milestone: this module no longer
+ * calls Huawei at all, directly or indirectly — it never imports
+ * `lib/fusionsolar/telemetry-sync-service.ts` either. `currentProduction`/
+ * `currentExport`/`currentImport` now come from `DeviceTelemetry`'s newest
+ * row per device (via `lib/telemetry/queries.ts`, which transparently
+ * ensures the connection is synchronized before returning — this module
+ * simply asks for telemetry). Only ever computed for `isToday`, matching
+ * this page's existing convention: "current" has no meaning for a browsed
+ * historical day, independent of where the data comes from.
  *
- * - **Category A — real-time operational state, still live Huawei reads**:
- *   `currentProduction`/`currentExport`/`currentImport`
- *   (`get-plant-power-status.ts`) and `configuredExportMode`
- *   (`get-export-control-status.ts`). These describe "right now" and have
- *   no historical equivalent to fall back to — kept exactly as built for
- *   earlier milestones, no new direct API calls introduced here.
- * - **Category B — historical/trend data, now DeviceTelemetry-only**:
- *   `settlementEnergySeries` comes from `lib/telemetry/energy-metrics.ts`,
- *   which only reads `DeviceTelemetry` — no Huawei call, no FusionSolar
- *   connection needed.
+ * `configuredExportMode` has no persisted equivalent yet (deferred to a
+ * later milestone) — it always renders the same explicit "unavailable"
+ * state already shown in production today (the underlying endpoint has
+ * stood at `failCode 20609` for this plant throughout the whole
+ * investigation, see `docs/research/fusionsolar-active-power-control.md`),
+ * so this is a zero-regression simplification, not a feature removal.
+ *
+ * `settlementEnergySeries` (`lib/telemetry/energy-metrics.ts`) remains
+ * `DeviceTelemetry`-only, as it already was.
  *
  * Final Market UX Completion milestone: this module used to also expose
  * `todaysProduction`/`peakExportToday`/`exportedEnergyToday` and a
@@ -57,10 +62,8 @@
 
 import {
   describeConfiguredExportMode,
-  getPlantConfiguredExportControlMode,
   type ConfiguredExportControlMode,
 } from "@/lib/fusionsolar/get-export-control-status";
-import { getPlantCurrentPowerStatus } from "@/lib/fusionsolar/get-plant-power-status";
 import {
   formatDateInZone,
   localDayBoundsUtc,
@@ -70,7 +73,11 @@ import {
   getPlantSettlementEnergySeries,
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
-import { getLatestTelemetry } from "@/lib/telemetry/queries";
+import {
+  getLatestInverterTelemetry,
+  getLatestMeterTelemetry,
+  getLatestTelemetry,
+} from "@/lib/telemetry/queries";
 
 /** Same Sofia local-day convention `market-data.ts` uses for the Market page's displayed day — duplicated intentionally, see this module's doc comment. */
 const BULGARIA_TIMEZONE = "Europe/Sofia";
@@ -129,15 +136,59 @@ export type ProductionPageData = {
   latestTelemetryAt: Date | null;
 };
 
-const UNAVAILABLE_NO_CONNECTION: ProductionReading = {
+const UNAVAILABLE_NO_TELEMETRY: ProductionReading = {
   available: false,
-  reason: "no_fusionsolar_connection",
+  reason: "no_telemetry",
 };
 
+/**
+ * Configured Export Mode has no persisted equivalent yet (Database-First
+ * Telemetry Architecture milestone — deferred to a later milestone). This
+ * is a static fallback, not a degraded-path value: it always renders,
+ * matching this endpoint's own already-standing production behavior
+ * (`failCode 20609`, confirmed throughout the whole Active Power Control
+ * investigation).
+ */
 const UNAVAILABLE_NO_CONNECTION_MODE: ConfiguredExportControlMode = {
   available: false,
   reason: "configuration_endpoint_failed",
 };
+
+/** Sum of every inverter's newest `activePower` sample — mirrors the former live `getInverterProductionKw`'s shape, sourced from `DeviceTelemetry` instead. */
+function sumInverterProduction(
+  rows: Array<{ activePower: { toNumber(): number } | null }>,
+): ProductionReading {
+  const readings = rows
+    .map((row) => (row.activePower !== null ? row.activePower.toNumber() : null))
+    .filter((kw): kw is number => kw !== null);
+
+  if (readings.length === 0) {
+    return UNAVAILABLE_NO_TELEMETRY;
+  }
+
+  const totalKw = Math.round(readings.reduce((sum, kw) => sum + kw, 0) * 100) / 100;
+
+  return { available: true, kw: totalKw };
+}
+
+/** Signed meter reading -> export/import pair — mirrors the former live `getMeterGridPowerKw`'s sign convention (negative = importing, positive = exporting), sourced from `DeviceTelemetry` instead. */
+function deriveGridReadings(
+  row: { meterActivePower: { toNumber(): number } | null } | null,
+): { currentExport: ProductionReading; currentImport: ProductionReading } {
+  if (!row || row.meterActivePower === null) {
+    return {
+      currentExport: UNAVAILABLE_NO_TELEMETRY,
+      currentImport: UNAVAILABLE_NO_TELEMETRY,
+    };
+  }
+
+  const kw = row.meterActivePower.toNumber();
+
+  return {
+    currentExport: kw > 0 ? { available: true, kw } : { available: true, kw: 0 },
+    currentImport: kw < 0 ? { available: true, kw: Math.abs(kw) } : { available: true, kw: 0 },
+  };
+}
 
 export async function getProductionPageData(
   organizationId: string,
@@ -192,35 +243,18 @@ export async function getProductionPageData(
     latestTelemetryAt = latestTelemetryRow?.timestamp ?? null;
   }
 
-  // Category A — real-time operational state, still a live Huawei read.
-  // Needs a connection and a plantCode; degrades to an explicit
-  // "unavailable" state rather than ever falling back to telemetry (a
-  // stale 5-minute-old sample is not "current state"). Only ever fetched
-  // for today — a past day has no "current" reading to show.
-  const connection = isToday
-    ? await prisma.fusionSolarConnection.findUnique({
-        where: {
-          organizationId_provider: {
-            organizationId,
-            provider: "HuaweiFusionSolar",
-          },
-        },
-        select: {
-          id: true,
-          accessToken: true,
-          refreshToken: true,
-          tokenType: true,
-          scope: true,
-          expiresAt: true,
-        },
-      })
-    : null;
-
-  if (!connection || !plant || !plant.plantCode) {
+  // Category A — "current" state, database-only (Database-First Telemetry
+  // Architecture milestone). No live Huawei call, no FusionSolarConnection
+  // lookup here at all — `getLatestInverterTelemetry`/`getLatestMeterTelemetry`
+  // transparently ensure the connection is synchronized before returning.
+  // Only ever computed for `isToday` — "current production" has no
+  // meaning while browsing a historical day, independent of where the
+  // value comes from.
+  if (!plant || !isToday) {
     return {
-      currentProduction: UNAVAILABLE_NO_CONNECTION,
-      currentExport: UNAVAILABLE_NO_CONNECTION,
-      currentImport: UNAVAILABLE_NO_CONNECTION,
+      currentProduction: UNAVAILABLE_NO_TELEMETRY,
+      currentExport: UNAVAILABLE_NO_TELEMETRY,
+      currentImport: UNAVAILABLE_NO_TELEMETRY,
       configuredExportMode: UNAVAILABLE_NO_CONNECTION_MODE,
       configuredExportModeLabel: describeConfiguredExportMode(
         UNAVAILABLE_NO_CONNECTION_MODE,
@@ -231,55 +265,22 @@ export async function getProductionPageData(
     };
   }
 
-  const [inverters, meters] = await Promise.all([
-    prisma.device.findMany({
-      where: { plantId: plant.id, devTypeId: 1 },
-      select: { huaweiDeviceId: true },
-    }),
-    prisma.device.findMany({
-      where: { plantId: plant.id, devTypeId: 47 },
-      select: { huaweiDeviceId: true },
-    }),
+  const [inverterRows, meterRow] = await Promise.all([
+    getLatestInverterTelemetry(plant.id),
+    getLatestMeterTelemetry(plant.id),
   ]);
 
-  let powerStatus;
-
-  try {
-    powerStatus = await getPlantCurrentPowerStatus(connection, {
-      inverters,
-      meters,
-    });
-  } catch {
-    // Never let an unexpected FusionSolar error break the page — degrade
-    // to an explicit unavailable state, matching the Dashboard's
-    // established pattern for this exact integration.
-    powerStatus = {
-      currentProduction: {
-        available: false as const,
-        reason: "unexpected_error",
-      },
-      currentExport: { available: false as const, reason: "unexpected_error" },
-      currentImport: { available: false as const, reason: "unexpected_error" },
-    };
-  }
-
-  let configuredExportMode: ConfiguredExportControlMode;
-
-  try {
-    configuredExportMode = await getPlantConfiguredExportControlMode(
-      connection,
-      plant.plantCode,
-    );
-  } catch {
-    configuredExportMode = UNAVAILABLE_NO_CONNECTION_MODE;
-  }
+  const currentProduction = sumInverterProduction(inverterRows);
+  const { currentExport, currentImport } = deriveGridReadings(meterRow);
 
   return {
-    currentProduction: powerStatus.currentProduction,
-    currentExport: powerStatus.currentExport,
-    currentImport: powerStatus.currentImport,
-    configuredExportMode,
-    configuredExportModeLabel: describeConfiguredExportMode(configuredExportMode),
+    currentProduction,
+    currentExport,
+    currentImport,
+    configuredExportMode: UNAVAILABLE_NO_CONNECTION_MODE,
+    configuredExportModeLabel: describeConfiguredExportMode(
+      UNAVAILABLE_NO_CONNECTION_MODE,
+    ),
     settlementEnergySeries,
     installedCapacityKw,
     latestTelemetryAt,
