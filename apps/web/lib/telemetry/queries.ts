@@ -1,4 +1,5 @@
 import type { DeviceTelemetry } from "@prisma/client";
+import { after } from "next/server";
 
 import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
@@ -18,18 +19,33 @@ import { prisma } from "@/lib/prisma";
  * refreshing first." The actual freshness/lease/Huawei decision lives
  * entirely in `lib/fusionsolar/telemetry-sync-service.ts` — this helper
  * only resolves which connection owns a plant and delegates.
+ *
+ * Non-Blocking Synchronization milestone (ADR-012): `ensurePlantTelemetryFresh`
+ * never awaits `synchronizeFusionSolarConnection`. It schedules the sync via
+ * Next.js `after()` — the sync runs once the response has already been sent,
+ * so rendering always proceeds immediately from whatever is currently in
+ * the database. Huawei is a synchronization source only; it can never add
+ * latency to a Dashboard/Market request again, at the cost of `DeviceTelemetry`
+ * possibly being one background-sync-cycle stale when a request happens to
+ * land right as the freshness window expires. The only place allowed to
+ * block on a real sync is the explicit Refresh action
+ * (`app/(platform)/dashboard/actions.ts`), which calls
+ * `synchronizeFusionSolarConnection` directly, and the scheduler's route,
+ * which is not part of the render path at all.
  */
 
 export const INVERTER_DEV_TYPE_ID = 1;
 export const METER_DEV_TYPE_ID = 47;
 
 /**
- * Resolves the plant's `FusionSolarConnection` and asks the sync service
- * whether it needs refreshing — never contacts Huawei itself, never
- * throws (the sync service already contains every failure). A plant with
- * no connection (not yet onboarded, or connection revoked) is a no-op:
- * historical data already in the database should keep rendering either
- * way.
+ * Resolves the plant's `FusionSolarConnection` and schedules a background
+ * sync via `after()` — never awaits it, never contacts Huawei on the
+ * request path itself. `synchronizeFusionSolarConnection` still owns every
+ * decision (freshness, lease, force, error containment) and never throws;
+ * the `.catch` below is pure defense against something unexpected inside
+ * `after`'s callback, not a real error path. A plant with no connection
+ * (not yet onboarded, or connection revoked) is a no-op: historical data
+ * already in the database keeps rendering either way.
  */
 export async function ensurePlantTelemetryFresh(plantId: string): Promise<void> {
   const plant = await prisma.plant.findUnique({
@@ -55,7 +71,16 @@ export async function ensurePlantTelemetryFresh(plantId: string): Promise<void> 
     return;
   }
 
-  await synchronizeFusionSolarConnection(connection.id);
+  const connectionId = connection.id;
+
+  after(() => {
+    synchronizeFusionSolarConnection(connectionId).catch((error: unknown) => {
+      console.error(
+        "[FusionSolar Telemetry Sync] Background sync failed unexpectedly",
+        { connectionId, error },
+      );
+    });
+  });
 }
 
 /** All telemetry rows for a plant within `[start, end)`, ascending by timestamp. */
