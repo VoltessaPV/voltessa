@@ -694,3 +694,52 @@ rate-limit research, and an architectural redesign pass) established, with direc
   either direction.
 - Reducing the Scaleway timer's actual `OnCalendar` cadence remains a separate, later milestone —
   this ADR's scope is the application-side architecture only.
+
+## ADR-012: Synchronization must never block Dashboard/Market rendering
+
+### Status
+
+Accepted (Non-Blocking Synchronization milestone, immediate follow-up to ADR-011).
+
+### Context
+
+ADR-011 made Huawei a synchronization-only backend, but `ensurePlantTelemetryFresh` still *awaited*
+`synchronizeFusionSolarConnection` inline before returning any telemetry — freshness-checking and
+syncing were the same blocking call. Measured directly in production: a genuine page load could
+block on the full sync (4 `getDevFiveMinutes` calls + 1 `getStationRealKpi` call), which itself took
+8,011ms–18,937ms across nine consecutive real attempts, entirely driven by Huawei/gateway response
+time under the ongoing `failCode 407` condition — this fully explained the reported ~14s Dashboard /
+~7.5s Market load times. A controlled test (connection forced stale, both pages measured locally)
+confirmed the atomic lease already limited this to exactly **one** real sync attempt per render
+(1 vs. 1, not 2 vs. 1) — ruling out a duplicate-sync bug as the cause; the sync itself was simply
+still on the request's critical path, by design, at the time.
+
+### Decision
+
+`ensurePlantTelemetryFresh` (`lib/telemetry/queries.ts`) no longer awaits
+`synchronizeFusionSolarConnection`. It resolves the plant's connection (two fast, already-existing
+Prisma reads) and schedules the sync via Next.js's `after()` (`next/server`) — code that runs once
+the response has already been sent to the client, on Vercel via the platform's `waitUntil` primitive.
+Rendering always proceeds immediately with whatever is currently in `DeviceTelemetry`/`PlantDailyKpi`.
+`synchronizeFusionSolarConnection` itself is unchanged — same freshness check, same atomic lease,
+same error containment — only the calling convention changed from "await it" to "schedule it and
+move on."
+
+The explicit Refresh action (`app/(platform)/dashboard/actions.ts`) and the scheduler's route
+(`app/api/internal/fusionsolar/bootstrap-device-telemetry/route.ts`) are unaffected — both still call
+`synchronizeFusionSolarConnection` directly and `await` it, since blocking on a real sync is exactly
+what each is for (an explicit "synchronize now" request; a background job whose entire purpose is
+synchronizing).
+
+### Consequences
+
+- Dashboard/Market rendering is now bounded by ordinary Prisma query time only — Huawei can never
+  add latency to a page render again, only to how stale the displayed data might briefly be.
+- A stale connection may show data up to one background-sync-cycle old for a short period after a
+  request triggers the (now backgrounded) sync — an explicit, accepted trade-off, not a regression:
+  the alternative was blocking every page load on Huawei's own variable response time.
+- `after()` can only be called within an active Next.js request/Server Function context — this
+  is safe here because `ensurePlantTelemetryFresh` is only ever reached through Dashboard/Market's
+  page render or the telemetry repository layer, never from a bare script or non-request context.
+- No other file was touched — the scheduler, Refresh action, and `synchronizeFusionSolarConnection`
+  itself (freshness/lease/error-containment logic) are exactly as ADR-011 left them.

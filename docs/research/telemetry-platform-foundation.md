@@ -356,3 +356,19 @@ required telemetry already exists in Postgres.
   (`huawei-control-service.ts`) and diagnostics (`app/api/diag/*`, `scripts/diagnostics/
   huawei-control.ts`) are not wired to the sync gate in either direction, per this milestone's
   explicit constraint (control commands and synchronization are separate concerns).
+
+### 9.5 Follow-up: Non-Blocking Synchronization (ADR-012)
+
+§9.3's own measurement (a full sync attempt taking real wall-clock time, including every failed
+Huawei call under `failCode 407`) turned out to still be on Dashboard/Market's request path —
+`ensurePlantTelemetryFresh` awaited it inline. Measured directly in production: real page loads
+blocking for as long as the sync itself took (9 consecutive real syncs ranged 8,011ms–18,937ms,
+driven entirely by Huawei/gateway response time). A controlled local test (connection forced stale
+via only its sync-bookkeeping columns, both pages measured) confirmed the atomic lease already
+limited this to exactly one real sync per render — not a duplicate-sync bug, just a sync that was
+still, by design, part of the response.
+
+Fixed by having `ensurePlantTelemetryFresh` schedule the sync via Next.js `after()` instead of
+awaiting it — see ADR-012 for the full decision. Rendering is now bounded by Prisma query time only;
+a stale connection may show data up to one background-sync-cycle old for a short period, which is an
+explicit, accepted trade-off.
