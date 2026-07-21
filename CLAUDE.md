@@ -18,21 +18,32 @@ Automation logic (export stop/resume thresholds) has direct financial consequenc
 Treat `lib/fusionsolar/*` and anything touching export/threshold decisions with care — see
 `docs/AI_PLAYBOOK.md` before changing that code.
 
+**Before touching Huawei, FusionSolar, the gateway proxy, cron jobs, telemetry ingestion, or the
+ENTSO-E scheduler, read `docs/infrastructure/scaleway-production.md` first.** That document is the
+operator runbook for the Scaleway VM these all run on (or, for FusionSolar, run through) — SSH
+access, the gateway's allow-list mechanism (a huge source of confusing failures if skipped: a
+missing allow-list entry produces `api_path_not_allowed`, which is easy to mistake for a Huawei-side
+or OAuth-scope problem if you haven't read that section first), systemd services/timers, and the
+required inspect → explain → backup → modify → restart → verify procedure for any change to that
+VM. Do not guess at VM/gateway behavior or re-derive it from chat history — this file is the source
+of truth and must be kept current when that infrastructure changes.
+
 ## Documentation map
 
-| Doc | Read it when you need to know... |
-|---|---|
-| `CLAUDE.md` (this file) | Architecture, repo layout, commands, high-level conventions |
-| `docs/AI_PLAYBOOK.md` | How an AI agent should behave in this specific repo — guardrails, what not to touch silently |
-| `docs/DEVELOPMENT_WORKFLOW.md` | Local setup, branching, commit conventions, PR/review process, deployment |
-| `docs/CODING_STANDARDS.md` | TypeScript/Prisma/Next.js/NestJS conventions, error handling, formatting |
-| `docs/FEATURE_CHECKLIST.md` | Step-by-step checklist for shipping a feature end-to-end |
-| `docs/TESTING.md` | What is (and isn't) tested today, and how to add tests |
-| `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.md`, `docs/DECISIONS/*` | Original architecture/ADR docs (Bulgarian) |
-| `docs/VISION.md`, `docs/CLIENT_REQUIREMENTS.md`, `docs/ROADMAP.md`, `docs/BACKLOG.md` | Product context, first-customer scope, sprint status |
-| `docs/PROJECT_CONTEXT.md` | Product-level framing — mission, vision, target customers, MVP vs. long-term scope |
-| `docs/ARCHITECT_DECISIONS.md` | ADR log and template, in English, alongside `docs/DECISIONS/*` |
-| `docs/AI_TASK_TEMPLATE.md` | Template to scope any AI implementation task before starting it |
+| Doc                                                                                   | Read it when you need to know...                                                                                                                                                     |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `CLAUDE.md` (this file)                                                               | Architecture, repo layout, commands, high-level conventions                                                                                                                          |
+| `docs/AI_PLAYBOOK.md`                                                                 | How an AI agent should behave in this specific repo — guardrails, what not to touch silently                                                                                         |
+| `docs/infrastructure/scaleway-production.md`                                          | Operator runbook for the Scaleway VM — gateway proxy, allow-list, systemd services/timers, SSH/debugging SOP. Read before any Huawei/FusionSolar/gateway/cron/telemetry/ENTSO-E work |
+| `docs/DEVELOPMENT_WORKFLOW.md`                                                        | Local setup, branching, commit conventions, PR/review process, deployment                                                                                                            |
+| `docs/CODING_STANDARDS.md`                                                            | TypeScript/Prisma/Next.js/NestJS conventions, error handling, formatting                                                                                                             |
+| `docs/FEATURE_CHECKLIST.md`                                                           | Step-by-step checklist for shipping a feature end-to-end                                                                                                                             |
+| `docs/TESTING.md`                                                                     | What is (and isn't) tested today, and how to add tests                                                                                                                               |
+| `docs/ARCHITECTURE.md`, `docs/CONVENTIONS.md`, `docs/DECISIONS/*`                     | Original architecture/ADR docs (Bulgarian)                                                                                                                                           |
+| `docs/VISION.md`, `docs/CLIENT_REQUIREMENTS.md`, `docs/ROADMAP.md`, `docs/BACKLOG.md` | Product context, first-customer scope, sprint status                                                                                                                                 |
+| `docs/PROJECT_CONTEXT.md`                                                             | Product-level framing — mission, vision, target customers, MVP vs. long-term scope                                                                                                   |
+| `docs/ARCHITECT_DECISIONS.md`                                                         | ADR log and template, in English, alongside `docs/DECISIONS/*`                                                                                                                       |
+| `docs/AI_TASK_TEMPLATE.md`                                                            | Template to scope any AI implementation task before starting it                                                                                                                      |
 
 ## Repo layout
 
@@ -158,8 +169,9 @@ a new vendor should not require changing `AutomationService`.
 In `apps/web`, the equivalent integration is vendor-specific today and lives directly under
 `lib/fusionsolar/*` — there is no `PlantDriver`-style abstraction there yet. FusionSolar API calls
 are not made directly from `apps/web`; they go through a gateway service (`FUSIONSOLAR_GATEWAY_URL`
-+ `FUSIONSOLAR_GATEWAY_SECRET`), and FusionSolar-related Vercel functions are pinned to the `fra1`
-region (see `apps/web/vercel.json`) — consistent with FusionSolar's EU-hosted API.
+
+- `FUSIONSOLAR_GATEWAY_SECRET`), and FusionSolar-related Vercel functions are pinned to the `fra1`
+  region (see `apps/web/vercel.json`) — consistent with FusionSolar's EU-hosted API.
 
 Production scheduling is **not** Vercel Cron — it was tried once for telemetry ingestion and
 reverted (commits `6643255` / `853893d`, blocked on this Vercel plan tier). Instead, a Scaleway VM
@@ -296,7 +308,7 @@ documented in "Known gaps" above (the orphaned `market.controller.ts`, the unuse
 7. **Implement**, following `docs/CODING_STANDARDS.md` and the file/module conventions already in
    the area you're editing.
 8. **Run validation** — `pnpm lint`, `turbo check-types`, `turbo build`, and `pnpm --filter api
-   test` if `apps/api` was touched. See "Definition of Done" below; these are not optional even for
+test` if `apps/api` was touched. See "Definition of Done" below; these are not optional even for
    small changes.
 9. **Summarize changes** — what changed, why, which files, and any follow-up needed (docs updated,
    ADR added, env var declared, etc.), per `docs/FEATURE_CHECKLIST.md`.
@@ -376,14 +388,14 @@ repo has real history and real prior decisions behind it, so read them instead o
   `plant.automation.stopExportThreshold`, which is exactly the kind of detail that's invisible
   until you read the file.
 - **Use Git history before guessing why code exists.** `git log --oneline -- <file>` and `git log
-  -p -- <file>` explain intent the code alone doesn't. The long `debug(fusionsolar): log OAuth
-  authorization URL` sequence explains why the token-refresh retry logic only retries specific
+-p -- <file>` explain intent the code alone doesn't. The long `debug(fusionsolar): log OAuth
+authorization URL` sequence explains why the token-refresh retry logic only retries specific
   network error codes; the revert of Vercel cron scheduling (commits `6643255` then `853893d`)
   explains why telemetry ingestion isn't automatic today. Don't guess at "why" when `git log` can
   answer it directly.
 - **Prefer repository search before creating new files.** Grep for the capability (a helper, a
   type, a route, an env var) across `apps/api`, `apps/web`, and `packages/` before adding a new
-  file for it. Search file *contents*, not just directory names — the empty `domains/`/`services/`
+  file for it. Search file _contents_, not just directory names — the empty `domains/`/`services/`
   stubs will match a path-based search but hold no real implementation.
 - **Prefer existing documentation before generating new documentation.** Check the documentation
   map above for a doc that already covers the topic before writing a new one. If an existing doc is
