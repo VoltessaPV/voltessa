@@ -18,15 +18,18 @@ Automation logic (export stop/resume thresholds) has direct financial consequenc
 Treat `lib/fusionsolar/*` and anything touching export/threshold decisions with care — see
 `docs/AI_PLAYBOOK.md` before changing that code.
 
-**Before touching Huawei, FusionSolar, the gateway proxy, cron jobs, telemetry ingestion, or the
-ENTSO-E scheduler, read `docs/infrastructure/scaleway-production.md` first.** That document is the
-operator runbook for the Scaleway VM these all run on (or, for FusionSolar, run through) — SSH
-access, the gateway's allow-list mechanism (a huge source of confusing failures if skipped: a
-missing allow-list entry produces `api_path_not_allowed`, which is easy to mistake for a Huawei-side
-or OAuth-scope problem if you haven't read that section first), systemd services/timers, and the
-required inspect → explain → backup → modify → restart → verify procedure for any change to that
-VM. Do not guess at VM/gateway behavior or re-derive it from chat history — this file is the source
-of truth and must be kept current when that infrastructure changes.
+**Before touching any of: Huawei, FusionSolar, the gateway proxy, telemetry ingestion, the ENTSO-E
+scheduler, systemd services/timers, or production infrastructure generally, read
+`docs/infrastructure/scaleway-production.md` first.** That document is the authoritative operator
+runbook for the Scaleway VM these all run on (or, for FusionSolar, run through) — SSH access, every
+systemd service/timer (working directories, environment files, exact commands), the gateway's
+allow-list mechanism (a huge source of confusing failures if skipped: a missing allow-list entry
+produces `api_path_not_allowed`, which is easy to mistake for a Huawei-side or OAuth-scope problem
+if you haven't read that section first), a debugging checklist per subsystem (gateway, telemetry,
+ENTSO-E), and the mandatory inspect → explain → backup → modify → restart → verify procedure for any
+change to that VM. Treat that document, not chat history, as the source of truth for this
+infrastructure — do not guess at or re-derive VM/gateway behavior from a previous conversation, and
+keep the runbook itself current when the infrastructure changes.
 
 ## Documentation map
 
