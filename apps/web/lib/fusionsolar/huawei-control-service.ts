@@ -22,6 +22,28 @@ import { prisma } from "@/lib/prisma";
 
 export type HuaweiControlResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * `console.log`/`console.error` format objects via Node's default
+ * `util.inspect`, which collapses anything past a shallow nesting depth into
+ * `[Array]`/`[Object]` - exactly the fields this milestone needs to see in
+ * full (Huawei's `data.result[]`). Serializing explicitly with no depth
+ * limit avoids that; logs the same fields as before, just fully expanded
+ * instead of collapsed. `level` preserves the existing info/error log-level
+ * split (Vercel's runtime logs filter on this).
+ */
+function logDetail(
+  level: "info" | "error",
+  label: string,
+  data: Record<string, unknown>,
+): void {
+  const line = `${label}\n${JSON.stringify(data, null, 2)}`;
+  if (level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+}
+
 type HuaweiControlMode = "no-limit" | "zero-export";
 
 type ControllablePlant = {
@@ -111,7 +133,7 @@ async function dispatchControlCommand(
       plantId,
     ));
   } catch (error) {
-    console.error("[Huawei Control] Plant/connection lookup failed", {
+    logDetail("error", "[Huawei Control] Plant/connection lookup failed", {
       ...logContext,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -121,7 +143,7 @@ async function dispatchControlCommand(
 
   const startedAt = Date.now();
 
-  console.log("[Huawei Control] Sending request", {
+  logDetail("info", "[Huawei Control] Sending request", {
     ...logContext,
     plantName: plant.name,
     request: describeRequest(mode, plant.plantCode),
@@ -133,7 +155,7 @@ async function dispatchControlCommand(
         ? await restoreExport(connection, plant.plantCode)
         : await setExportLimit(connection, plant.plantCode, 0);
 
-    console.log("[Huawei Control] Response received", {
+    logDetail("info", "[Huawei Control] Response received", {
       ...logContext,
       plantName: plant.name,
       durationMs: Date.now() - startedAt,
@@ -152,7 +174,7 @@ async function dispatchControlCommand(
     const durationMs = Date.now() - startedAt;
 
     if (error instanceof FusionSolarApiError) {
-      console.error("[Huawei Control] Huawei rejected the command", {
+      logDetail("error", "[Huawei Control] Huawei rejected the command", {
         ...logContext,
         plantName: plant.name,
         durationMs,
@@ -165,15 +187,19 @@ async function dispatchControlCommand(
       return { ok: false, error: error.message };
     }
 
-    console.error("[Huawei Control] Unexpected error dispatching command", {
-      ...logContext,
-      plantName: plant.name,
-      durationMs,
-      error:
-        error instanceof Error
-          ? { name: error.name, message: error.message }
-          : String(error),
-    });
+    logDetail(
+      "error",
+      "[Huawei Control] Unexpected error dispatching command",
+      {
+        ...logContext,
+        plantName: plant.name,
+        durationMs,
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message }
+            : String(error),
+      },
+    );
 
     return { ok: false, error: "Unexpected error contacting FusionSolar" };
   }
