@@ -1,4 +1,3 @@
-import { ensurePlantTelemetryFresh } from "@/lib/telemetry/queries";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -10,9 +9,11 @@ import { prisma } from "@/lib/prisma";
  * Never calls FusionSolar directly; the presentation layer must not either
  * (see CLAUDE.md / this milestone's architecture requirement).
  *
- * Database-First Telemetry Architecture milestone: calls
- * `ensurePlantTelemetryFresh` first, same as every other function in the
- * telemetry repository layer — synchronization stays invisible to callers.
+ * Repository-Layer Deduplication milestone: no longer triggers a freshness
+ * check itself — that happens exactly once per request now, via
+ * `lib/telemetry/plant-context.ts`'s `resolvePlantContext`, called by
+ * `getDashboardPageData`/`getProductionPageData` before this function.
+ * Synchronization stays invisible to callers either way.
  *
  * Returns `available: false` — never a fabricated `0` — when no row exists
  * yet for `localDate` (e.g. the first ingestion cycle after local midnight
@@ -49,8 +50,6 @@ export async function getPlantDailyKpi(
   plantId: string,
   localDate: Date,
 ): Promise<PlantDailyKpiResult> {
-  await ensurePlantTelemetryFresh(plantId);
-
   const row = await prisma.plantDailyKpi.findUnique({
     where: { plantId_localDate: { plantId, localDate } },
     select: { pvYieldKwh: true, consumptionKwh: true, rawPayload: true },

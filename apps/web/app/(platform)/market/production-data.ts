@@ -9,11 +9,23 @@
  * calls Huawei at all, directly or indirectly — it never imports
  * `lib/fusionsolar/telemetry-sync-service.ts` either. `currentProduction`/
  * `currentExport`/`currentImport` now come from `DeviceTelemetry`'s newest
- * row per device (via `lib/telemetry/queries.ts`, which transparently
- * ensures the connection is synchronized before returning — this module
- * simply asks for telemetry). Only ever computed for `isToday`, matching
- * this page's existing convention: "current" has no meaning for a browsed
- * historical day, independent of where the data comes from.
+ * row per device (via `lib/telemetry/queries.ts`). Only ever computed for
+ * `isToday`, matching this page's existing convention: "current" has no
+ * meaning for a browsed historical day, independent of where the data
+ * comes from.
+ *
+ * Repository-Layer Deduplication milestone: plant/connection resolution
+ * moved to `lib/telemetry/plant-context.ts`'s `resolvePlantContext`,
+ * called exactly once. When called directly (Market's own page load),
+ * this function resolves everything itself, exactly as before — the
+ * `getProductionPageData(organizationId, selectedDateParam)` two-argument
+ * call is unchanged and self-sufficient. When called *from* Dashboard
+ * (which already resolved the same plant/connection and already fetched
+ * the same inverter telemetry for its own Inverters card), an optional
+ * third `preloaded` argument lets this function skip re-resolving and
+ * re-fetching data Dashboard already has — this is what eliminates the
+ * cross-page duplicate `Plant`/`FusionSolarConnection`/inverter-telemetry
+ * queries the Prisma trace measured.
  *
  * `configuredExportMode` has no persisted equivalent yet (deferred to a
  * later milestone) — it always renders the same explicit "unavailable"
@@ -74,10 +86,13 @@ import {
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
 import {
-  getLatestInverterTelemetry,
+  getLatestInverterTelemetryForDevices,
   getLatestMeterTelemetry,
-  getLatestTelemetry,
+  getLatestTelemetryTimestamp,
+  INVERTER_DEV_TYPE_ID,
+  type LatestInverterRow,
 } from "@/lib/telemetry/queries";
+import { resolvePlantContext, type PlantRenderContext } from "@/lib/telemetry/plant-context";
 
 /** Same Sofia local-day convention `market-data.ts` uses for the Market page's displayed day — duplicated intentionally, see this module's doc comment. */
 const BULGARIA_TIMEZONE = "Europe/Sofia";
@@ -118,20 +133,21 @@ export type ProductionPageData = {
   installedCapacityKw: number | null;
   /**
    * Timestamp of the single newest real `DeviceTelemetry` row for this
-   * plant (any device type) — queried directly via `getLatestTelemetry`,
-   * never derived/guessed from `settlementEnergySeries` (whose last entry
-   * can be `null`-valued if telemetry hasn't caught up to the current
-   * settlement interval yet). This is what the Market page's "Last
-   * update" actually means (Final Market UX Completion milestone): it
-   * used to show the ENTSO-E price-import timestamp, which is largely
-   * static (ENTSO-E publishes each day's prices once) and was found to be
-   * hours staler than the telemetry actually driving the chart/revenue
-   * figures — traced Huawei → DeviceTelemetry → this field → the Market
-   * Info card, confirmed via direct query (price import ~278 minutes
-   * stale vs. telemetry ~6 minutes stale at the same instant). Always
-   * computed regardless of which day is selected — it describes the
-   * telemetry pipeline's own freshness, not the browsed day. `null` only
-   * when no plant/telemetry exists at all.
+   * plant (any device type) — queried directly via
+   * `getLatestTelemetryTimestamp`, never derived/guessed from
+   * `settlementEnergySeries` (whose last entry can be `null`-valued if
+   * telemetry hasn't caught up to the current settlement interval yet).
+   * This is what the Market page's "Last update" actually means (Final
+   * Market UX Completion milestone): it used to show the ENTSO-E
+   * price-import timestamp, which is largely static (ENTSO-E publishes
+   * each day's prices once) and was found to be hours staler than the
+   * telemetry actually driving the chart/revenue figures — traced Huawei
+   * → DeviceTelemetry → this field → the Market Info card, confirmed via
+   * direct query (price import ~278 minutes stale vs. telemetry ~6
+   * minutes stale at the same instant). Always computed regardless of
+   * which day is selected — it describes the telemetry pipeline's own
+   * freshness, not the browsed day. `null` only when no plant/telemetry
+   * exists at all.
    */
   latestTelemetryAt: Date | null;
 };
@@ -155,9 +171,7 @@ const UNAVAILABLE_NO_CONNECTION_MODE: ConfiguredExportControlMode = {
 };
 
 /** Sum of every inverter's newest `activePower` sample — mirrors the former live `getInverterProductionKw`'s shape, sourced from `DeviceTelemetry` instead. */
-function sumInverterProduction(
-  rows: Array<{ activePower: { toNumber(): number } | null }>,
-): ProductionReading {
+function sumInverterProduction(rows: LatestInverterRow[]): ProductionReading {
   const readings = rows
     .map((row) => (row.activePower !== null ? row.activePower.toNumber() : null))
     .filter((kw): kw is number => kw !== null);
@@ -190,9 +204,23 @@ function deriveGridReadings(
   };
 }
 
+/**
+ * Data Dashboard already resolved/fetched for the same request — passing
+ * it in skips this function's own equivalent (and otherwise redundant)
+ * `Plant`/`FusionSolarConnection`/inverter-telemetry queries. Optional and
+ * additive only: Market's own direct page load never provides this and
+ * behaves exactly as before.
+ */
+export type ProductionPagePreload = {
+  context: PlantRenderContext;
+  /** Already-fetched latest telemetry for every inverter device under `context.plant` — reused for `currentProduction` instead of being queried again. */
+  inverterTelemetry: LatestInverterRow[];
+};
+
 export async function getProductionPageData(
   organizationId: string,
   selectedDateParam: string | undefined,
+  preloaded?: ProductionPagePreload,
 ): Promise<ProductionPageData> {
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDate =
@@ -210,20 +238,14 @@ export async function getProductionPageData(
   // past day already fully happened, so its whole day is real data.
   const seriesEnd = isToday ? new Date() : dayEnd;
 
-  const plant = await prisma.plant.findFirst({
-    where: {
-      organizationId,
-      vendor: "Huawei",
-      stationCode: { not: null },
-      plantCode: { not: null },
-    },
-    select: { id: true, plantCode: true, timezone: true, capacityKw: true },
-  });
+  const context = preloaded
+    ? preloaded.context
+    : await resolvePlantContext(organizationId);
 
   // Read directly from the plant's own configuration — never hardcoded,
   // never derived from telemetry. `null` only when genuinely unconfigured.
-  const installedCapacityKw = plant?.capacityKw
-    ? Number(plant.capacityKw.toString())
+  const installedCapacityKw = context?.plant.capacityKw
+    ? Number(context.plant.capacityKw.toString())
     : null;
 
   // Category B — DeviceTelemetry only, needs a plant but never a live
@@ -233,24 +255,21 @@ export async function getProductionPageData(
   let settlementEnergySeries: SettlementEnergyPoint[] = [];
   let latestTelemetryAt: Date | null = null;
 
-  if (plant) {
-    const [series, latestTelemetryRow] = await Promise.all([
-      getPlantSettlementEnergySeries(plant.id, dayStart, seriesEnd),
-      getLatestTelemetry({ plantId: plant.id }),
+  if (context) {
+    const [series, latestTimestamp] = await Promise.all([
+      getPlantSettlementEnergySeries(context.plant.id, dayStart, seriesEnd),
+      getLatestTelemetryTimestamp(context.plant.id),
     ]);
 
     settlementEnergySeries = series;
-    latestTelemetryAt = latestTelemetryRow?.timestamp ?? null;
+    latestTelemetryAt = latestTimestamp;
   }
 
   // Category A — "current" state, database-only (Database-First Telemetry
-  // Architecture milestone). No live Huawei call, no FusionSolarConnection
-  // lookup here at all — `getLatestInverterTelemetry`/`getLatestMeterTelemetry`
-  // transparently ensure the connection is synchronized before returning.
-  // Only ever computed for `isToday` — "current production" has no
-  // meaning while browsing a historical day, independent of where the
-  // value comes from.
-  if (!plant || !isToday) {
+  // Architecture milestone). Only ever computed for `isToday` — "current
+  // production" has no meaning while browsing a historical day,
+  // independent of where the value comes from.
+  if (!context || !isToday) {
     return {
       currentProduction: UNAVAILABLE_NO_TELEMETRY,
       currentExport: UNAVAILABLE_NO_TELEMETRY,
@@ -266,8 +285,18 @@ export async function getProductionPageData(
   }
 
   const [inverterRows, meterRow] = await Promise.all([
-    getLatestInverterTelemetry(plant.id),
-    getLatestMeterTelemetry(plant.id),
+    preloaded
+      ? Promise.resolve(preloaded.inverterTelemetry)
+      : (async () => {
+          const inverterDevices = await prisma.device.findMany({
+            where: { plantId: context.plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
+            select: { id: true },
+          });
+          return getLatestInverterTelemetryForDevices(
+            inverterDevices.map((device) => device.id),
+          );
+        })(),
+    getLatestMeterTelemetry(context.plant.id),
   ]);
 
   const currentProduction = sumInverterProduction(inverterRows);

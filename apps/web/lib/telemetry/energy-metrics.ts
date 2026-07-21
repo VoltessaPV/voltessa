@@ -1,9 +1,8 @@
-import type { DeviceTelemetry } from "@prisma/client";
-
 import {
   getPlantTelemetryRange,
   INVERTER_DEV_TYPE_ID,
   METER_DEV_TYPE_ID,
+  type TelemetrySeriesRow,
 } from "@/lib/telemetry/queries";
 
 /**
@@ -320,7 +319,7 @@ type MeterCounterField = "activeEnergy" | "reverseActiveEnergy";
  * only ever returns an actual stored value.
  */
 function makeForwardCounterLookup(
-  rows: DeviceTelemetry[],
+  rows: TelemetrySeriesRow[],
   field: MeterCounterField,
 ): (t: number) => number | null {
   let index = 0;

@@ -62,15 +62,28 @@
  *
  * This module never imports `lib/fusionsolar/telemetry-sync-service.ts`
  * or any live Huawei-calling function. Inverter status now comes from
- * `DeviceTelemetry`'s newest row per inverter device (via
- * `lib/telemetry/queries.ts`, which transparently ensures the connection
- * is synchronized before returning) instead of a live `getDevRealKpi`
- * call — the same `classifyInverterState` enumeration
+ * `DeviceTelemetry`'s newest row per inverter device instead of a live
+ * `getDevRealKpi` call — the same `classifyInverterState` enumeration
  * (`get-plant-inverter-status.ts`, exported and reused, not duplicated)
  * decodes the stored `inverterState` value exactly as it decoded the live
  * one. `energyFlow`/`currentProduction`/`currentExport`/`currentImport`
  * were already sourced from `production-data.ts`, which underwent the
  * same migration — see that module's doc comment.
+ *
+ * ## Repository-Layer Deduplication milestone
+ *
+ * Plant/connection resolution moved to `lib/telemetry/plant-context.ts`'s
+ * `resolvePlantContext`, called exactly once here (previously: this
+ * module's own `Plant` lookup, `production-data.ts`'s own separate
+ * `Plant` lookup, and one more `Plant`+`FusionSolarConnection` pair per
+ * repository call needing a freshness check — measured at 3 separate
+ * `Plant` queries and 3 separate `FusionSolarConnection` queries for one
+ * Dashboard render). The resolved context is passed into
+ * `getProductionPageData` as a preload, so Market's own internal
+ * resolution is skipped when called from here. Inverter telemetry is
+ * fetched exactly once (previously: once inside `getProductionPageData`
+ * for `currentProduction`, and again by this module for the Inverters
+ * card — the same 4 `DeviceTelemetry` rows, twice) and reused for both.
  */
 
 import type { ExportThresholdConfig } from "@/lib/automation/export-threshold-config";
@@ -90,8 +103,12 @@ import {
   sumSettlementEnergy,
   type PlantTelemetrySeriesPoint,
 } from "@/lib/telemetry/energy-metrics";
-import { getLatestInverterTelemetry } from "@/lib/telemetry/queries";
+import {
+  getLatestInverterTelemetryForDevices,
+  INVERTER_DEV_TYPE_ID,
+} from "@/lib/telemetry/queries";
 import { getPlantDailyKpi } from "@/lib/telemetry/plant-daily-kpi";
+import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 
 import { getMarketPageData } from "@/app/(platform)/market/market-data";
 import { getProductionPageData, type ProductionReading } from "@/app/(platform)/market/production-data";
@@ -312,19 +329,13 @@ export async function getDashboardPageData(
     nextDateParam: shiftDateString(selectedDate, 1),
   };
 
-  const plant = await prisma.plant.findFirst({
-    where: {
-      organizationId,
-      vendor: "Huawei",
-      stationCode: { not: null },
-      plantCode: { not: null },
-    },
-    select: { id: true, name: true },
-  });
+  const context = await resolvePlantContext(organizationId);
 
-  if (!plant) {
+  if (!context) {
     return { plantAvailable: false, ...toolbarState };
   }
+
+  const { plant } = context;
 
   const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
   const now = new Date();
@@ -334,31 +345,37 @@ export async function getDashboardPageData(
   // convention as `production-data.ts`'s own `seriesEnd`.
   const seriesEnd = isToday ? now : dayEnd;
 
+  // Category A (inverter status) only ever describes "right now" — same
+  // convention `production-data.ts` already uses for its own Category A
+  // fields, so a historical day never shows current state. Fetched once,
+  // here, and reused both for this page's own Inverters card (below) and
+  // as a preload passed into `getProductionPageData` — that function
+  // previously re-fetched the exact same 4 `DeviceTelemetry` rows itself.
+  const inverterDevices = isToday
+    ? await prisma.device.findMany({
+        where: { plantId: plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
+        select: { id: true, devName: true },
+      })
+    : [];
+
+  const inverterTelemetry = isToday
+    ? await getLatestInverterTelemetryForDevices(inverterDevices.map((device) => device.id))
+    : [];
+
   // Reused wholesale from Market's own orchestration — never a second
   // implementation of price fetching, export-revenue math, or real-time
   // FusionSolar reads. See each module's own doc comment. Passing the real
   // `selectedDateParam` through (instead of always `undefined`) is what
   // makes Dashboard capable of showing any day Market/Production already
-  // support — neither function needed a single change.
-  const [marketData, production, chartSeriesRaw, dailyKpi, inverterDevices] =
-    await Promise.all([
-      getMarketPageData({ selectedDateParam, automationSettings }),
-      getProductionPageData(organizationId, selectedDateParam),
-      getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
-      getPlantDailyKpi(plant.id, dayStart),
-      // Category A (inverter status) only ever describes "right now" —
-      // same convention `production-data.ts` already uses for its own
-      // Category A fields, so a historical day never shows current state.
-      // No FusionSolarConnection lookup needed here at all —
-      // `getLatestInverterTelemetry` transparently ensures the connection
-      // is synchronized before returning.
-      isToday
-        ? prisma.device.findMany({
-            where: { plantId: plant.id, devTypeId: 1 },
-            select: { id: true, devName: true },
-          })
-        : Promise.resolve([]),
-    ]);
+  // support — neither function needed a single change. `context`/
+  // `inverterTelemetry` preloaded above so `getProductionPageData` skips
+  // its own equivalent (otherwise redundant) resolution and fetch.
+  const [marketData, production, chartSeriesRaw, dailyKpi] = await Promise.all([
+    getMarketPageData({ selectedDateParam, automationSettings }),
+    getProductionPageData(organizationId, selectedDateParam, { context, inverterTelemetry }),
+    getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
+    getPlantDailyKpi(plant.id, dayStart),
+  ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
     ? computeExportRevenue(marketData.series, production.settlementEnergySeries)
@@ -403,9 +420,11 @@ export async function getDashboardPageData(
   };
 
   if (isToday && inverterDevices.length > 0) {
-    const telemetryRows = await getLatestInverterTelemetry(plant.id);
+    // Reuses the `inverterTelemetry` already fetched above (also passed
+    // to `getProductionPageData` as a preload) — no second query for the
+    // same rows.
     const telemetryByDeviceId = new Map(
-      telemetryRows.map((row) => [row.deviceId, row] as const),
+      inverterTelemetry.map((row) => [row.deviceId, row] as const),
     );
 
     const statuses: InverterStatus[] = inverterDevices.map((device) => {

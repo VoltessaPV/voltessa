@@ -1,7 +1,5 @@
-import type { DeviceTelemetry } from "@prisma/client";
-import { after } from "next/server";
+import type { Prisma } from "@prisma/client";
 
-import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -11,77 +9,44 @@ import { prisma } from "@/lib/prisma";
  * themselves — this is a pure read layer, no HTTP, no business math (see
  * `lib/telemetry/energy-metrics.ts` for derived computations built on top).
  *
- * Database-First Telemetry Architecture milestone: every exported function
- * here calls `ensurePlantTelemetryFresh` first. Synchronization is
- * therefore invisible to Dashboard/Market — they ask this repository for
- * telemetry, never for a sync; this is the one layer that knows both
- * "telemetry lives in the database" and "the database might need
- * refreshing first." The actual freshness/lease/Huawei decision lives
- * entirely in `lib/fusionsolar/telemetry-sync-service.ts` — this helper
- * only resolves which connection owns a plant and delegates.
+ * Repository-Layer Deduplication milestone: every function here is now a
+ * pure read — none of them trigger a freshness check/background sync
+ * themselves anymore (that was `ensurePlantTelemetryFresh`, previously
+ * called once per function, redundantly re-resolving the same plant's
+ * connection on every call). Synchronization is now triggered exactly
+ * once per request, by `lib/telemetry/plant-context.ts`'s
+ * `resolvePlantContext` — callers resolve a `PlantRenderContext` once and
+ * use its `plant.id` for every read below. Sync semantics themselves
+ * (freshness threshold, atomic lease, non-blocking `after()`) are
+ * unchanged (ADR-011/ADR-012).
  *
- * Non-Blocking Synchronization milestone (ADR-012): `ensurePlantTelemetryFresh`
- * never awaits `synchronizeFusionSolarConnection`. It schedules the sync via
- * Next.js `after()` — the sync runs once the response has already been sent,
- * so rendering always proceeds immediately from whatever is currently in
- * the database. Huawei is a synchronization source only; it can never add
- * latency to a Dashboard/Market request again, at the cost of `DeviceTelemetry`
- * possibly being one background-sync-cycle stale when a request happens to
- * land right as the freshness window expires. The only place allowed to
- * block on a real sync is the explicit Refresh action
- * (`app/(platform)/dashboard/actions.ts`), which calls
- * `synchronizeFusionSolarConnection` directly, and the scheduler's route,
- * which is not part of the render path at all.
+ * Every query below has an explicit `select` — only the columns each
+ * function's actual callers read, never the full row (in particular,
+ * never `rawPayload`, a ~100-key JSON blob per inverter sample that no
+ * caller of these specific functions ever reads).
  */
 
 export const INVERTER_DEV_TYPE_ID = 1;
 export const METER_DEV_TYPE_ID = 47;
 
-/**
- * Resolves the plant's `FusionSolarConnection` and schedules a background
- * sync via `after()` — never awaits it, never contacts Huawei on the
- * request path itself. `synchronizeFusionSolarConnection` still owns every
- * decision (freshness, lease, force, error containment) and never throws;
- * the `.catch` below is pure defense against something unexpected inside
- * `after`'s callback, not a real error path. A plant with no connection
- * (not yet onboarded, or connection revoked) is a no-op: historical data
- * already in the database keeps rendering either way.
- */
-export async function ensurePlantTelemetryFresh(plantId: string): Promise<void> {
-  const plant = await prisma.plant.findUnique({
-    where: { id: plantId },
-    select: { organizationId: true },
-  });
+const TELEMETRY_SERIES_SELECT = {
+  timestamp: true,
+  devTypeId: true,
+  activePower: true,
+  meterActivePower: true,
+  activeEnergy: true,
+  reverseActiveEnergy: true,
+} as const;
 
-  if (!plant) {
-    return;
-  }
-
-  const connection = await prisma.fusionSolarConnection.findUnique({
-    where: {
-      organizationId_provider: {
-        organizationId: plant.organizationId,
-        provider: "HuaweiFusionSolar",
-      },
-    },
-    select: { id: true },
-  });
-
-  if (!connection) {
-    return;
-  }
-
-  const connectionId = connection.id;
-
-  after(() => {
-    synchronizeFusionSolarConnection(connectionId).catch((error: unknown) => {
-      console.error(
-        "[FusionSolar Telemetry Sync] Background sync failed unexpectedly",
-        { connectionId, error },
-      );
-    });
-  });
-}
+/** Row shape for `getPlantTelemetryRange` — the union of fields `energy-metrics.ts`'s two consumers (`getPlantTelemetrySeries`, `getPlantSettlementEnergySeries`) actually read. */
+export type TelemetrySeriesRow = {
+  timestamp: Date;
+  devTypeId: number;
+  activePower: Prisma.Decimal | null;
+  meterActivePower: Prisma.Decimal | null;
+  activeEnergy: Prisma.Decimal | null;
+  reverseActiveEnergy: Prisma.Decimal | null;
+};
 
 /** All telemetry rows for a plant within `[start, end)`, ascending by timestamp. */
 export async function getPlantTelemetryRange(params: {
@@ -89,9 +54,7 @@ export async function getPlantTelemetryRange(params: {
   start: Date;
   end: Date;
   devTypeId?: number;
-}): Promise<DeviceTelemetry[]> {
-  await ensurePlantTelemetryFresh(params.plantId);
-
+}): Promise<TelemetrySeriesRow[]> {
   return prisma.deviceTelemetry.findMany({
     where: {
       plantId: params.plantId,
@@ -100,33 +63,45 @@ export async function getPlantTelemetryRange(params: {
         ? { devTypeId: params.devTypeId }
         : {}),
     },
+    select: TELEMETRY_SERIES_SELECT,
     orderBy: { timestamp: "asc" },
   });
 }
 
-/** The single most recent telemetry row for a plant (optionally scoped to one device type). */
-export async function getLatestTelemetry(params: {
-  plantId: string;
-  devTypeId?: number;
-}): Promise<DeviceTelemetry | null> {
-  await ensurePlantTelemetryFresh(params.plantId);
+/** Timestamp of the single most recent telemetry row for a plant (any device type) — this is all `production-data.ts`'s "Last update" field ever reads. */
+export async function getLatestTelemetryTimestamp(
+  plantId: string,
+): Promise<Date | null> {
+  const row = await prisma.deviceTelemetry.findFirst({
+    where: { plantId },
+    select: { timestamp: true },
+    orderBy: { timestamp: "desc" },
+  });
 
+  return row?.timestamp ?? null;
+}
+
+/** Row shape for `getLatestMeterTelemetry` — only field its one caller (`deriveGridReadings`) reads. */
+export type LatestMeterRow = {
+  meterActivePower: Prisma.Decimal | null;
+};
+
+export async function getLatestMeterTelemetry(
+  plantId: string,
+): Promise<LatestMeterRow | null> {
   return prisma.deviceTelemetry.findFirst({
-    where: {
-      plantId: params.plantId,
-      ...(params.devTypeId !== undefined
-        ? { devTypeId: params.devTypeId }
-        : {}),
-    },
+    where: { plantId, devTypeId: METER_DEV_TYPE_ID },
+    select: { meterActivePower: true },
     orderBy: { timestamp: "desc" },
   });
 }
 
-export async function getLatestMeterTelemetry(
-  plantId: string,
-): Promise<DeviceTelemetry | null> {
-  return getLatestTelemetry({ plantId, devTypeId: METER_DEV_TYPE_ID });
-}
+/** Row shape for `getLatestInverterTelemetryForDevices` — only fields its callers (`sumInverterProduction`, Dashboard's inverter-status builder) read. */
+export type LatestInverterRow = {
+  deviceId: string;
+  activePower: Prisma.Decimal | null;
+  inverterState: number | null;
+};
 
 /**
  * One row per inverter device — each inverter's own most recent sample, not
@@ -135,25 +110,24 @@ export async function getLatestMeterTelemetry(
  * inverters can start/stop reporting at slightly different times), so this
  * returns one independent "latest" per device rather than assuming they
  * share a timestamp.
+ *
+ * Takes device IDs directly rather than a `plantId` (previously: queried
+ * `Device` internally, once per call — now the caller resolves the device
+ * list once and passes it in, since both Dashboard and Market need the
+ * same inverter telemetry and previously each re-fetched it independently).
  */
-export async function getLatestInverterTelemetry(
-  plantId: string,
-): Promise<DeviceTelemetry[]> {
-  await ensurePlantTelemetryFresh(plantId);
-
-  const devices = await prisma.device.findMany({
-    where: { plantId, devTypeId: INVERTER_DEV_TYPE_ID },
-    select: { id: true },
-  });
-
+export async function getLatestInverterTelemetryForDevices(
+  deviceIds: string[],
+): Promise<LatestInverterRow[]> {
   const rows = await Promise.all(
-    devices.map((device) =>
+    deviceIds.map((deviceId) =>
       prisma.deviceTelemetry.findFirst({
-        where: { deviceId: device.id },
+        where: { deviceId },
+        select: { deviceId: true, activePower: true, inverterState: true },
         orderBy: { timestamp: "desc" },
       }),
     ),
   );
 
-  return rows.filter((row): row is DeviceTelemetry => row !== null);
+  return rows.filter((row): row is LatestInverterRow => row !== null);
 }
