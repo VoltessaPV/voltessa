@@ -151,3 +151,23 @@ export async function runHuaweiDiagnosticTest(
 
   return { ok: true, result };
 }
+
+/**
+ * TEMPORARY diagnostic — root-causing a report that the Target dropdown
+ * only shows "Plant (Atlanta)" in production. The client component calls
+ * this once on mount with exactly the props/derived state it has in the
+ * browser, so the real browser-side values show up in Vercel's server
+ * logs (console.log inside a Server Action is captured there) without
+ * requiring anyone to manually copy browser DevTools output. Remove once
+ * understood — this performs no Huawei call and changes nothing.
+ */
+export async function reportDiagnosticClientState(payload: {
+  stage: string;
+  count: number;
+  items: Array<{ kind: string; deviceType: string; key: string; label: string }>;
+}): Promise<void> {
+  console.log(`[DiagTargets][${payload.stage}]`, {
+    count: payload.count,
+    items: payload.items,
+  });
+}

@@ -1,8 +1,11 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 
-import { runHuaweiDiagnosticTest } from "@/app/(platform)/automations/actions";
+import {
+  reportDiagnosticClientState,
+  runHuaweiDiagnosticTest,
+} from "@/app/(platform)/automations/actions";
 import { filterTargetsByTypes } from "@/lib/fusionsolar/diagnostic-target-match";
 import type {
   DiagnosticDefinitionMeta,
@@ -69,6 +72,53 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
     filteredTargets.some((t) => t.key === targetKey)
       ? targetKey
       : (filteredTargets[0]?.key ?? "");
+
+  // TEMPORARY diagnostic logging — root-causing a report that the Target
+  // dropdown only shows "Plant (Atlanta)" in production. Runs once on
+  // mount, logs to the browser console AND phones the same data home via
+  // a Server Action so it shows up in Vercel's server logs too. Remove
+  // once understood — this changes nothing about rendering/behavior.
+  useEffect(() => {
+    const propItems = targets.map((t) => ({
+      kind: t.kind,
+      deviceType: t.deviceType,
+      key: t.key,
+      label: t.label,
+    }));
+
+    console.log("[DiagTargets][STAGE 3: client component, targets prop]", {
+      count: targets.length,
+      items: propItems,
+    });
+
+    void reportDiagnosticClientState({
+      stage: "STAGE 3 (client props, phoned home)",
+      count: targets.length,
+      items: propItems,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const filteredItems = filteredTargets.map((t) => ({
+      kind: t.kind,
+      deviceType: t.deviceType,
+      key: t.key,
+      label: t.label,
+    }));
+
+    console.log("[DiagTargets][STAGE 4: client component, filteredTargets]", {
+      testId,
+      count: filteredTargets.length,
+      items: filteredItems,
+    });
+
+    void reportDiagnosticClientState({
+      stage: `STAGE 4 (filteredTargets for testId=${testId}, phoned home)`,
+      count: filteredTargets.length,
+      items: filteredItems,
+    });
+  }, [filteredTargets, testId]);
 
   function handleTestChange(nextTestId: string) {
     setTestId(nextTestId);
