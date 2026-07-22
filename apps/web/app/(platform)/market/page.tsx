@@ -47,6 +47,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
+    select: { minimumExportPrice: true, currency: true },
   });
 
   // Two completely independent data sources, composed only here — see

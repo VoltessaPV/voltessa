@@ -119,6 +119,7 @@ export default async function DashboardPage({
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
+    select: { minimumExportPrice: true, currency: true },
   });
 
   const data = await getDashboardPageData(
