@@ -3,6 +3,12 @@
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import {
+  executeDiagnosticTest,
+  findDiagnosticTestDefinition,
+  getOrgHuaweiDiagnosticTargets,
+  type DiagnosticTestResult,
+} from "@/lib/fusionsolar/diagnostic-tests";
+import {
   setNoLimit,
   setZeroExport,
   type HuaweiControlResult,
@@ -52,4 +58,66 @@ export async function sendHuaweiNoLimit(): Promise<HuaweiControlResult> {
 
 export async function sendHuaweiZeroExport(): Promise<HuaweiControlResult> {
   return runHuaweiControlAction(setZeroExport);
+}
+
+export type DiagnosticTestActionResult =
+  | { ok: true; result: DiagnosticTestResult }
+  | { ok: false; error: string };
+
+/**
+ * Huawei Diagnostic Tests section (Automations page): runs exactly one
+ * read-only Huawei API call per invocation, via the shared
+ * `executeDiagnosticTest` executor. `testId` selects a definition from
+ * `DIAGNOSTIC_TEST_DEFINITIONS`; `identifier` must be one of this
+ * organization's own Plant DN / Device DNs (re-verified here, never trusted
+ * from the client) — never a client-supplied path or body.
+ */
+export async function runHuaweiDiagnosticTest(
+  testId: string,
+  identifier: string,
+): Promise<DiagnosticTestActionResult> {
+  const user = await requirePermission(Permissions.canOperatePlants);
+
+  const definition = findDiagnosticTestDefinition(testId);
+
+  if (!definition) {
+    return { ok: false, error: "Unknown diagnostic test" };
+  }
+
+  const targets = await getOrgHuaweiDiagnosticTargets(user.organizationId);
+  const target = targets?.identifiers.find(
+    (candidate) => candidate.identifier === identifier,
+  );
+
+  if (!target) {
+    return {
+      ok: false,
+      error: "Identifier does not belong to this organization's Huawei plant",
+    };
+  }
+
+  const connection = await prisma.fusionSolarConnection.findUnique({
+    where: {
+      organizationId_provider: {
+        organizationId: user.organizationId,
+        provider: "HuaweiFusionSolar",
+      },
+    },
+    select: {
+      id: true,
+      accessToken: true,
+      refreshToken: true,
+      tokenType: true,
+      scope: true,
+      expiresAt: true,
+    },
+  });
+
+  if (!connection) {
+    return { ok: false, error: "FusionSolar connection not found" };
+  }
+
+  const result = await executeDiagnosticTest(connection, definition, target);
+
+  return { ok: true, result };
 }
