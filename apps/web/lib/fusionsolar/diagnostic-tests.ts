@@ -343,23 +343,6 @@ export async function getOrgHuaweiDiagnosticTargets(
     })),
   ];
 
-  // TEMPORARY diagnostic logging — root-causing a report that the Target
-  // dropdown only shows "Plant (Atlanta)" in production. Remove once
-  // understood. Does not change behavior, only observes.
-  console.log("[DiagTargets][STAGE 1: getOrgHuaweiDiagnosticTargets]", {
-    organizationId,
-    plantId: plant.id,
-    plantName: plant.name,
-    deviceRowCount: devices.length,
-    targetCount: targets.length,
-    targets: targets.map((t) => ({
-      kind: t.kind,
-      deviceType: t.deviceType,
-      key: t.key,
-      label: t.label,
-    })),
-  });
-
   return { plantId: plant.id, plantName: plant.name, targets };
 }
 

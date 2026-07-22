@@ -14,21 +14,6 @@ export default async function AutomationsPage() {
   const user = await requirePermission(Permissions.canOperatePlants);
   const targets = await getOrgHuaweiDiagnosticTargets(user.organizationId);
 
-  // TEMPORARY diagnostic logging — see diagnostic-tests.ts's matching log.
-  // Remove once understood. Does not change behavior, only observes.
-  console.log("[DiagTargets][STAGE 2: page.tsx, about to pass props]", {
-    userId: user.id,
-    organizationId: user.organizationId,
-    targetsResultIsNull: targets === null,
-    propTargetCount: targets?.targets.length ?? 0,
-    propTargets: (targets?.targets ?? []).map((t) => ({
-      kind: t.kind,
-      deviceType: t.deviceType,
-      key: t.key,
-      label: t.label,
-    })),
-  });
-
   return (
     <div>
       <HuaweiControlCard />

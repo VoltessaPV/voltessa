@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
-import {
-  reportDiagnosticClientState,
-  runHuaweiDiagnosticTest,
-} from "@/app/(platform)/automations/actions";
+import { runHuaweiDiagnosticTest } from "@/app/(platform)/automations/actions";
 import { filterTargetsByTypes } from "@/lib/fusionsolar/diagnostic-target-match";
 import type {
   DiagnosticDefinitionMeta,
@@ -21,8 +18,33 @@ type Props = {
 
 type ResultEntry = DiagnosticTestResult & { ranAt: number };
 
+/**
+ * `[color-scheme:dark]` tells the browser to render this control's native
+ * UI chrome - critically, the popup listbox a <select> opens - using its
+ * dark color scheme, instead of the platform default light one. That popup
+ * is not a normal descendant box: `background-color` set on <select> (e.g.
+ * `bg-white/5` below) does not apply to it, and `background-color` on
+ * <option> (unlike `color`) is not an inherited property either, so
+ * without this the popup fell back to the browser's default opaque WHITE
+ * surface while the inherited `text-white/80` stayed near-white - white
+ * text on a white popup, invisible for every option except the
+ * natively-highlighted selected one. `color-scheme` is the standard,
+ * purpose-built fix (Chrome 81+, Firefox 96+, Safari 14.1+) and needs no
+ * structural change - the collapsed select (a normal styled box) keeps
+ * its existing dark theme exactly as before.
+ */
 const selectClassName =
-  "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80";
+  "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 [color-scheme:dark]";
+
+/**
+ * Belt-and-suspenders for the same popup issue: an explicit, solid
+ * (non-opacity) background/text color set directly on every <option>,
+ * for engines that honor per-option styling but don't fully apply
+ * `color-scheme` to it. Solid values only - `color-scheme` plus an
+ * opacity-based Tailwind color here would leave the same
+ * transparent-background gap this bug came from.
+ */
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
 
 const inputClassName =
   "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 placeholder:text-white/30";
@@ -72,53 +94,6 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
     filteredTargets.some((t) => t.key === targetKey)
       ? targetKey
       : (filteredTargets[0]?.key ?? "");
-
-  // TEMPORARY diagnostic logging — root-causing a report that the Target
-  // dropdown only shows "Plant (Atlanta)" in production. Runs once on
-  // mount, logs to the browser console AND phones the same data home via
-  // a Server Action so it shows up in Vercel's server logs too. Remove
-  // once understood — this changes nothing about rendering/behavior.
-  useEffect(() => {
-    const propItems = targets.map((t) => ({
-      kind: t.kind,
-      deviceType: t.deviceType,
-      key: t.key,
-      label: t.label,
-    }));
-
-    console.log("[DiagTargets][STAGE 3: client component, targets prop]", {
-      count: targets.length,
-      items: propItems,
-    });
-
-    void reportDiagnosticClientState({
-      stage: "STAGE 3 (client props, phoned home)",
-      count: targets.length,
-      items: propItems,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    const filteredItems = filteredTargets.map((t) => ({
-      kind: t.kind,
-      deviceType: t.deviceType,
-      key: t.key,
-      label: t.label,
-    }));
-
-    console.log("[DiagTargets][STAGE 4: client component, filteredTargets]", {
-      testId,
-      count: filteredTargets.length,
-      items: filteredItems,
-    });
-
-    void reportDiagnosticClientState({
-      stage: `STAGE 4 (filteredTargets for testId=${testId}, phoned home)`,
-      count: filteredTargets.length,
-      items: filteredItems,
-    });
-  }, [filteredTargets, testId]);
 
   function handleTestChange(nextTestId: string) {
     setTestId(nextTestId);
@@ -190,7 +165,7 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
               onChange={(event) => handleTestChange(event.target.value)}
             >
               {definitions.map((definition) => (
-                <option key={definition.id} value={definition.id}>
+                <option key={definition.id} value={definition.id} style={optionStyle}>
                   {definition.kind === "control" ? "⚠ " : ""}
                   {definition.label}
                 </option>
@@ -206,9 +181,13 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
               onChange={(event) => setTargetKey(event.target.value)}
               disabled={filteredTargets.length === 0}
             >
-              {filteredTargets.length === 0 && <option value="">No matching targets</option>}
+              {filteredTargets.length === 0 && (
+                <option value="" style={optionStyle}>
+                  No matching targets
+                </option>
+              )}
               {filteredTargets.map((target) => (
-                <option key={target.key} value={target.key}>
+                <option key={target.key} value={target.key} style={optionStyle}>
                   {target.label}
                 </option>
               ))}
