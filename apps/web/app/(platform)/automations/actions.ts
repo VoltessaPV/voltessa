@@ -6,6 +6,8 @@ import {
   executeDiagnosticTest,
   findDiagnosticDefinition,
   getOrgHuaweiDiagnosticTargets,
+  isTargetSupportedByDefinition,
+  type DiagnosticParameterValues,
   type DiagnosticTestResult,
 } from "@/lib/fusionsolar/diagnostic-tests";
 import {
@@ -69,12 +71,17 @@ export type DiagnosticTestActionResult =
  * Huawei API call per invocation, via the shared `executeDiagnosticTest`
  * executor. `testId` selects a definition from `DIAGNOSTIC_DEFINITIONS`;
  * `targetKey` must be one of this organization's own Plant/Device targets
- * (re-verified here, never trusted from the client) — never a
- * client-supplied path or body.
+ * AND one of the types that definition declares support for (both
+ * re-verified here, never trusted from the client — the client's own
+ * Target-dropdown filtering is a UX convenience, not the security
+ * boundary). `params` are the definition's declared extra inputs
+ * (`taskId`, `collectTime`, ...); missing a required one is rejected here
+ * too, not just left to Huawei to reject.
  */
 export async function runHuaweiDiagnosticTest(
   testId: string,
   targetKey: string,
+  params: DiagnosticParameterValues,
 ): Promise<DiagnosticTestActionResult> {
   const user = await requirePermission(Permissions.canOperatePlants);
 
@@ -93,6 +100,24 @@ export async function runHuaweiDiagnosticTest(
     return {
       ok: false,
       error: "Target does not belong to this organization's Huawei plant",
+    };
+  }
+
+  if (!isTargetSupportedByDefinition(definition, target)) {
+    return {
+      ok: false,
+      error: `"${definition.label}" does not support a target of type "${target.deviceType}"`,
+    };
+  }
+
+  const missingParam = definition.parameters.find(
+    (param) => param.required && !params[param.name]?.trim(),
+  );
+
+  if (missingParam) {
+    return {
+      ok: false,
+      error: `Missing required parameter "${missingParam.label}"`,
     };
   }
 
@@ -117,7 +142,12 @@ export async function runHuaweiDiagnosticTest(
     return { ok: false, error: "FusionSolar connection not found" };
   }
 
-  const result = await executeDiagnosticTest(connection, definition, target);
+  const result = await executeDiagnosticTest(
+    connection,
+    definition,
+    target,
+    params,
+  );
 
   return { ok: true, result };
 }

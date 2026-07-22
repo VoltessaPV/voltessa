@@ -5,6 +5,7 @@ import { requirePermission } from "@/lib/auth/session";
 import {
   DIAGNOSTIC_DEFINITIONS,
   getOrgHuaweiDiagnosticTargets,
+  toDiagnosticDefinitionMeta,
 } from "@/lib/fusionsolar/diagnostic-tests";
 
 export { pageHeading } from "./heading";
@@ -26,10 +27,7 @@ export default async function AutomationsPage() {
       <div className="mt-8">
         <HuaweiDiagnosticTestsCard
           targets={targets?.targets ?? []}
-          definitions={DIAGNOSTIC_DEFINITIONS.map(({ id, label }) => ({
-            id,
-            label,
-          }))}
+          definitions={DIAGNOSTIC_DEFINITIONS.map(toDiagnosticDefinitionMeta)}
         />
       </div>
     </div>

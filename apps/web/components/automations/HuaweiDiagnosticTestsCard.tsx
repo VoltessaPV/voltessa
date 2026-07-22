@@ -1,16 +1,19 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 
 import { runHuaweiDiagnosticTest } from "@/app/(platform)/automations/actions";
+import { filterTargetsByTypes } from "@/lib/fusionsolar/diagnostic-target-match";
 import type {
+  DiagnosticDefinitionMeta,
+  DiagnosticParameterValues,
   DiagnosticTarget,
   DiagnosticTestResult,
 } from "@/lib/fusionsolar/diagnostic-tests";
 
 type Props = {
   targets: DiagnosticTarget[];
-  definitions: Array<{ id: string; label: string }>;
+  definitions: DiagnosticDefinitionMeta[];
 };
 
 type ResultEntry = DiagnosticTestResult & { ranAt: number };
@@ -18,25 +21,89 @@ type ResultEntry = DiagnosticTestResult & { ranAt: number };
 const selectClassName =
   "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80";
 
+const inputClassName =
+  "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 placeholder:text-white/30";
+
 const buttonClassName =
   "rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600";
+
+const controlButtonClassName =
+  "rounded-xl bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-red-600";
+
+function defaultParamValues(
+  definition: DiagnosticDefinitionMeta | undefined,
+): DiagnosticParameterValues {
+  if (!definition) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    definition.parameters.map((param) => [param.name, param.defaultValue ?? ""]),
+  );
+}
 
 export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
   const [isPending, startTransition] = useTransition();
   const [testId, setTestId] = useState(definitions[0]?.id ?? "");
-  const [targetKey, setTargetKey] = useState(targets[0]?.key ?? "");
+  const [targetKey, setTargetKey] = useState("");
+  const [paramValues, setParamValues] = useState<DiagnosticParameterValues>(
+    defaultParamValues(definitions[0]),
+  );
   const [results, setResults] = useState<ResultEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const selectedDefinition = definitions.find((d) => d.id === testId);
+
+  // Re-filtered every render off the metadata alone (no hardcoded
+  // per-test switch) - this is what makes the Target dropdown narrow
+  // automatically when a different test is selected.
+  const filteredTargets = useMemo(
+    () =>
+      selectedDefinition
+        ? filterTargetsByTypes(targets, selectedDefinition.supportedTargetTypes)
+        : [],
+    [targets, selectedDefinition],
+  );
+
+  const effectiveTargetKey =
+    filteredTargets.some((t) => t.key === targetKey)
+      ? targetKey
+      : (filteredTargets[0]?.key ?? "");
+
+  function handleTestChange(nextTestId: string) {
+    setTestId(nextTestId);
+    const nextDefinition = definitions.find((d) => d.id === nextTestId);
+    setParamValues(defaultParamValues(nextDefinition));
+    setTargetKey("");
+    setError(null);
+  }
+
+  function handleParamChange(name: string, value: string) {
+    setParamValues((prev) => ({ ...prev, [name]: value }));
+  }
+
   function execute() {
-    if (isPending || !testId || !targetKey) {
+    if (isPending || !selectedDefinition || !effectiveTargetKey) {
       return;
+    }
+
+    if (selectedDefinition.kind === "control") {
+      const confirmed = window.confirm(
+        `"${selectedDefinition.label}" sends a REAL Huawei command and can change plant export behavior. Continue?`,
+      );
+      if (!confirmed) {
+        return;
+      }
     }
 
     setError(null);
 
     startTransition(async () => {
-      const outcome = await runHuaweiDiagnosticTest(testId, targetKey);
+      const outcome = await runHuaweiDiagnosticTest(
+        selectedDefinition.id,
+        effectiveTargetKey,
+        paramValues,
+      );
 
       if (!outcome.ok) {
         setError(outcome.error);
@@ -70,10 +137,11 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
             <select
               className={selectClassName}
               value={testId}
-              onChange={(event) => setTestId(event.target.value)}
+              onChange={(event) => handleTestChange(event.target.value)}
             >
               {definitions.map((definition) => (
                 <option key={definition.id} value={definition.id}>
+                  {definition.kind === "control" ? "⚠ " : ""}
                   {definition.label}
                 </option>
               ))}
@@ -84,10 +152,12 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
             Target
             <select
               className={selectClassName}
-              value={targetKey}
+              value={effectiveTargetKey}
               onChange={(event) => setTargetKey(event.target.value)}
+              disabled={filteredTargets.length === 0}
             >
-              {targets.map((target) => (
+              {filteredTargets.length === 0 && <option value="">No matching targets</option>}
+              {filteredTargets.map((target) => (
                 <option key={target.key} value={target.key}>
                   {target.label}
                 </option>
@@ -95,15 +165,40 @@ export function HuaweiDiagnosticTestsCard({ targets, definitions }: Props) {
             </select>
           </label>
 
+          {selectedDefinition?.parameters.map((param) => (
+            <label key={param.name} className="flex flex-col gap-1 text-sm text-white/60">
+              {param.label}
+              {param.required ? " *" : ""}
+              <input
+                className={inputClassName}
+                type={param.type === "number" ? "number" : "text"}
+                value={paramValues[param.name] ?? ""}
+                placeholder={param.placeholder}
+                onChange={(event) => handleParamChange(param.name, event.target.value)}
+              />
+            </label>
+          ))}
+
           <button
             type="button"
-            disabled={isPending}
+            disabled={isPending || !effectiveTargetKey}
             onClick={execute}
-            className={buttonClassName}
+            className={
+              selectedDefinition?.kind === "control"
+                ? controlButtonClassName
+                : buttonClassName
+            }
           >
             {isPending ? "Running..." : "Execute"}
           </button>
         </div>
+      )}
+
+      {selectedDefinition?.kind === "control" && (
+        <p className="mt-3 text-xs text-red-300">
+          ⚠ This test dispatches a real Active Power Control command to the
+          selected plant. It is not a read-only query.
+        </p>
       )}
 
       {error && <p className="mt-4 text-sm text-red-300">{error}</p>}
