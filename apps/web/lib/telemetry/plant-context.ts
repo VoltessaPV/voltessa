@@ -1,7 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { after } from "next/server";
 
-import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -15,21 +13,17 @@ import { prisma } from "@/lib/prisma";
  * freshness-checking — see the Prisma query trace this milestone is based
  * on).
  *
- * Also the single place that schedules the background telemetry sync (via
- * the unchanged `lib/fusionsolar/telemetry-sync-service.ts`) — moved here
- * from being triggered redundantly inside every low-level query function.
- * Synchronization semantics (freshness threshold, atomic lease, non-
- * blocking `after()`) are completely unchanged (ADR-011/ADR-012) — only
- * how many times per request this decision gets made moves, from N times
- * to exactly once.
+ * Login-triggered background sync milestone: this function no longer
+ * schedules the telemetry sync itself — that now happens once, at
+ * sign-in, via `lib/auth/config.ts`'s `events.signIn` handler, so the
+ * user already has fresh data before ever reaching Dashboard/Market. This
+ * function is plant/connection resolution only.
  */
 
 export type PlantRenderContext = {
   plant: {
     id: string;
     name: string;
-    plantCode: string | null;
-    timezone: string;
     capacityKw: Prisma.Decimal | null;
   };
   /** `null` when the organization has no FusionSolar connection at all (not yet onboarded, or revoked). */
@@ -49,8 +43,6 @@ export async function resolvePlantContext(
     select: {
       id: true,
       name: true,
-      plantCode: true,
-      timezone: true,
       capacityKw: true,
     },
   });
@@ -67,17 +59,6 @@ export async function resolvePlantContext(
   });
 
   const connectionId = connection?.id ?? null;
-
-  if (connectionId) {
-    after(() => {
-      synchronizeFusionSolarConnection(connectionId).catch((error: unknown) => {
-        console.error(
-          "[FusionSolar Telemetry Sync] Background sync failed unexpectedly",
-          { connectionId, error },
-        );
-      });
-    });
-  }
 
   return { plant, connectionId };
 }

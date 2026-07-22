@@ -64,17 +64,16 @@ const SYNC_LEASE_MS = 2 * 60 * 1000;
 /**
  * The single shared, explicitly-tunable freshness threshold — referenced
  * everywhere a caller decides "is this connection's telemetry fresh
- * enough," never duplicated as a literal. The scheduler goes through this
- * exact same check as every other caller (no special-cased `force`), so
- * this value and the scheduler's own cadence are no longer independent:
- * set below the (unchanged, 5-minute) systemd timer interval, each
- * scheduler tick still finds the previous sync just outside this window
- * and performs a real sync — preserving today's actual Huawei-call cadence
- * in practice for this milestone. Raising this one constant later is the
- * entire mechanism for the deferred scheduler-frequency milestone; no
- * other code changes.
+ * enough," never duplicated as a literal. Approved architecture: the
+ * scheduler now runs hourly (06:00-22:00) plus a 23:58 close, so this
+ * constant is no longer coupled to the scheduler's own cadence — it is
+ * specifically the login-triggered freshness threshold ("if the last
+ * successful Huawei sync is older than 5 minutes, sync now"). The
+ * scheduler goes through this exact same check as every other caller (no
+ * special-cased `force`), so a scheduled run within 5 minutes of a
+ * login-triggered sync is simply skipped as already fresh.
  */
-export const FUSIONSOLAR_SYNC_FRESHNESS_MS = 4 * 60 * 1000;
+export const FUSIONSOLAR_SYNC_FRESHNESS_MS = 5 * 60 * 1000;
 
 /**
  * Start of the sync window: `DAYS_BACK` complete local calendar days
