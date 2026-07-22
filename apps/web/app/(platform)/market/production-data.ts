@@ -248,28 +248,53 @@ export async function getProductionPageData(
     ? Number(context.plant.capacityKw.toString())
     : null;
 
-  // Category B — DeviceTelemetry only, needs a plant but never a live
-  // FusionSolar connection. Computed unconditionally: historical telemetry
-  // can exist (and should keep being shown) even if the live connection is
-  // currently broken or was revoked.
-  let settlementEnergySeries: SettlementEnergyPoint[] = [];
-  let latestTelemetryAt: Date | null = null;
-
-  if (context) {
-    const [series, latestTimestamp] = await Promise.all([
-      getPlantSettlementEnergySeries(context.plant.id, dayStart, seriesEnd),
-      getLatestTelemetryTimestamp(context.plant.id),
-    ]);
-
-    settlementEnergySeries = series;
-    latestTelemetryAt = latestTimestamp;
+  if (!context) {
+    return {
+      currentProduction: UNAVAILABLE_NO_TELEMETRY,
+      currentExport: UNAVAILABLE_NO_TELEMETRY,
+      currentImport: UNAVAILABLE_NO_TELEMETRY,
+      configuredExportMode: UNAVAILABLE_NO_CONNECTION_MODE,
+      configuredExportModeLabel: describeConfiguredExportMode(
+        UNAVAILABLE_NO_CONNECTION_MODE,
+      ),
+      settlementEnergySeries: [],
+      installedCapacityKw,
+      latestTelemetryAt: null,
+    };
   }
+
+  // Category B (settlement series/latest timestamp) and Category A
+  // (current inverter/meter readings) don't depend on each other's
+  // results — both were previously fetched as two separate sequential
+  // `Promise.all` groups; merged into one, gated the same way each
+  // branch already was (Category A only for `isToday`, unchanged).
+  const [series, latestTimestamp, inverterRows, meterRow] = await Promise.all([
+    getPlantSettlementEnergySeries(context.plant.id, dayStart, seriesEnd),
+    getLatestTelemetryTimestamp(context.plant.id),
+    isToday
+      ? preloaded
+        ? Promise.resolve(preloaded.inverterTelemetry)
+        : (async () => {
+            const inverterDevices = await prisma.device.findMany({
+              where: { plantId: context.plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
+              select: { id: true },
+            });
+            return getLatestInverterTelemetryForDevices(
+              inverterDevices.map((device) => device.id),
+            );
+          })()
+      : Promise.resolve([]),
+    isToday ? getLatestMeterTelemetry(context.plant.id) : Promise.resolve(null),
+  ]);
+
+  const settlementEnergySeries = series;
+  const latestTelemetryAt = latestTimestamp;
 
   // Category A — "current" state, database-only (Database-First Telemetry
   // Architecture milestone). Only ever computed for `isToday` — "current
   // production" has no meaning while browsing a historical day,
   // independent of where the value comes from.
-  if (!context || !isToday) {
+  if (!isToday) {
     return {
       currentProduction: UNAVAILABLE_NO_TELEMETRY,
       currentExport: UNAVAILABLE_NO_TELEMETRY,
@@ -283,21 +308,6 @@ export async function getProductionPageData(
       latestTelemetryAt,
     };
   }
-
-  const [inverterRows, meterRow] = await Promise.all([
-    preloaded
-      ? Promise.resolve(preloaded.inverterTelemetry)
-      : (async () => {
-          const inverterDevices = await prisma.device.findMany({
-            where: { plantId: context.plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
-            select: { id: true },
-          });
-          return getLatestInverterTelemetryForDevices(
-            inverterDevices.map((device) => device.id),
-          );
-        })(),
-    getLatestMeterTelemetry(context.plant.id),
-  ]);
 
   const currentProduction = sumInverterProduction(inverterRows);
   const { currentExport, currentImport } = deriveGridReadings(meterRow);

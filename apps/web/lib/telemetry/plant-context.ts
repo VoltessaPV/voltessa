@@ -1,5 +1,8 @@
 import type { Prisma } from "@prisma/client";
+import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
+import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -13,11 +16,17 @@ import { prisma } from "@/lib/prisma";
  * freshness-checking — see the Prisma query trace this milestone is based
  * on).
  *
- * Login-triggered background sync milestone: this function no longer
- * schedules the telemetry sync itself — that now happens once, at
- * sign-in, via `lib/auth/config.ts`'s `events.signIn` handler, so the
- * user already has fresh data before ever reaching Dashboard/Market. This
- * function is plant/connection resolution only.
+ * Also the single place that schedules the background telemetry sync
+ * (unforced — `synchronizeFusionSolarConnection`'s own internal freshness
+ * check, `FUSIONSOLAR_SYNC_FRESHNESS_MS`, decides whether it actually
+ * contacts Huawei or no-ops as `skipped_fresh`). Scheduled via `after()`,
+ * so the response to this request is never delayed by it. On top of
+ * `events.signIn`'s login-triggered sync, this restores automatic refresh
+ * for a long-lived session that never signs in again: any Dashboard/Market
+ * visit past the freshness window starts a background sync, and
+ * `revalidatePath` runs only if that sync actually completed with new
+ * data, so a subsequent render (or the same tab, on next navigation) picks
+ * it up.
  */
 
 export type PlantRenderContext = {
@@ -59,6 +68,24 @@ export async function resolvePlantContext(
   });
 
   const connectionId = connection?.id ?? null;
+
+  if (connectionId) {
+    after(() => {
+      synchronizeFusionSolarConnection(connectionId)
+        .then((result) => {
+          if (result.status === "synced") {
+            revalidatePath("/dashboard");
+            revalidatePath("/market");
+          }
+        })
+        .catch((error: unknown) => {
+          console.error(
+            "[FusionSolar Telemetry Sync] Background sync failed unexpectedly",
+            { connectionId, error },
+          );
+        });
+    });
+  }
 
   return { plant, connectionId };
 }

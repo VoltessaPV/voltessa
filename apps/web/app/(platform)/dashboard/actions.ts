@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
@@ -19,6 +20,13 @@ export type RefreshTelemetryResult =
  * Normal Dashboard/Market rendering never calls the sync service at all;
  * this action is the one exception, shared by both pages' Refresh
  * buttons.
+ *
+ * The sync itself is started via `after()` and never awaited here — this
+ * action resolves as soon as the connection is confirmed to exist, so the
+ * button's own response time is bounded by two small Postgres reads, not
+ * by however long Huawei takes to respond. `revalidatePath` runs only
+ * once the background sync actually completes with new data, from inside
+ * the `after()` callback.
  */
 export async function refreshFusionSolarTelemetry(): Promise<RefreshTelemetryResult> {
   const user = await requirePermission(Permissions.canViewPlants);
@@ -40,22 +48,24 @@ export async function refreshFusionSolarTelemetry(): Promise<RefreshTelemetryRes
     };
   }
 
-  const result = await synchronizeFusionSolarConnection(connection.id, {
-    force: true,
+  after(() => {
+    synchronizeFusionSolarConnection(connection.id, { force: true })
+      .then((result) => {
+        // Both pages read the same connection's telemetry; revalidate
+        // both so whichever page the user is on (and the other, if
+        // visited next) picks up the freshly-synced data.
+        if (result.status === "synced") {
+          revalidatePath("/dashboard");
+          revalidatePath("/market");
+        }
+      })
+      .catch((error: unknown) => {
+        console.error(
+          "[FusionSolar Telemetry Sync] Manual refresh background sync failed unexpectedly",
+          { connectionId: connection.id, error },
+        );
+      });
   });
-
-  if (result.status === "failed") {
-    return {
-      ok: false,
-      error: "Huawei synchronization failed — showing existing data",
-    };
-  }
-
-  // Both pages read the same connection's telemetry; revalidate both so
-  // whichever page the user is on (and the other, if visited next) picks
-  // up the freshly-synced data.
-  revalidatePath("/dashboard");
-  revalidatePath("/market");
 
   return { ok: true };
 }

@@ -312,16 +312,22 @@ export async function getMarketPageData(params: {
     nextDateParam: shiftDateString(selectedDate, 1),
   };
 
-  const dayAheadResult = await dbMarketPriceProvider.getDayAheadPrices({
-    referenceDate: referenceInstant,
-    timeZone: BULGARIA_TIMEZONE,
-  });
+  // These three reads don't depend on each other's results (only the
+  // subsequent processing below does) — fetched in parallel instead of
+  // three sequential round trips.
+  const [dayAheadResult, importStatus, currentResult] = await Promise.all([
+    dbMarketPriceProvider.getDayAheadPrices({
+      referenceDate: referenceInstant,
+      timeZone: BULGARIA_TIMEZONE,
+    }),
+    dbMarketPriceProvider.getLatestImportStatus(),
+    isToday ? dbMarketPriceProvider.getCurrentPrice() : Promise.resolve(null),
+  ]);
 
   if (!dayAheadResult.available) {
     return { dataAvailable: false, threshold, ...toolbarState };
   }
 
-  const importStatus = await dbMarketPriceProvider.getLatestImportStatus();
   const resolutionMinutes = importStatus.available
     ? importStatus.resolutionMinutes
     : DEFAULT_RESOLUTION_MINUTES;
@@ -344,9 +350,7 @@ export async function getMarketPageData(params: {
   let currentPrice: MarketSummaryData["currentPrice"] = null;
   let nextInterval: MarketSummaryData["nextInterval"] = null;
 
-  if (isToday) {
-    const currentResult = await dbMarketPriceProvider.getCurrentPrice();
-
+  if (isToday && currentResult) {
     if (currentResult.available) {
       const currentIndex = knownPoints.findIndex(
         (point) =>
