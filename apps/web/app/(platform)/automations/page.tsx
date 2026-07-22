@@ -3,7 +3,7 @@ import { HuaweiDiagnosticTestsCard } from "@/components/automations/HuaweiDiagno
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import {
-  DIAGNOSTIC_TEST_DEFINITIONS,
+  DIAGNOSTIC_DEFINITIONS,
   getOrgHuaweiDiagnosticTargets,
 } from "@/lib/fusionsolar/diagnostic-tests";
 
@@ -25,8 +25,8 @@ export default async function AutomationsPage() {
 
       <div className="mt-8">
         <HuaweiDiagnosticTestsCard
-          identifiers={targets?.identifiers ?? []}
-          definitions={DIAGNOSTIC_TEST_DEFINITIONS.map(({ id, label }) => ({
+          targets={targets?.targets ?? []}
+          definitions={DIAGNOSTIC_DEFINITIONS.map(({ id, label }) => ({
             id,
             label,
           }))}

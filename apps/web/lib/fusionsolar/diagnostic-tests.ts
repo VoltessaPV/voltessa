@@ -6,46 +6,20 @@ import {
 import { prisma } from "@/lib/prisma";
 
 /**
- * Generic, read-only Huawei API diagnostic framework backing the
- * Automations page's "Huawei Diagnostic Tests" section. Each entry in
- * `DIAGNOSTIC_TEST_DEFINITIONS` describes exactly one Huawei endpoint; the
- * UI generates one button per (definition x identifier) pair from the
- * organization's real `Plant`/`Device` rows, never a hardcoded plant name.
- * Adding a new Huawei endpoint to test later means adding one entry to
- * `DIAGNOSTIC_TEST_DEFINITIONS` — everything else (identifier discovery,
- * execution, timing, result shape) is already shared.
+ * Generic Huawei API diagnostic framework backing the Automations page's
+ * "Huawei Diagnostic Tests" section. The framework knows nothing about any
+ * specific Huawei endpoint (Active Power Control or otherwise) — it only
+ * knows how to: discover targets (the org's Plant + Devices), run a
+ * registered `DiagnosticDefinition` against a chosen target, and report the
+ * result. Every concrete Huawei endpoint this can call is just one entry in
+ * `DIAGNOSTIC_DEFINITIONS` — adding another endpoint later means adding one
+ * entry here, nothing else (no UI/component change, no framework change).
  *
  * Engineering diagnostics only, same class as `app/api/diag/fusionsolar-*`
- * — not a production feature. Every definition here must be read-only; the
- * shared executor (`executeDiagnosticTest`) only ever calls
- * `callFusionSolarApi` directly, never anything from `export-control.ts`.
+ * — not a production feature.
  */
 
-export type DiagnosticTestDefinition = {
-  id: string;
-  label: string;
-  path: string;
-  buildRequestBody: (identifier: string) => Record<string, unknown>;
-};
-
-export const DIAGNOSTIC_TEST_DEFINITIONS: DiagnosticTestDefinition[] = [
-  {
-    id: "active-power-control-mode",
-    label: "Query Active Power Control Mode",
-    path: "/rest/openapi/pvms/nbi/v1/configuration/active-power-control-mode",
-    buildRequestBody: (identifier) => ({ plantCode: identifier }),
-  },
-];
-
-export function findDiagnosticTestDefinition(
-  testId: string,
-): DiagnosticTestDefinition | null {
-  return (
-    DIAGNOSTIC_TEST_DEFINITIONS.find(
-      (definition) => definition.id === testId,
-    ) ?? null
-  );
-}
+export type DiagnosticTargetKind = "plant" | "device";
 
 export type DiagnosticDeviceType =
   | "plant"
@@ -54,11 +28,60 @@ export type DiagnosticDeviceType =
   | "smart-dongle"
   | string;
 
-export type DiagnosticIdentifier = {
+/**
+ * One selectable entry in the Target dropdown. Carries every raw
+ * identifying field Huawei's various endpoints ask for (a plant-scoped
+ * `plantCode`/`stationCodes`, a device DN, a numeric Huawei device id, a
+ * devTypeId) so any definition's `buildRequestBody` can pick whichever
+ * field it needs — the framework itself does not interpret these fields.
+ */
+export type DiagnosticTarget = {
+  /** Stable value used to re-look-up this exact target server-side. */
+  key: string;
   label: string;
-  identifier: string;
+  kind: DiagnosticTargetKind;
   deviceType: DiagnosticDeviceType;
+  plantCode: string;
+  devDn: string | null;
+  huaweiDeviceId: string | null;
+  devTypeId: number | null;
 };
+
+/**
+ * A single diagnostic test. `buildRequestBody` and the optional
+ * `parseResponse` are the only endpoint-specific pieces — everything else
+ * (timing, error capture, result shape) lives in `executeDiagnosticTest`
+ * below and is shared by every definition.
+ */
+export type DiagnosticDefinition = {
+  id: string;
+  label: string;
+  endpoint: string;
+  buildRequestBody: (target: DiagnosticTarget) => Record<string, unknown>;
+  /** Optional: normalizes the raw success payload for easier reading. The raw payload is always kept and shown regardless. */
+  parseResponse?: (raw: unknown) => unknown;
+};
+
+export const DIAGNOSTIC_DEFINITIONS: DiagnosticDefinition[] = [
+  {
+    id: "active-power-control-mode",
+    label: "Query Active Power Control Mode",
+    endpoint:
+      "/rest/openapi/pvms/nbi/v1/configuration/active-power-control-mode",
+    buildRequestBody: (target) => ({
+      plantCode: target.devDn ?? target.plantCode,
+    }),
+  },
+];
+
+export function findDiagnosticDefinition(
+  testId: string,
+): DiagnosticDefinition | null {
+  return (
+    DIAGNOSTIC_DEFINITIONS.find((definition) => definition.id === testId) ??
+    null
+  );
+}
 
 function deviceTypeLabel(devTypeId: number): DiagnosticDeviceType {
   if (devTypeId === 1) return "inverter";
@@ -68,10 +91,10 @@ function deviceTypeLabel(devTypeId: number): DiagnosticDeviceType {
 }
 
 /**
- * The organization's Huawei plant plus every identifier a diagnostic test
- * can target: the plant's own DN, plus every synced device's DN. Shared
- * between the page (rendering one button per identifier) and the server
- * action (verifying a client-supplied identifier actually belongs to this
+ * The organization's Huawei plant plus every target a diagnostic test can
+ * run against: the plant itself, plus every synced device. Shared between
+ * the page (populating the Target dropdown) and the server action
+ * (re-verifying a client-supplied target key actually belongs to this
  * organization before ever calling Huawei with it) — never hardcodes a
  * specific plant.
  */
@@ -80,7 +103,7 @@ export async function getOrgHuaweiDiagnosticTargets(
 ): Promise<{
   plantId: string;
   plantName: string;
-  identifiers: DiagnosticIdentifier[];
+  targets: DiagnosticTarget[];
 } | null> {
   const plant = await prisma.plant.findFirst({
     where: {
@@ -95,35 +118,47 @@ export async function getOrgHuaweiDiagnosticTargets(
     return null;
   }
 
+  const plantCode = plant.plantCode;
+
   const devices = await prisma.device.findMany({
     where: { plantId: plant.id },
     orderBy: [{ devTypeId: "asc" }, { devName: "asc" }],
-    select: { devDn: true, devName: true, devTypeId: true },
+    select: { devDn: true, devName: true, devTypeId: true, huaweiDeviceId: true },
   });
 
-  const identifiers: DiagnosticIdentifier[] = [
+  const targets: DiagnosticTarget[] = [
     {
+      key: plantCode,
       label: `Plant (${plant.name})`,
-      identifier: plant.plantCode,
+      kind: "plant",
       deviceType: "plant",
+      plantCode,
+      devDn: null,
+      huaweiDeviceId: null,
+      devTypeId: null,
     },
     ...devices.map((device) => ({
+      key: device.devDn,
       label: `${deviceTypeLabel(device.devTypeId)} — ${device.devName}`,
-      identifier: device.devDn,
+      kind: "device" as const,
       deviceType: deviceTypeLabel(device.devTypeId),
+      plantCode,
+      devDn: device.devDn,
+      huaweiDeviceId: device.huaweiDeviceId?.toString() ?? null,
+      devTypeId: device.devTypeId,
     })),
   ];
 
-  return { plantId: plant.id, plantName: plant.name, identifiers };
+  return { plantId: plant.id, plantName: plant.name, targets };
 }
 
 export type DiagnosticTestResult = {
   testId: string;
   testLabel: string;
-  identifier: string;
-  identifierLabel: string;
+  targetKey: string;
+  targetLabel: string;
   deviceType: DiagnosticDeviceType;
-  requestPath: string;
+  endpoint: string;
   requestBody: Record<string, unknown>;
   timestamp: string;
   durationMs: number;
@@ -132,37 +167,38 @@ export type DiagnosticTestResult = {
   failCode: number | null;
   message: string | null;
   responseBody: unknown;
+  parsedResult: unknown;
 };
 
 /**
- * The single shared executor every diagnostic button calls through. Only
- * `definition.path`/`definition.buildRequestBody` vary per test — timing,
- * error handling, and the result shape are identical for every test,
- * present and future. One call in, one Huawei request out: no batching,
- * no retries, no loops.
+ * The single shared executor every diagnostic test runs through, regardless
+ * of which Huawei endpoint it calls. Only `definition.endpoint` /
+ * `buildRequestBody` / `parseResponse` vary — timing, error handling, and
+ * the result shape are identical for every test, present and future. One
+ * call in, one Huawei request out: no batching, no retries, no loops.
  */
 export async function executeDiagnosticTest(
   connection: FusionSolarConnection,
-  definition: DiagnosticTestDefinition,
-  target: DiagnosticIdentifier,
+  definition: DiagnosticDefinition,
+  target: DiagnosticTarget,
 ): Promise<DiagnosticTestResult> {
-  const requestBody = definition.buildRequestBody(target.identifier);
+  const requestBody = definition.buildRequestBody(target);
   const startedAt = Date.now();
   const timestamp = new Date().toISOString();
 
   try {
     const result = await callFusionSolarApi<unknown>(connection, {
-      path: definition.path,
+      path: definition.endpoint,
       body: requestBody,
     });
 
     return {
       testId: definition.id,
       testLabel: definition.label,
-      identifier: target.identifier,
-      identifierLabel: target.label,
+      targetKey: target.key,
+      targetLabel: target.label,
       deviceType: target.deviceType,
-      requestPath: definition.path,
+      endpoint: definition.endpoint,
       requestBody,
       timestamp,
       durationMs: Date.now() - startedAt,
@@ -171,6 +207,9 @@ export async function executeDiagnosticTest(
       failCode: null,
       message: null,
       responseBody: result.data,
+      parsedResult: definition.parseResponse
+        ? definition.parseResponse(result.data)
+        : null,
     };
   } catch (error) {
     const durationMs = Date.now() - startedAt;
@@ -188,10 +227,10 @@ export async function executeDiagnosticTest(
       return {
         testId: definition.id,
         testLabel: definition.label,
-        identifier: target.identifier,
-        identifierLabel: target.label,
+        targetKey: target.key,
+        targetLabel: target.label,
         deviceType: target.deviceType,
-        requestPath: definition.path,
+        endpoint: definition.endpoint,
         requestBody,
         timestamp,
         durationMs,
@@ -200,16 +239,17 @@ export async function executeDiagnosticTest(
         failCode: parsed?.failCode ?? error.failCode,
         message: parsed?.message ?? error.message,
         responseBody: error.response,
+        parsedResult: null,
       };
     }
 
     return {
       testId: definition.id,
       testLabel: definition.label,
-      identifier: target.identifier,
-      identifierLabel: target.label,
+      targetKey: target.key,
+      targetLabel: target.label,
       deviceType: target.deviceType,
-      requestPath: definition.path,
+      endpoint: definition.endpoint,
       requestBody,
       timestamp,
       durationMs,
@@ -218,6 +258,7 @@ export async function executeDiagnosticTest(
       failCode: null,
       message: error instanceof Error ? error.message : String(error),
       responseBody: null,
+      parsedResult: null,
     };
   }
 }
