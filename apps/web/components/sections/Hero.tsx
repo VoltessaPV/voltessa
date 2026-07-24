@@ -1,16 +1,18 @@
-import Button from "../ui/Button";
 import Badge from "../ui/Badge";
 import { RequestDemoButton } from "../ui/RequestDemoButton";
+import { TalkToUsButton } from "../ui/TalkToUsButton";
 import Navbar from "../layout/Navbar";
 import { PlatformPreview } from "./PlatformPreview";
+import ContactSection from "./ContactSection";
 import Footer from "../layout/Footer";
+import { CTAProvider } from "../providers/CTAProvider";
 
 
 export default function Hero() {
   return (
-    <>
+    <CTAProvider>
       <Navbar />
-      
+
       <section className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
         <div className="mx-auto w-full max-w-[1600px] px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
 
@@ -38,9 +40,7 @@ export default function Hero() {
             <div className="mt-10 flex gap-4">
               <RequestDemoButton />
 
-              <Button variant="secondary">
-                Talk to Us
-              </Button>
+              <TalkToUsButton />
             </div>
 
             <div className="mt-10 tracking-[0.35em] text-sm uppercase text-slate-500">
@@ -55,7 +55,9 @@ export default function Hero() {
         </div>
       </section>
 
+      <ContactSection />
+
       <Footer />
-    </>
+    </CTAProvider>
   );
 }

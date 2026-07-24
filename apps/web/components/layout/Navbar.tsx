@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { ContactNavLink } from "./ContactNavLink";
 import { RequestDemoButton } from "../ui/RequestDemoButton";
 import { routes } from "@/lib/routes";
 
@@ -38,9 +39,7 @@ export default function Navbar() {
             About
           </a>
 
-          <a href={routes.home} className="transition hover:text-white">
-            Contact
-          </a>
+          <ContactNavLink />
         </nav>
 
         {/* CTA */}

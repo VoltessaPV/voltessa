@@ -4,6 +4,9 @@ export const APP_URL = "https://voltessa.ai";
 
 export const SUPPORT_EMAIL = "contact@voltessa.ai";
 
+/** Displayed in the landing page's Contact section — deliberately distinct from SUPPORT_EMAIL (the Footer's mailto), matching the address given for that section specifically. */
+export const CONTACT_EMAIL = "hello@voltessa.ai";
+
 export const COMPANY_NAME = "Voltessa";
 
 /** Every "Request Demo" button (see components/ui/RequestDemoButton.tsx) opens this one Calendly event — change only here to point them all at a different event. */
