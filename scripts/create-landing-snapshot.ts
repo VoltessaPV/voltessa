@@ -160,8 +160,19 @@ async function main() {
     select: { id: true, devName: true },
   });
 
+  // Fictional, Huawei-style display names — the real devName values are
+  // this organization's actual production serial numbers and must never
+  // appear in a public marketing snapshot. Deterministic (not derived from
+  // the real name), so the snapshot never leaks real device identifiers.
+  const FICTIONAL_INVERTER_NAMES = [
+    "SUN2000A23X9B10451",
+    "SUN2000A23X9B10452",
+    "SUN2000A23X9B10453",
+    "SUN2000A23X9B10454",
+  ];
+
   const inverters = await Promise.all(
-    inverterDevices.map(async (device) => {
+    inverterDevices.map(async (device, index) => {
       const row = await prisma.deviceTelemetry.findFirst({
         where: { deviceId: device.id, timestamp: { lte: frozenNow } },
         select: { activePower: true, inverterState: true },
@@ -172,7 +183,7 @@ async function main() {
 
       return {
         deviceId: device.id,
-        name: device.devName,
+        name: FICTIONAL_INVERTER_NAMES[index % FICTIONAL_INVERTER_NAMES.length],
         online: classification.online,
         powerKw,
         statusColor: classification.color,
