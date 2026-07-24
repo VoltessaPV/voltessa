@@ -47,7 +47,6 @@ export default function SolutionsSection() {
           <FeatureCard
             icon={Battery}
             title="Battery Energy Storage"
-            badge="Coming Soon"
             description="Battery optimization capabilities currently under development."
             highlights={["State of Charge", "Peak shaving", "Market arbitrage", "Grid services"]}
           />

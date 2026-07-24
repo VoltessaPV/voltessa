@@ -38,19 +38,22 @@ export default function AboutSection() {
       <div className="mx-auto max-w-7xl px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-4xl font-bold leading-tight">
-            Built for the next generation of renewable energy.
+            Why Voltessa
           </h2>
 
           <div className="mt-6 space-y-4 text-lg leading-8 text-slate-400">
-            <p>Renewable energy assets are becoming increasingly complex.</p>
-            <p>Operators need more than monitoring.</p>
             <p>
-              They need operational visibility, market awareness and automation in one
-              platform.
+              Renewable energy operations have become significantly more complex. Plant
+              monitoring, electricity markets, grid requirements and operational decisions are
+              often handled across disconnected systems.
             </p>
             <p>
-              Voltessa brings these capabilities together through a modern, operator-first
-              experience designed specifically for renewable energy assets.
+              Voltessa brings these workflows together into one platform, giving operators a
+              clear operational view and the tools to make faster, better-informed decisions.
+            </p>
+            <p>
+              We believe renewable assets should be managed with the same level of operational
+              intelligence expected from any modern industrial infrastructure.
             </p>
           </div>
         </div>
