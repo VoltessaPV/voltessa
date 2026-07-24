@@ -179,7 +179,8 @@ function buildSeries(
   return points;
 }
 
-function buildDistribution(
+/** Exported so scripts/create-landing-snapshot.ts can reuse this exact aggregation instead of duplicating it — no behavior change for the existing internal caller below. */
+export function buildDistribution(
   knownPoints: MarketPricePoint[],
 ): DistributionBucket[] {
   // Three bands, High-to-Low (Market Dashboard UX Polish milestone) —
@@ -219,8 +220,12 @@ function buildDistribution(
  * Plain, factual observations over the real price series — never
  * speculative ("expected", "predicted"). Each one is a statistic anyone
  * could recompute from the same series.
+ *
+ * Exported so scripts/create-landing-snapshot.ts can reuse this exact
+ * aggregation instead of duplicating it — no behavior change for the
+ * existing internal caller below.
  */
-function buildInsights(
+export function buildInsights(
   knownPoints: MarketPricePoint[],
   resolutionMinutes: number,
 ): MarketInsight[] {
