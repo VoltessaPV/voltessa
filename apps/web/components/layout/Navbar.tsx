@@ -1,7 +1,7 @@
 import Image from "next/image";
 import { ContactNavLink } from "./ContactNavLink";
+import { SectionNavLink } from "./SectionNavLink";
 import { RequestDemoButton } from "../ui/RequestDemoButton";
-import { routes } from "@/lib/routes";
 
 export default function Navbar() {
   return (
@@ -27,17 +27,11 @@ export default function Navbar() {
         {/* Navigation */}
 
         <nav className="hidden items-center gap-10 text-sm text-slate-300 md:flex">
-          <a href={routes.home} className="transition hover:text-white">
-            Platform
-          </a>
+          <SectionNavLink id="hero" label="Platform" />
 
-          <a href={routes.home} className="transition hover:text-white">
-            Solutions
-          </a>
+          <SectionNavLink id="solutions" label="Solutions" />
 
-          <a href={routes.home} className="transition hover:text-white">
-            About
-          </a>
+          <SectionNavLink id="about" label="About" />
 
           <ContactNavLink />
         </nav>

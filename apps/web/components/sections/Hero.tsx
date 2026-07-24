@@ -3,6 +3,9 @@ import { RequestDemoButton } from "../ui/RequestDemoButton";
 import { TalkToUsButton } from "../ui/TalkToUsButton";
 import Navbar from "../layout/Navbar";
 import { PlatformPreview } from "./PlatformPreview";
+import SolutionsSection from "./SolutionsSection";
+import AboutSection from "./AboutSection";
+import RoadmapSection from "./RoadmapSection";
 import ContactSection from "./ContactSection";
 import Footer from "../layout/Footer";
 import { CTAProvider } from "../providers/CTAProvider";
@@ -13,7 +16,7 @@ export default function Hero() {
     <CTAProvider>
       <Navbar />
 
-      <section className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
+      <section id="hero" className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
         <div className="mx-auto w-full max-w-[1600px] px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
 
           <div>
@@ -54,6 +57,12 @@ export default function Hero() {
 
         </div>
       </section>
+
+      <SolutionsSection />
+
+      <AboutSection />
+
+      <RoadmapSection />
 
       <ContactSection />
 
