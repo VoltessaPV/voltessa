@@ -32,8 +32,15 @@ type MarketPriceChartProps = {
    * forward-filling — unlike the previous power-based overlay, this can
    * never distort the price line's shape. Omitted entirely (no axis, no
    * bars, no legend entry) when empty.
+   *
+   * Only `intervalStart`/`exportedKwh` — this chart never renders imported
+   * energy, so `production-data.ts`'s full `SettlementEnergyPoint` (which
+   * also carries `importedKwh`, used elsewhere for the Dashboard/Market
+   * KPI totals) is narrowed to these two fields at the prop boundary
+   * (`market/page.tsx`) so `importedKwh` never crosses into this RSC
+   * payload for a field nothing here reads.
    */
-  settlementEnergySeries?: SettlementEnergyPoint[];
+  settlementEnergySeries?: Pick<SettlementEnergyPoint, "intervalStart" | "exportedKwh">[];
   /**
    * The plant's configured installed capacity (kW) — read from
    * `Plant.capacityKw`, never hardcoded, never derived from telemetry. The
@@ -108,7 +115,7 @@ function getExportBands(
  */
 function buildUnifiedData(
   priceSeries: MarketPricePoint[],
-  energySeries: SettlementEnergyPoint[],
+  energySeries: Pick<SettlementEnergyPoint, "intervalStart" | "exportedKwh">[],
 ): UnifiedDatum[] {
   const energyByTime = new Map(
     energySeries.map((e) => [e.intervalStart.getTime(), e.exportedKwh]),

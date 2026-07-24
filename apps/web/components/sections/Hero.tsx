@@ -1,7 +1,7 @@
 import Button from "../ui/Button";
 import Badge from "../ui/Badge";
 import Navbar from "../layout/Navbar";
-import DashboardMock from "./DashboardMock";
+import { PlatformPreview } from "./PlatformPreview";
 import Footer from "../layout/Footer";
 
 
@@ -50,7 +50,7 @@ export default function Hero() {
           </div>
 
           <div className="flex justify-center">
-            <DashboardMock />
+            <PlatformPreview />
           </div>
 
         </div>
