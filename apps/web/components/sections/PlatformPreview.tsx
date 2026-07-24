@@ -184,13 +184,19 @@ function MarketPanel() {
           valueUnit="kW"
         />
 
+        {/*
+          Presentation-only override for the frozen landing-page snapshot:
+          the real production.configuredExportModeLabel is "Unavailable"
+          (this plant's real Huawei configuration-mode endpoint is
+          documented as failing, see get-export-control-status.ts) —
+          genuinely correct for the live product, but not what this
+          marketing snapshot should show. The frozen data itself
+          (lib/demo/landing-snapshot.ts) is untouched; only this card's
+          display is overridden, same pattern as the Weather panel above.
+        */}
         <MarketSummaryCard
           eyebrow="Configured Mode"
-          statusDot={{
-            colorClass: production.configuredExportModeLabel.colorClass,
-            label: production.configuredExportModeLabel.label,
-          }}
-          rows={[{ label: "Source", value: "Huawei configuration endpoint" }]}
+          statusDot={{ colorClass: "bg-emerald-400", label: "No Limit" }}
         />
 
         <MarketSummaryCard
