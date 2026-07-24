@@ -25,6 +25,16 @@ import BrowserBar from "../dashboard/BrowserBar";
  * either a live server action or navigation not part of the requested
  * fake-widget replacements), no Market/BESS/Automations — this is a single,
  * non-scrolling Dashboard screenshot only.
+ *
+ * `AppSidebar` is `position: fixed`, which positions relative to the
+ * nearest ancestor that establishes a containing block for fixed elements
+ * (a `transform`/`filter`/`will-change: transform`, etc.) — otherwise it
+ * escapes straight to the real browser viewport, exactly like the real
+ * `AppShell` relies on `pl-64` (not a grid) to offset content for it. The
+ * `[will-change:transform]` wrapper below is that containing block, so the
+ * sidebar renders trapped inside this mockup box instead of pinned to the
+ * landing page's own left edge; `pl-64` reserves the same 16rem the real
+ * `AppShell` reserves for it.
  */
 
 const data = DEMO_DASHBOARD_DATA;
@@ -34,10 +44,10 @@ export function PlatformPreview() {
     <div className="w-full max-w-[980px] overflow-hidden rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl">
       <BrowserBar />
 
-      <div className="grid grid-cols-[180px_1fr]">
+      <div className="relative [will-change:transform]">
         <AppSidebar />
 
-        <main className="p-2">
+        <main className="p-2 pl-64">
           <div className="mr-auto max-w-7xl space-y-3">
             <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
               <MarketSummaryCard eyebrow="Yield Today" value={data.kpis.producedTodayKwh?.toFixed(1)} valueUnit="kWh" />
