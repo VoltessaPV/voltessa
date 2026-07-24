@@ -1,5 +1,5 @@
 import Image from "next/image";
-import Button from "../ui/Button";
+import { RequestDemoButton } from "../ui/RequestDemoButton";
 import { routes } from "@/lib/routes";
 
 export default function Navbar() {
@@ -45,9 +45,7 @@ export default function Navbar() {
 
         {/* CTA */}
 
-        <Button className="px-6 py-3 text-sm">
-          Request Demo
-        </Button>
+        <RequestDemoButton className="px-6 py-3 text-sm" />
 
       </div>
     </header>

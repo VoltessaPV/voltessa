@@ -1,5 +1,6 @@
 import Button from "../ui/Button";
 import Badge from "../ui/Badge";
+import { RequestDemoButton } from "../ui/RequestDemoButton";
 import Navbar from "../layout/Navbar";
 import { PlatformPreview } from "./PlatformPreview";
 import Footer from "../layout/Footer";
@@ -35,9 +36,7 @@ export default function Hero() {
             </p>
 
             <div className="mt-10 flex gap-4">
-              <Button>
-                Request Demo
-              </Button>
+              <RequestDemoButton />
 
               <Button variant="secondary">
                 Talk to Us

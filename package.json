@@ -9,7 +9,9 @@
     "check-types": "turbo run check-types"
   },
   "devDependencies": {
+    "dotenv": "^16.4.5",
     "prettier": "^3.7.4",
+    "tsx": "^4.19.2",
     "turbo": "^2.10.2",
     "typescript": "5.9.2"
   },

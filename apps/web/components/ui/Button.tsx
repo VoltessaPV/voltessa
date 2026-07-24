@@ -1,18 +1,17 @@
 import { ReactNode } from "react";
 import clsx from "clsx";
 
+export type ButtonVariant = "primary" | "secondary";
+
 type ButtonProps = {
   children: ReactNode;
-  variant?: "primary" | "secondary";
+  variant?: ButtonVariant;
   className?: string;
 };
 
-export default function Button({
-  children,
-  variant = "primary",
-  className,
-}: ButtonProps) {
-  const styles = clsx(
+/** Shared so any other component that needs to render a Voltessa-styled button without wrapping this one (e.g. RequestDemoButton, which renders react-calendly's own <button>) stays visually identical instead of duplicating these classes. */
+export function buttonClassName(variant: ButtonVariant = "primary", className?: string): string {
+  return clsx(
     "rounded-xl px-7 py-4 font-semibold transition duration-200",
     {
       "bg-blue-600 text-white hover:bg-blue-500":
@@ -23,6 +22,12 @@ export default function Button({
     },
     className
   );
+}
 
-  return <button className={styles}>{children}</button>;
+export default function Button({
+  children,
+  variant = "primary",
+  className,
+}: ButtonProps) {
+  return <button className={buttonClassName(variant, className)}>{children}</button>;
 }
