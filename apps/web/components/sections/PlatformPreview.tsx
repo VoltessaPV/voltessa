@@ -1,99 +1,274 @@
-import { Suspense } from "react";
+"use client";
 
-import { AppSidebar } from "@/components/platform/layout/AppSidebar";
+import { Suspense, useState, type ReactElement } from "react";
+
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
+import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
+import { MarketInfo } from "@/components/market/MarketInfo";
+import { MarketInsights } from "@/components/market/MarketInsights";
+import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
-import { DEMO_DASHBOARD_DATA } from "@/lib/demo/demo-organization";
+import { PreviewSidebar, type PreviewKey } from "@/components/sections/preview/PreviewSidebar";
+import {
+  DEMO_DASHBOARD_DATA,
+  DEMO_MARKET_DATA,
+  DEMO_PRODUCTION_DATA,
+} from "@/lib/demo/demo-organization";
 
 import BrowserBar from "../dashboard/BrowserBar";
 
 /**
- * Hero browser-mockup preview. The window chrome (`BrowserBar`) and the
- * real `AppSidebar` (unmodified, no props — a nav click redirecting an
- * anonymous visitor to `/login` is expected, not a bug) are the only
- * surrounding structure. The content area is exactly
- * `app/(platform)/dashboard/page.tsx`'s own section markup (same
- * containers, spacing, grid hierarchy), fed static `DEMO_DASHBOARD_DATA`
- * instead of a database read, so this preview can't drift from the real
- * Dashboard layout. No toolbar/refresh button (out of scope — both are
- * either a live server action or navigation not part of the requested
- * fake-widget replacements), no Market/BESS/Automations — this is a single,
- * non-scrolling Dashboard screenshot only.
+ * Hero browser-mockup preview. A self-contained, client-side "embedded
+ * product preview": `PreviewSidebar` (a marketing-only visual copy of the
+ * real `AppSidebar`, not the real component) switches which panel is shown
+ * below purely via local React state — the browser window itself never
+ * navigates anywhere. Each panel reuses the real presentational Dashboard/
+ * Market components fed static demo data (`lib/demo/demo-organization.ts`);
+ * BESS and Automations have no reusable presentational component yet, so
+ * those two panels are small static blocks matching the real product's own
+ * "honestly unavailable"/preview conventions.
  *
- * `AppSidebar` is `position: fixed`, which positions relative to the
- * nearest ancestor that establishes a containing block for fixed elements
- * (a `transform`/`filter`/`will-change: transform`, etc.) — otherwise it
- * escapes straight to the real browser viewport, exactly like the real
- * `AppShell` relies on `pl-64` (not a grid) to offset content for it. The
- * `[will-change:transform]` wrapper below is that containing block, so the
- * sidebar renders trapped inside this mockup box instead of pinned to the
- * landing page's own left edge; `pl-64` reserves the same 16rem the real
- * `AppShell` reserves for it.
+ * The whole sidebar+content canvas renders at a real, natural desktop size
+ * (1440x860) and is scaled down with a CSS transform to fit the hero's
+ * fixed-width mockup frame — a real screenshot's proportions, not the
+ * actual layout being squeezed through narrower responsive breakpoints.
  */
 
 const data = DEMO_DASHBOARD_DATA;
+const market = DEMO_MARKET_DATA;
+const production = DEMO_PRODUCTION_DATA;
+
+const CANVAS_WIDTH = 1440;
+const CANVAS_HEIGHT = 860;
+const SCALE = 980 / CANVAS_WIDTH;
+
+const currentPriceTrend = { direction: "up" as const, label: "+4.20 EUR/MWh" };
+
+const nowAnnotation =
+  data.energyFlow.available && production.currentExport.available
+    ? `${data.energyFlow.pvKw} kW prod · ${production.currentExport.kw} kW export`
+    : undefined;
+
+function DashboardPanel() {
+  return (
+    <div className="mr-auto max-w-7xl space-y-3">
+      <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
+        <MarketSummaryCard eyebrow="Yield Today" value={data.kpis.producedTodayKwh?.toFixed(1)} valueUnit="kWh" />
+        <MarketSummaryCard eyebrow="Total Yield" value={data.kpis.totalYieldKwh ? (data.kpis.totalYieldKwh / 1000).toFixed(1) : undefined} valueUnit="MWh" />
+        <MarketSummaryCard eyebrow="Consumption Today" value={data.kpis.consumedTodayKwh?.toFixed(1)} valueUnit="kWh" />
+        <MarketSummaryCard eyebrow="Consumed from PV" value={data.kpis.consumedFromPvKwh?.toFixed(1)} valueUnit="kWh" />
+        <MarketSummaryCard eyebrow="Fed to Grid" value={data.kpis.exportedTodayKwh?.toFixed(1)} valueUnit="kWh" />
+        <MarketSummaryCard eyebrow="From Grid" value={data.kpis.importedTodayKwh?.toFixed(1)} valueUnit="kWh" />
+      </section>
+
+      <section className="grid gap-2.5 lg:grid-cols-[30%_1fr]">
+        <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-white">System Overview</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
+          </div>
+          <div className="mt-2 min-h-0 flex-1">
+            <EnergyFlowDiagram flow={data.energyFlow} isToday={data.isToday} />
+          </div>
+        </div>
+
+        <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Live Energy</h2>
+            <p className="mt-0.5 text-xs text-slate-500">Today&apos;s production, consumption, and grid exchange</p>
+          </div>
+          <div className="mt-2.5 h-[280px]">
+            <Suspense fallback={<ChartSkeleton />}>
+              <DynamicLiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
+            </Suspense>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+        <InvertersCard inverters={data.inverters} />
+        <WeatherCard />
+        <GlidepathCard />
+        <MarketEventLog entries={data.eventLog} />
+      </section>
+    </div>
+  );
+}
+
+function MarketPanel() {
+  return (
+    <div className="mr-auto max-w-7xl space-y-3">
+      <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+        <MarketSummaryCard
+          eyebrow="Today's Revenue"
+          value={data.kpis.revenue.available ? data.kpis.revenue.revenueEur.toFixed(2) : undefined}
+          valueUnit="EUR"
+          rows={
+            data.kpis.revenue.available
+              ? [
+                  { label: "Exported today", value: `${data.kpis.revenue.exportedKwh.toFixed(2)} kWh` },
+                  {
+                    label: "Average selling price",
+                    value:
+                      data.kpis.revenue.averagePriceEurPerMwh !== null
+                        ? `${data.kpis.revenue.averagePriceEurPerMwh.toFixed(2)} EUR/MWh`
+                        : "—",
+                  },
+                ]
+              : undefined
+          }
+        />
+
+        <MarketSummaryCard
+          eyebrow="Current Price"
+          value={market.summary.currentPrice?.value.toString()}
+          valueUnit="EUR/MWh"
+          caption={market.summary.currentPrice?.intervalLabel}
+          trend={currentPriceTrend}
+        />
+
+        <MarketSummaryCard
+          eyebrow="Current Export"
+          value={production.currentExport.available ? production.currentExport.kw.toString() : undefined}
+          valueUnit="kW"
+        />
+
+        <MarketSummaryCard
+          eyebrow="Configured Mode"
+          statusDot={{
+            colorClass: production.configuredExportModeLabel.colorClass,
+            label: production.configuredExportModeLabel.label,
+          }}
+          rows={[{ label: "Source", value: "Huawei configuration endpoint" }]}
+        />
+
+        <MarketSummaryCard
+          eyebrow="Threshold"
+          value={market.threshold.minimumExportPrice.toString()}
+          valueUnit={`${market.threshold.currency}/MWh`}
+          caption="Minimum profitable price"
+          statusDot={{
+            colorClass: market.summary.marketStatus.healthy ? "bg-emerald-400" : "bg-red-400",
+            label: market.summary.marketStatus.healthy ? "Healthy" : "Degraded",
+          }}
+        />
+      </section>
+
+      <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+        <div>
+          <h2 className="text-sm font-semibold text-white">Price &amp; Export</h2>
+          <p className="mt-0.5 text-xs text-slate-500">Electricity price and recommended export windows</p>
+        </div>
+
+        <div className="mt-2.5 h-[260px]">
+          <Suspense fallback={<ChartSkeleton />}>
+            <DynamicMarketPriceChart
+              series={market.series}
+              thresholdPrice={market.threshold.minimumExportPrice}
+              nowAnnotation={nowAnnotation}
+              settlementEnergySeries={production.settlementEnergySeries.map(({ intervalStart, exportedKwh }) => ({
+                intervalStart,
+                exportedKwh,
+              }))}
+              installedCapacityKw={production.installedCapacityKw}
+            />
+          </Suspense>
+        </div>
+      </section>
+
+      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+        <MarketEventLog entries={market.eventLog} />
+        <MarketInsights insights={market.insights} />
+        <MarketDistribution buckets={market.distribution} />
+        <MarketInfo country={market.summary.marketStatus.country} source={market.summary.marketStatus.source} lastUpdateLabel="16:26" />
+      </section>
+    </div>
+  );
+}
+
+function BessPanel() {
+  return (
+    <div className="mr-auto max-w-7xl">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Status</p>
+        <p className="mt-3 text-sm text-slate-400">No battery systems connected.</p>
+        <p className="mt-1 max-w-md text-xs text-slate-600">
+          Voltessa automatically detects and manages battery assets when available.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AutomationsPanel() {
+  return (
+    <div className="mr-auto max-w-7xl">
+      <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+        <h2 className="text-lg font-medium text-white">Huawei Control</h2>
+        <p className="mt-2 text-sm text-white/60">
+          Manual export-control commands for this plant&apos;s Huawei FusionSolar connection.
+        </p>
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button type="button" disabled className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-50">
+            Enable No Limit
+          </button>
+          <button type="button" disabled className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-50">
+            Enable Zero Export
+          </button>
+        </div>
+
+        <p className="mt-4 text-xs text-slate-500">
+          Available for this plant, disabled in this preview — real commands require a connected account.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function AlertsPanel() {
+  return (
+    <div className="mr-auto max-w-7xl">
+      <section>
+        <p className="text-white/60">Review operational alerts and important platform events.</p>
+      </section>
+    </div>
+  );
+}
+
+const PANELS: Record<PreviewKey, () => ReactElement> = {
+  dashboard: DashboardPanel,
+  market: MarketPanel,
+  bess: BessPanel,
+  automations: AutomationsPanel,
+  alerts: AlertsPanel,
+};
 
 export function PlatformPreview() {
+  const [active, setActive] = useState<PreviewKey>("dashboard");
+  const ActivePanel = PANELS[active];
+
   return (
     <div className="w-full max-w-[980px] overflow-hidden rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl">
       <BrowserBar />
 
-      <div className="relative [will-change:transform]">
-        <AppSidebar />
+      <div className="w-full overflow-hidden" style={{ height: CANVAS_HEIGHT * SCALE }}>
+        <div
+          className="flex origin-top-left bg-[#050816] text-white"
+          style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT, transform: `scale(${SCALE})` }}
+        >
+          <PreviewSidebar active={active} onSelect={setActive} />
 
-        <main className="p-2 pl-64">
-          <div className="mr-auto max-w-7xl space-y-3">
-            <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
-              <MarketSummaryCard eyebrow="Yield Today" value={data.kpis.producedTodayKwh?.toFixed(1)} valueUnit="kWh" />
-              <MarketSummaryCard eyebrow="Total Yield" value={data.kpis.totalYieldKwh ? (data.kpis.totalYieldKwh / 1000).toFixed(1) : undefined} valueUnit="MWh" />
-              <MarketSummaryCard eyebrow="Consumption Today" value={data.kpis.consumedTodayKwh?.toFixed(1)} valueUnit="kWh" />
-              <MarketSummaryCard eyebrow="Consumed from PV" value={data.kpis.consumedFromPvKwh?.toFixed(1)} valueUnit="kWh" />
-              <MarketSummaryCard eyebrow="Fed to Grid" value={data.kpis.exportedTodayKwh?.toFixed(1)} valueUnit="kWh" />
-              <MarketSummaryCard eyebrow="From Grid" value={data.kpis.importedTodayKwh?.toFixed(1)} valueUnit="kWh" />
-            </section>
-
-            <section className="grid gap-2.5 lg:grid-cols-[30%_1fr]">
-              <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-white">System Overview</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">Real-time energy flow</p>
-                </div>
-
-                <div className="mt-2 min-h-0 flex-1">
-                  <EnergyFlowDiagram flow={data.energyFlow} isToday={data.isToday} />
-                </div>
-              </div>
-
-              <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-white">Live Energy</h2>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Today&apos;s production, consumption, and grid exchange
-                  </p>
-                </div>
-
-                <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
-                  <Suspense fallback={<ChartSkeleton />}>
-                    <DynamicLiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
-                  </Suspense>
-                </div>
-              </div>
-            </section>
-
-            <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-              <InvertersCard inverters={data.inverters} />
-              <WeatherCard />
-              <GlidepathCard />
-              <MarketEventLog entries={data.eventLog} />
-            </section>
-          </div>
-        </main>
+          <main className="flex-1 overflow-hidden p-4">
+            <ActivePanel />
+          </main>
+        </div>
       </div>
     </div>
   );
