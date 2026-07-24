@@ -1,5 +1,6 @@
 "use client";
 
+import { CloudSun } from "lucide-react";
 import { Suspense, useState, type ReactElement } from "react";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
@@ -7,7 +8,6 @@ import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
-import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketInfo } from "@/components/market/MarketInfo";
@@ -61,6 +61,45 @@ const nowAnnotation =
     ? `${data.energyFlow.pvKw} kW prod · ${production.currentExport.kw} kW export`
     : undefined;
 
+/**
+ * Landing-page-only weather summary — same card shell/eyebrow style as the
+ * real `WeatherCard` (`rounded-2xl border border-white/10 bg-white/[0.03]`,
+ * `CloudSun` eyebrow), but not that component: the real product genuinely
+ * has no weather integration yet ("Weather integration coming soon."), and
+ * this snapshot must not misrepresent that. Frozen, static operational
+ * copy only — no chart, no large icon, no live data.
+ */
+function WeatherSummaryPanel() {
+  const rows: Array<{ label: string; value: string; note?: string }> = [
+    { label: "Solar Irradiation", value: "≈ 3.0 kWh/m²" },
+    { label: "Cloud Cover", value: "56–91%", note: "High cloud cover reducing PV output." },
+    { label: "Module Temperature", value: "24–26°C", note: "Optimal operating temperature." },
+    { label: "Wind", value: "4–6 km/h", note: "Natural cooling of PV modules." },
+    { label: "Rain", value: "Light showers", note: "Temporary production reduction, while naturally cleaning the panels." },
+  ];
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
+      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+        <CloudSun className="h-3.5 w-3.5" />
+        Weather
+      </p>
+
+      <div className="mt-3 space-y-2.5">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-500">{row.label}</span>
+              <span className="text-slate-300">{row.value}</span>
+            </div>
+            {row.note && <p className="mt-0.5 text-[11px] text-slate-600">{row.note}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DashboardPanel() {
   return (
     <div className="mr-auto max-w-7xl space-y-3">
@@ -89,7 +128,7 @@ function DashboardPanel() {
             <h2 className="text-sm font-semibold text-white">Live Energy</h2>
             <p className="mt-0.5 text-xs text-slate-500">Today&apos;s production, consumption, and grid exchange</p>
           </div>
-          <div className="mt-2.5 h-[280px]">
+          <div className="mt-2.5 h-[320px]">
             <Suspense fallback={<ChartSkeleton />}>
               <DynamicLiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
             </Suspense>
@@ -99,7 +138,7 @@ function DashboardPanel() {
 
       <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
         <InvertersCard inverters={data.inverters} />
-        <WeatherCard />
+        <WeatherSummaryPanel />
         <GlidepathCard />
         <MarketEventLog entries={data.eventLog} />
       </section>
@@ -192,7 +231,7 @@ function MarketPanel() {
         <MarketEventLog entries={market.eventLog} />
         <MarketInsights insights={market.insights} />
         <MarketDistribution buckets={market.distribution} />
-        <MarketInfo country={market.summary.marketStatus.country} source={market.summary.marketStatus.source} lastUpdateLabel="16:26" />
+        <MarketInfo country={market.summary.marketStatus.country} source={market.summary.marketStatus.source} lastUpdateLabel={null} />
       </section>
     </div>
   );
@@ -212,26 +251,40 @@ function BessPanel() {
   );
 }
 
+/** Static, non-interactive toggle — presentation only, no state, no handler. */
+function PreviewToggle({ label, on }: { label: string; on: boolean }) {
+  return (
+    <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+      <span className="text-sm text-white/80">{label}</span>
+      <span
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition ${
+          on ? "bg-emerald-400/80" : "bg-slate-600"
+        }`}
+      >
+        <span
+          className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+            on ? "translate-x-5" : "translate-x-0.5"
+          }`}
+        />
+      </span>
+    </div>
+  );
+}
+
 function AutomationsPanel() {
   return (
     <div className="mr-auto max-w-7xl">
       <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
-        <h2 className="text-lg font-medium text-white">Huawei Control</h2>
-        <p className="mt-2 text-sm text-white/60">
-          Manual export-control commands for this plant&apos;s Huawei FusionSolar connection.
-        </p>
+        <h2 className="text-lg font-medium text-white">Automation Controls</h2>
+        <p className="mt-2 text-sm text-white/60">Platform automation capabilities for this plant.</p>
 
-        <div className="mt-6 flex flex-wrap gap-3">
-          <button type="button" disabled className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-50">
-            Enable No Limit
-          </button>
-          <button type="button" disabled className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-50">
-            Enable Zero Export
-          </button>
+        <div className="mt-6 space-y-3">
+          <PreviewToggle label="Grid Export Limit" on={true} />
+          <PreviewToggle label="Production Curtailment" on={false} />
         </div>
 
         <p className="mt-4 text-xs text-slate-500">
-          Available for this plant, disabled in this preview — real commands require a connected account.
+          Preview only — not connected to a real plant in this snapshot.
         </p>
       </section>
     </div>
