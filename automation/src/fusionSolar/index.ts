@@ -15,6 +15,7 @@ export {
   discoverChildNodeNames,
   isDongleOnline,
   openDeviceConfiguration,
+  navigateToDongleConfiguration,
   readDeviceConfigField,
   reopenDeviceConfigurationAndRead,
   setActivePowerControlMode,

@@ -215,6 +215,61 @@ export async function openDeviceConfiguration(page: Page): Promise<void> {
 }
 
 /**
+ * Navigates deterministically to a specific dongle's own Configuration
+ * page. Always starts by returning to the plant overview - never
+ * assumes anything about whatever dongle (if any) was open before, or
+ * what tab/state a previous iteration left behind. Use this instead of
+ * calling openDongle/openDeviceConfiguration directly when processing
+ * multiple dongles in sequence, so every iteration is independent of
+ * the last.
+ *
+ * `plantOverviewUrl` must be a URL captured via page.url() while
+ * genuinely on the plant's own overview page (immediately after
+ * selectPlant + expandPlant) - this re-navigates to that exact URL as
+ * its first step, then re-confirms the tree is expanded (expandPlant is
+ * idempotent), before selecting the dongle and opening its
+ * Configuration tab.
+ *
+ * Verification: confirms the "Подробности" (Details) tab - confirmed
+ * always present on every device detail page - exists after
+ * navigating, proving the page actually landed on a device's own
+ * detail view rather than remaining on the plant overview or an error
+ * page. There is no confirmed FusionSolar-rendered field that echoes a
+ * device's own name back as page content, so this cannot independently
+ * re-derive "this page belongs to dongleName" purely from the
+ * resulting page - the identity guarantee instead comes from having
+ * clicked exactly that dongle's own tree node (Selectors.tree.nodeByName,
+ * exact-name-matched) immediately after a guaranteed-fresh return to
+ * the plant overview.
+ */
+export async function navigateToDongleConfiguration(
+  page: Page,
+  plantName: string,
+  plantOverviewUrl: string,
+  dongleName: string,
+): Promise<void> {
+  await runFusionSolarStep(page, "returnToPlantOverview", plantOverviewUrl, async () => {
+    await page.goto(plantOverviewUrl, { waitUntil: "networkidle" });
+  });
+
+  await expandPlant(page, plantName);
+  await openDongle(page, dongleName);
+  await openDeviceConfiguration(page);
+
+  const detailsTabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.detailsTabTitle);
+
+  await runFusionSolarStep(page, "verifyDongleConfigurationPage", detailsTabSelector, async () => {
+    const count = await page.locator(detailsTabSelector).count();
+
+    if (count === 0) {
+      throw new Error(
+        `Expected "${dongleName}"'s device detail page to be open (Configuration tab) but the "Подробности" tab is missing - navigation did not land where expected`,
+      );
+    }
+  });
+}
+
+/**
  * Reads a labeled field's current value from a device's Configuration
  * tab (see Selectors.deviceConfig) - works for both dropdown
  * (.ant-select-selection-item) and plain text (input.ant-input) fields,

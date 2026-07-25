@@ -9,8 +9,7 @@ import {
   isDongleOnline,
   launchBrowserSession,
   login,
-  openDeviceConfiguration,
-  openDongle,
+  navigateToDongleConfiguration,
   readDeviceConfigField,
   reopenDeviceConfigurationAndRead,
   Selectors,
@@ -166,9 +165,27 @@ export async function readStatus(): Promise<StatusResult> {
     logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
+    // Captured once, while genuinely on the plant overview - every
+    // per-dongle iteration below returns to exactly this URL first
+    // (navigateToDongleConfiguration), rather than trusting whatever
+    // state the previous dongle's iteration left the page in.
+    const atlantaOverviewUrl = page.url();
+
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
     logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
+
+    // Online status is read from the tree, which is only guaranteed
+    // visible on the plant overview - read it for every dongle here,
+    // up front, rather than interleaved with Configuration-page
+    // navigation below.
+    const onlineByName = new Map<string, boolean | null>();
+
+    for (const name of dongleNames) {
+      onlineByName.set(name, await isDongleOnline(page, name));
+    }
+
+    logStep("online status read for all dongles");
 
     const dongles: DongleStatus[] = [];
 
@@ -177,10 +194,7 @@ export async function readStatus(): Promise<StatusResult> {
       log.add("");
       log.add(`Dongle ${name}`);
 
-      const online = await isDongleOnline(page, name);
-      await openDongle(page, name);
-      logStep(`dongle opened: ${name}`);
-      await openDeviceConfiguration(page);
+      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, atlantaOverviewUrl, name);
       logStep(`configuration opened: ${name}`);
 
       const rawMode = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
@@ -188,7 +202,7 @@ export async function readStatus(): Promise<StatusResult> {
       const mode = describeMode(rawMode);
       log.add(`Current mode: ${mode}`);
 
-      dongles.push({ name, online, mode });
+      dongles.push({ name, online: onlineByName.get(name) ?? null, mode });
     }
 
     log.add("");
@@ -251,6 +265,11 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
     logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
+    // See readStatus - every per-dongle iteration returns to exactly
+    // this URL first, rather than trusting whatever state the previous
+    // dongle's iteration (or its Save) left the page in.
+    const atlantaOverviewUrl = page.url();
+
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
     logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
@@ -260,9 +279,7 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
       log.add("");
       log.add(`Dongle ${name}`);
 
-      await openDongle(page, name);
-      logStep(`dongle opened: ${name}`);
-      await openDeviceConfiguration(page);
+      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, atlantaOverviewUrl, name);
       logStep(`configuration opened: ${name}`);
 
       const beforeRaw = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
