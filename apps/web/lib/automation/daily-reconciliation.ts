@@ -9,7 +9,7 @@ import {
 } from "./automation-state";
 import { createAutomationEvent } from "./automation-events";
 import type { ExportMode } from "./export-decision";
-import { findEligibleOrganizations } from "./eligible-organizations";
+import { findAtlantaOrganizationIds } from "./eligible-organizations";
 
 export type OrganizationReconciliationOutcome =
   | { organizationId: string; outcome: "skipped_locked" }
@@ -52,34 +52,42 @@ function deriveFusionSolarMode(dongles: DongleStatus[]): ExportMode | null {
  * Voltessa's stored state and the plant's real state (e.g. a manual change
  * via /dev/huawei-api) and corrects Voltessa's own record to match reality
  * - it never changes the plant itself.
+ *
+ * Deliberately independent of AutomationSettings.automationEnabled (unlike
+ * the 15-minute execution engine, which requires it) - reconciliation is
+ * read-only and only ever updates Voltessa's own stored AutomationState,
+ * never FusionSolar, so it stays safe to run regardless of whether
+ * automation is currently enabled. This is what keeps AutomationState
+ * accurate the moment automation is turned back on, instead of acting on
+ * stale state from whenever it was last enabled.
  */
 export async function runDailyReconciliation(): Promise<
   OrganizationReconciliationOutcome[]
 > {
-  const organizations = await findEligibleOrganizations();
+  const organizationIds = await findAtlantaOrganizationIds();
   const outcomes: OrganizationReconciliationOutcome[] = [];
 
-  for (const organization of organizations) {
-    const acquired = await acquireAutomationLock(organization.organizationId);
+  for (const organizationId of organizationIds) {
+    const acquired = await acquireAutomationLock(organizationId);
 
     if (!acquired) {
-      outcomes.push({ organizationId: organization.organizationId, outcome: "skipped_locked" });
+      outcomes.push({ organizationId, outcome: "skipped_locked" });
       continue;
     }
 
     try {
-      outcomes.push(await reconcileOrganization(organization.organizationId));
+      outcomes.push(await reconcileOrganization(organizationId));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
 
       console.error("[Automation Daily Reconciliation] Unexpected error", {
-        organizationId: organization.organizationId,
+        organizationId,
         error,
       });
 
-      outcomes.push({ organizationId: organization.organizationId, outcome: "unexpected_error", error: reason });
+      outcomes.push({ organizationId, outcome: "unexpected_error", error: reason });
     } finally {
-      await releaseAutomationLock(organization.organizationId);
+      await releaseAutomationLock(organizationId);
     }
   }
 

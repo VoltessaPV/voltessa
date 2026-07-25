@@ -805,10 +805,16 @@ invocation shares: the database.
     the whole engine that reads FusionSolar's real state (via the Automation Service's existing
     Read Status operation) and corrects Voltessa's own record if it has drifted — e.g. a manual
     change via `/dev/huawei-api`. It never changes the plant itself.
-- **Eligibility**: an organization is in scope for both schedulers only if
-  `AutomationSettings.automationEnabled` is true AND it owns a Plant named "Atlanta" — reusing the
-  exact same lookup `app/dev/fusionsolar_atlanta` already used, since the Automation Service itself
-  is hardcoded to Atlanta only.
+- **Eligibility differs between the two schedulers, deliberately**: the 15-minute execution engine
+  requires both `AutomationSettings.automationEnabled=true` AND ownership of a Plant named "Atlanta"
+  (`findEligibleOrganizations`) — reusing the same "does this org own Atlanta" lookup
+  `app/dev/fusionsolar_atlanta` already used, since the Automation Service itself is hardcoded to
+  Atlanta only. Daily reconciliation (`findAtlantaOrganizationIds`) drops the `automationEnabled`
+  requirement — it is read-only (only ever calls the Automation Service's Read Status operation,
+  never zero-export/no-limit) and only updates Voltessa's own stored `AutomationState`, never
+  FusionSolar, so it stays safe — and useful — to run regardless of whether automation is currently
+  enabled. This is what keeps `AutomationState` accurate the moment automation is turned back on,
+  instead of acting on stale state from whenever it was last enabled.
 - Both new internal routes (`app/api/internal/automation/execute-market-price-optimization`,
   `.../daily-reconciliation`) follow the existing `app/api/internal/**` convention exactly:
   `CRON_SECRET` bearer auth via `crypto.timingSafeEqual`, `runtime="nodejs"`,

@@ -48,3 +48,24 @@ export async function findEligibleOrganizations(): Promise<
       minimumExportPrice: Number(setting.minimumExportPrice.toString()),
     }));
 }
+
+/**
+ * Organizations in scope for daily reconciliation: owning a Plant named
+ * "Atlanta" is the only requirement — deliberately independent of
+ * AutomationSettings.automationEnabled, unlike findEligibleOrganizations
+ * above. Reconciliation is read-only (it only ever calls the Automation
+ * Service's Read Status operation, never zero-export/no-limit) and only
+ * updates Voltessa's own stored AutomationState, never FusionSolar itself -
+ * so it stays safe, and useful, to run regardless of whether automation is
+ * currently enabled. This is what keeps AutomationState accurate the
+ * moment automation is turned back on, instead of acting on stale state
+ * from whenever it was last enabled.
+ */
+export async function findAtlantaOrganizationIds(): Promise<string[]> {
+  const plants = await prisma.plant.findMany({
+    where: { name: ATLANTA_PLANT_NAME },
+    select: { organizationId: true },
+  });
+
+  return [...new Set(plants.map((plant) => plant.organizationId))];
+}

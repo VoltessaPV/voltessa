@@ -229,7 +229,11 @@ voltessa-automation-reconciliation.timer  (OnCalendar=*-*-* 06:00:00 Europe/Sofi
   -> POST https://app.voltessa.ai/api/internal/automation/daily-reconciliation
   -> route.ts: crypto.timingSafeEqual auth check
   -> runDailyReconciliation():
-       for every eligible organization (same eligibility as the execution engine above):
+       for every organization owning a Plant named "Atlanta" (findAtlantaOrganizationIds) -
+       deliberately NOT gated on AutomationSettings.automationEnabled, unlike the execution
+       engine above: this job is read-only and only ever updates Voltessa's own stored
+       AutomationState, so it stays safe to run even while automation is disabled - keeps
+       AutomationState accurate for the moment it's turned back on:
          acquire the same per-org lock - already running? skip silently, no event
          call the Automation Service's Read Status operation (the one place in this whole
            engine that ever queries FusionSolar directly)
