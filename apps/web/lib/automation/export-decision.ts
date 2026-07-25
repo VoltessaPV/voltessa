@@ -1,158 +1,127 @@
 /**
- * Voltessa Automation — Export Decision Engine.
+ * Voltessa Automation — Market Price Optimization Decision Engine.
  *
- * `decideExportAction` is pure business logic only. It must never import
- * from `lib/fusionsolar/*` or any other vendor-specific module — it knows
- * nothing about Huawei, FusionSolar, or any other execution backend. Its
- * only job is: given business inputs, decide what SHOULD happen. It never
- * executes anything itself and never calls
- * `lib/automation/device-execution.ts` — nothing in this milestone wires
- * this module's output to a real command.
- *
- * `evaluateExportDecision` is the one place this module is allowed to know
- * about the market-price layer: it reads the current price through the
- * Market Price Provider abstraction (`lib/market-price/provider.ts`) —
- * never ENTSO-E directly — and then calls the pure function above. It
- * stays a thin orchestrator so `decideExportAction` itself remains a
+ * `decideExportAction` is pure business logic only: given a current price,
+ * the next market interval's price (if known), a configured threshold, and
+ * the plant's last known export mode, it decides what SHOULD happen. It
+ * never calls the Automation Service, never reads the database, never
+ * imports from `lib/fusionsolar/*` or anything vendor-specific — a
  * synchronous, dependency-free function that's trivial to reason about and
- * call directly.
+ * test directly. Whatever calls it (see
+ * `lib/automation/market-price-optimization-scheduler.ts`) owns actually
+ * executing the decision and recording the outcome.
  *
- * Business rule (Automation MVP milestone): the default minimum export
- * price is 15 EUR/MWh, representing the minimum profitable selling price
- * after transmission and imbalance costs. Prices below this threshold
- * should eventually trigger export limitation; prices at or above it
- * should eventually allow unrestricted export. "Eventually" — this module
- * only decides; nothing in this milestone executes that decision.
+ * This supersedes an earlier placeholder version of this module (a simple
+ * binary threshold, `UNLIMITED`/`LIMITED`/`UNKNOWN` vocabulary, explicitly
+ * documented as unwired to anything) — the Market Price Optimization
+ * Execution Engine milestone is that real implementation. `ExportMode` now
+ * uses the Automation Service's own canonical vocabulary directly
+ * ("Zero Export" / "No Limit") rather than a third, translated vocabulary.
+ *
+ * Business rule: a single fixed threshold flipping a plant's export mode
+ * exactly at that price would oscillate on every small price fluctuation
+ * around it. A ±5 EUR/MWh hysteresis band (LOW BAND = threshold - 5,
+ * HIGH BAND = threshold + 5) avoids that: only prices at or beyond a band
+ * edge act immediately, while prices inside the band only act if the next
+ * market interval's forecast agrees with the move. The band width is an
+ * internal implementation detail — never exposed in the UI, never
+ * configured by the user, only the threshold itself is.
  */
 
-import type { MarketPriceProvider } from "@/lib/market-price/provider";
+export type ExportMode = "Zero Export" | "No Limit";
 
-export type ExportDecisionAction = "NONE" | "LIMIT_EXPORT" | "REMOVE_LIMIT";
+export type ExportDecisionAction =
+  | "NONE"
+  | "SWITCH_TO_ZERO_EXPORT"
+  | "SWITCH_TO_NO_LIMIT";
 
 export type ExportDecision = {
   action: ExportDecisionAction;
   reason: string;
-  /** Null only when the market price was unavailable (see `evaluateExportDecision`). */
-  marketPrice: number | null;
-  minimumExportPrice: number;
-  decisionTimestamp: Date;
+  currentPrice: number;
+  nextIntervalPrice: number | null;
+  threshold: number;
+  lowBand: number;
+  highBand: number;
 };
 
-/**
- * The plant's currently configured export mode, in the Decision Engine's
- * own vocabulary — deliberately not Huawei's (`noLimit` /
- * `zeroExportLimitation` / etc., see
- * `lib/fusionsolar/get-active-power-control-mode.ts`). Whatever eventually
- * reads the real Huawei-configured mode is responsible for translating it
- * into one of these three values before calling this function; that
- * translation does not belong here.
- */
-export type ConfiguredExportMode = "UNLIMITED" | "LIMITED" | "UNKNOWN";
+/** Internal implementation detail — never exposed in the UI. */
+export const HYSTERESIS_BAND_EUR_PER_MWH = 5;
 
-export type ExportDecisionInput = {
-  marketPrice: number;
-  minimumExportPrice: number;
-  automationEnabled: boolean;
-  currentConfiguredExportMode: ConfiguredExportMode;
+export type DecideExportActionInput = {
+  currentPrice: number;
+  /** Null when the next interval's price hasn't been persisted yet. */
+  nextIntervalPrice: number | null;
+  threshold: number;
+  /** Null only before this organization's very first execution/reconciliation. */
+  currentMode: ExportMode | null;
 };
 
 /**
  * Decides what should happen to a plant's export configuration given
  * current business inputs. Does not call any API, does not persist
- * anything, does not execute anything — a pure function of its inputs
- * (the wall-clock read for `decisionTimestamp` aside).
+ * anything, does not execute anything.
  *
- * Extending with future rules (forecast-based, capacity-aware, etc.): add
- * further conditions here. This stays a single readable sequence of guard
- * clauses rather than a generic rule engine, per this project's
- * "simplicity beats cleverness" principle — only reach for more structure
- * if/when a second genuinely independent rule is actually added.
+ * The four cases below partition the real line with no gaps or overlaps:
+ * (-inf, lowBand] = Case 1, (lowBand, threshold) = Case 3,
+ * [threshold, highBand) = Case 4, [highBand, +inf) = Case 2.
  */
 export function decideExportAction(
-  input: ExportDecisionInput,
+  input: DecideExportActionInput,
 ): ExportDecision {
-  const base = {
-    marketPrice: input.marketPrice,
-    minimumExportPrice: input.minimumExportPrice,
-    decisionTimestamp: new Date(),
-  };
+  const { currentPrice, nextIntervalPrice, threshold, currentMode } = input;
+  const lowBand = threshold - HYSTERESIS_BAND_EUR_PER_MWH;
+  const highBand = threshold + HYSTERESIS_BAND_EUR_PER_MWH;
 
-  if (!input.automationEnabled) {
+  const base = { currentPrice, nextIntervalPrice, threshold, lowBand, highBand };
+
+  // Case 1: price at or below the low band.
+  if (currentPrice <= lowBand) {
+    if (currentMode === "Zero Export") {
+      return { ...base, action: "NONE", reason: "Already Zero Export; price at or below low band." };
+    }
+
+    return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "Price below low band" };
+  }
+
+  // Case 2: price at or above the high band.
+  if (currentPrice >= highBand) {
+    if (currentMode === "No Limit") {
+      return { ...base, action: "NONE", reason: "Already No Limit; price at or above high band." };
+    }
+
+    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "Price above high band" };
+  }
+
+  // Case 3: strictly between the low band and the threshold.
+  if (currentPrice < threshold) {
+    if (currentMode === "Zero Export") {
+      return { ...base, action: "NONE", reason: "Already Zero Export; price between low band and threshold." };
+    }
+
+    if (nextIntervalPrice !== null && nextIntervalPrice < threshold) {
+      return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "Forecast indicates further price decline" };
+    }
+
     return {
       ...base,
       action: "NONE",
-      reason: "Automation is disabled for this organization.",
+      reason: "Price between low band and threshold; forecast does not indicate further decline.",
     };
   }
 
-  if (input.currentConfiguredExportMode === "UNKNOWN") {
-    return {
-      ...base,
-      action: "NONE",
-      reason:
-        "Current configured export mode could not be determined; taking no action.",
-    };
+  // Case 4: from the threshold up to (but not including) the high band.
+  if (currentMode === "No Limit") {
+    return { ...base, action: "NONE", reason: "Already No Limit; price between threshold and high band." };
   }
 
-  const belowThreshold = input.marketPrice < input.minimumExportPrice;
-
-  if (belowThreshold && input.currentConfiguredExportMode === "UNLIMITED") {
-    return {
-      ...base,
-      action: "LIMIT_EXPORT",
-      reason: `Market price (${input.marketPrice} EUR/MWh) is below the minimum export price (${input.minimumExportPrice} EUR/MWh).`,
-    };
-  }
-
-  if (!belowThreshold && input.currentConfiguredExportMode === "LIMITED") {
-    return {
-      ...base,
-      action: "REMOVE_LIMIT",
-      reason: `Market price (${input.marketPrice} EUR/MWh) is at or above the minimum export price (${input.minimumExportPrice} EUR/MWh).`,
-    };
+  if (nextIntervalPrice !== null && nextIntervalPrice > threshold) {
+    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "Forecast indicates market recovery" };
   }
 
   return {
     ...base,
     action: "NONE",
-    reason:
-      "No change required — current export mode already matches the market price.",
+    reason: "Price between threshold and high band; forecast does not indicate recovery.",
   };
-}
-
-export type EvaluateExportDecisionInput = {
-  minimumExportPrice: number;
-  automationEnabled: boolean;
-  currentConfiguredExportMode: ConfiguredExportMode;
-  marketPriceProvider: MarketPriceProvider;
-};
-
-/**
- * Thin orchestrator: resolves the current market price through the Market
- * Price Provider abstraction, then delegates to the pure
- * `decideExportAction`. If the price is unavailable, returns a `NONE`
- * decision explaining why rather than guessing or falling back to a
- * default price. Nothing calls this yet — see module doc comment.
- */
-export async function evaluateExportDecision(
-  input: EvaluateExportDecisionInput,
-): Promise<ExportDecision> {
-  const priceResult = await input.marketPriceProvider.getCurrentPrice();
-
-  if (!priceResult.available) {
-    return {
-      action: "NONE",
-      reason: `Current market price unavailable (${priceResult.reason}); taking no action.`,
-      marketPrice: null,
-      minimumExportPrice: input.minimumExportPrice,
-      decisionTimestamp: new Date(),
-    };
-  }
-
-  return decideExportAction({
-    marketPrice: priceResult.price.price,
-    minimumExportPrice: input.minimumExportPrice,
-    automationEnabled: input.automationEnabled,
-    currentConfiguredExportMode: input.currentConfiguredExportMode,
-  });
 }

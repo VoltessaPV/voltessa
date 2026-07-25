@@ -102,19 +102,25 @@
 
 # Market Price Optimization — Execution Engine
 
-## Planned
+## Completed
 
-- Implement the actual scheduling/execution logic behind the Market Price
-  Optimization card: when `AutomationSettings.automationEnabled` is true and the
-  current market price crosses `minimumExportPrice`, automatically dispatch the
-  corresponding Zero Export / No Limit command through the Automation Service.
-  The card shipped in the migration above is UI + persistence only — nothing
-  reads this setting and acts on it yet.
-- Decide where this scheduling lives (a new systemd timer, following the
-  existing `voltessa-telemetry-ingestion.timer` /
-  `voltessa-market-price-scheduler.timer` pattern, vs. another mechanism) and
-  how it avoids duplicate/conflicting commands with manual actions on
-  `/dev/huawei-api`.
-- Every automated command must record what was sent, why (which price crossed
-  which threshold), and whether it succeeded — per the "automation must always
-  be traceable" principle in `CLAUDE.md`.
+- Implemented the real scheduling/execution logic behind the Market Price
+  Optimization card: a ±5 EUR/MWh hysteresis band around
+  `AutomationSettings.minimumExportPrice` (internal detail, never exposed in
+  the UI), evaluated every 15 minutes
+  (`voltessa-automation-execution.timer`), dispatching Zero Export / No Limit
+  through the existing Automation Service only when a switch is actually
+  decided. See ADR-013 in `docs/ARCHITECT_DECISIONS.md` for the full decision
+  record.
+- New `AutomationState` model (per organization) stores the last
+  successfully applied mode and doubles as a per-organization DB-backed
+  execution lock — the 15-minute engine never queries FusionSolar directly.
+- New `AutomationEvent` model is the traceability record — created only when
+  something actually happened (a switch, a failure, a reconciliation
+  mismatch/sync), never for a normal no-action tick.
+- A second, independent daily job (`voltessa-automation-reconciliation.timer`,
+  06:00 Europe/Sofia) is the one place that reads FusionSolar's real state and
+  corrects Voltessa's stored record if it has drifted (e.g. a manual change
+  via `/dev/huawei-api`) — mirrors the existing telemetry/market-price
+  scheduler split (ADR-009) of keeping different-cadence jobs in separate
+  systemd units.

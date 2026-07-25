@@ -88,6 +88,8 @@ model Organization {
   fusionSolarConnections FusionSolarConnection[]
 
   automationSettings AutomationSettings?
+  automationState    AutomationState?
+  automationEvents   AutomationEvent[]
   deviceTelemetry    DeviceTelemetry[]
   plantDailyKpis     PlantDailyKpi[]
 }
@@ -252,6 +254,91 @@ model AutomationSettings {
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// The single source of truth for "what export mode is this organization's
+/// plant currently in, as far as Voltessa's own automation is concerned" -
+/// Market Price Optimization Execution Engine milestone. `currentExportMode`
+/// is written ONLY after a successful Automation Service call (see
+/// lib/automation/market-price-optimization-scheduler.ts) or a daily
+/// reconciliation sync - never speculatively, never optimistically before
+/// the call completes. Deliberately separate from AutomationSettings: that
+/// model is user-edited configuration (threshold, enabled/disabled); this
+/// one is system-derived execution state, written by a different actor on a
+/// different cadence. `currentExportMode` uses the Automation Service's own
+/// canonical vocabulary ("Zero Export" / "No Limit") directly - no
+/// translation layer, since nothing else in this system needs a third
+/// vocabulary for the same two states.
+///
+/// `isRunning`/`lockedAt` double this row as a per-organization,
+/// DB-backed mutual-exclusion lock (acquired via a conditional
+/// `updateMany` - see acquireAutomationExecutionLock): both the 15-minute
+/// execution scheduler and the daily reconciliation job acquire it before
+/// touching this row or writing an AutomationEvent, and release it when
+/// done, so the two never run concurrently with each other or with
+/// themselves for the same organization. A dedicated lock table was
+/// considered and rejected - this row already exists per organization and
+/// is exactly what needs protecting, so reusing it keeps the schema
+/// smaller. An in-memory lock cannot work here: Vercel Functions are
+/// stateless across invocations, so mutual exclusion has to live in the one
+/// thing every invocation shares - the database.
+model AutomationState {
+  id String @id @default(cuid())
+
+  organizationId String @unique
+
+  /// Null until the first successful execution or reconciliation for this
+  /// organization - "we don't know yet" is a real, distinct state from
+  /// either mode.
+  currentExportMode String?
+
+  isRunning Boolean @default(false)
+  lockedAt  DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// The automation event log (Market Price Optimization Execution Engine
+/// milestone) - the "automation must always be traceable" principle from
+/// CLAUDE.md applied to this engine specifically. Created ONLY when
+/// something actually happened (a mode switch, a failure, a reconciliation
+/// mismatch/sync) - a normal scheduler tick that decides no action is
+/// needed creates no row, by design (see decideExportAction's "NONE"
+/// action and the scheduler's own skip-on-no-action logic).
+model AutomationEvent {
+  id String @id @default(cuid())
+
+  organizationId String
+
+  /// Short, stable machine-readable kind, for future filtering/display -
+  /// "mode_changed" | "automation_service_failed" |
+  /// "reconciliation_mismatch" | "reconciliation_synced". Kept as a plain
+  /// string (not a Prisma enum) so adding a new kind later never needs a
+  /// migration, matching this schema's existing convention for this kind of
+  /// small closed-but-growable vocabulary (see MarketPrice.source).
+  type String
+
+  /// Short human-readable label - e.g. "Switched to Zero Export",
+  /// "Automation Service failed".
+  summary String
+
+  /// Longer explanation - e.g. "Price below low band", "Forecast indicates
+  /// further price decline".
+  reason String
+
+  previousMode String?
+  newMode      String?
+
+  currentPrice     Decimal? @db.Decimal(10, 4)
+  nextIntervalPrice Decimal? @db.Decimal(10, 4)
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
 }
 
 /// Persisted, normalized market prices (currently: ENTSO-E day-ahead

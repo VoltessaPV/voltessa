@@ -743,3 +743,87 @@ synchronizing).
   page render or the telemetry repository layer, never from a bare script or non-request context.
 - No other file was touched — the scheduler, Refresh action, and `synchronizeFusionSolarConnection`
   itself (freshness/lease/error-containment logic) are exactly as ADR-011 left them.
+
+## ADR-013: Market Price Optimization Execution Engine — hysteresis decision logic, per-organization DB lock, two independent schedulers
+
+### Status
+
+Accepted.
+
+### Context
+
+The Automations page (see the Automations UI production milestone) already let a user enable
+automation and configure a threshold, persisted on `AutomationSettings`, but nothing read that
+setting and acted on it — it was UI + persistence only, by explicit design at the time. This
+milestone is the first code that actually dispatches Zero Export / No Limit commands to a real
+plant without a human clicking a button, so it carries genuine financial impact (see CLAUDE.md's
+"This is a live system, not a sandbox").
+
+A single fixed threshold flipping the plant's mode exactly at that price would oscillate on every
+small fluctuation around it. The chosen design uses a ±5 EUR/MWh hysteresis band
+(`HYSTERESIS_BAND_EUR_PER_MWH`, `lib/automation/export-decision.ts`) around the configured
+threshold: prices at or beyond a band edge act immediately; prices inside the band only act if the
+next market interval's forecast agrees with the move. The band width is an internal implementation
+detail, never exposed in the UI or configured by the user.
+
+Vercel Functions are stateless across invocations — an in-memory lock cannot prevent two overlapping
+scheduler invocations (a slow one still running when the next 15-minute tick fires) from both
+acting on the same organization at once. Mutual exclusion has to live in the one thing every
+invocation shares: the database.
+
+### Decision
+
+- **Decision logic**: `lib/automation/export-decision.ts`'s `decideExportAction` is rewritten (it
+  previously held an explicitly-unwired placeholder — simple binary threshold,
+  `UNLIMITED`/`LIMITED`/`UNKNOWN` vocabulary — documented at the time as "nothing in this milestone
+  executes this decision") to implement the real four-case hysteresis logic, using the Automation
+  Service's own canonical vocabulary directly (`"Zero Export"` / `"No Limit"`) rather than a third,
+  translated vocabulary. Still a pure, dependency-free function — the scheduler owns actually
+  executing its output.
+- **State**: a new `AutomationState` model (one row per organization, matching `AutomationSettings`'s
+  own scoping) stores `currentExportMode` — written ONLY after a successful Automation Service call
+  or a reconciliation sync, never speculatively. Deliberately separate from `AutomationSettings`:
+  one is user-edited configuration, the other is system-derived execution state, written by a
+  different actor on a different cadence.
+- **Locking**: `AutomationState` itself doubles as a per-organization mutual-exclusion lock
+  (`isRunning`/`lockedAt` fields), acquired via a conditional `updateMany` (atomic check-and-set,
+  not read-then-write) rather than a dedicated lock table — deliberately rejected the latter to keep
+  the schema smaller, since this row already exists per organization and is exactly what needs
+  protecting. Shared by both schedulers below, so they never run concurrently with each other or
+  with themselves for the same organization.
+- **Events**: a new `AutomationEvent` model is the traceability record (CLAUDE.md's "automation
+  must always be traceable" principle) — created only when something actually happened (a mode
+  switch, a failure, a reconciliation mismatch/sync), never for a normal tick that decides no action
+  is needed.
+- **Two independent schedulers**, following the same pattern ADR-009 established for
+  `voltessa-market-price-scheduler.timer` being separate from `voltessa-telemetry-ingestion.timer`
+  ("different cadence, different unit files... not one problem with two speeds"):
+  - `voltessa-automation-execution.timer` (every 15 minutes) never queries FusionSolar directly —
+    it only reads Voltessa's own stored `AutomationState` and calls the Automation Service when a
+    switch is actually decided.
+  - `voltessa-automation-reconciliation.timer` (once daily, 06:00 Europe/Sofia) is the one place in
+    the whole engine that reads FusionSolar's real state (via the Automation Service's existing
+    Read Status operation) and corrects Voltessa's own record if it has drifted — e.g. a manual
+    change via `/dev/huawei-api`. It never changes the plant itself.
+- **Eligibility**: an organization is in scope for both schedulers only if
+  `AutomationSettings.automationEnabled` is true AND it owns a Plant named "Atlanta" — reusing the
+  exact same lookup `app/dev/fusionsolar_atlanta` already used, since the Automation Service itself
+  is hardcoded to Atlanta only.
+- Both new internal routes (`app/api/internal/automation/execute-market-price-optimization`,
+  `.../daily-reconciliation`) follow the existing `app/api/internal/**` convention exactly:
+  `CRON_SECRET` bearer auth via `crypto.timingSafeEqual`, `runtime="nodejs"`,
+  `preferredRegion="fra1"` — no new auth mechanism introduced.
+
+### Consequences
+
+- The Automation Service, its selectors, and its HTTP API are completely unchanged — this milestone
+  only adds a caller.
+- A transport-level failure calling the Automation Service (thrown, not just `{success:false}`) is
+  caught and recorded as an `automation_service_failed` event with the previous state kept intact,
+  rather than aborting the whole cycle for every other organization — the next 15-minute tick will
+  retry if the underlying condition still calls for a switch.
+- Because the lock lives on `AutomationState`, adding a second automated plant/organization in the
+  future needs no new locking mechanism — each gets its own row and its own independent lock for
+  free.
+- `docs/infrastructure/scaleway-production.md` documents both new timers/env files/service files in
+  the same structure as the existing two schedulers.

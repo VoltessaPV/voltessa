@@ -32,7 +32,13 @@ egress point and centralized secret handling in front of Huawei's API).
 
 ## Responsibility of this VM
 
-Three independent `systemd` units run on it:
+**Known documentation gap, not addressed by this update**: `voltessa-automation-service` (the
+standalone Playwright/browser-automation process for the Atlanta plant — see `automation/` at the
+repo root and CLAUDE.md's "Automation Service" section) also runs on this VM as its own systemd
+service, but was never added to this document when it was deployed. Flagging it here rather than
+silently leaving it undocumented; fully documenting it is separate future work.
+
+Five independent `systemd` units run on it (plus the undocumented one above):
 
 1. **`voltessa-fusionsolar-proxy.service`** — the FusionSolar gateway proxy. The only thing in the
    entire system allowed to call Huawei's FusionSolar API directly. `apps/web` never calls Huawei
@@ -43,11 +49,16 @@ Three independent `systemd` units run on it:
    ingest `DeviceTelemetry`. See "Systemd Timers" below.
 3. **`voltessa-market-price-scheduler.timer`** — fires once daily, calls back into Vercel to import
    ENTSO-E day-ahead prices. See "Systemd Timers" below.
+4. **`voltessa-automation-execution.timer`** — fires every 15 minutes, calls back into Vercel to run
+   one Market Price Optimization Execution Engine cycle. See "Systemd Timers" below.
+5. **`voltessa-automation-reconciliation.timer`** — fires once daily at 06:00 Europe/Sofia, calls
+   back into Vercel to reconcile Voltessa's stored automation state against FusionSolar's real
+   state. See "Systemd Timers" below.
 
-The two timers only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); neither
-runs Huawei/business logic itself — all of that lives in `apps/web`. They are deliberately
+The four timers only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); none of
+them run Huawei/business logic itself — all of that lives in `apps/web`. They are deliberately
 independent units (separate service files, separate env files) so that a failure or change to one
-can never affect the other, even though they currently share the same underlying `CRON_SECRET`
+can never affect the others, even though they currently share the same underlying `CRON_SECRET`
 value (per ADR-008, every `app/api/internal/**` route shares one secret).
 
 ---
@@ -172,14 +183,82 @@ voltessa-market-price-scheduler.timer  (OnCalendar=*-*-* 14:00:00 Europe/Sofia �
   `systemctl cat voltessa-market-price-scheduler` or `ls /etc/voltessa-*.env` on the VM to get the
   exact name before assuming it matches the pattern.
 
+## `voltessa-automation-execution.timer`
+
+Market Price Optimization Execution Engine milestone. See `apps/web/lib/automation/market-price-optimization-scheduler.ts`.
+
+```
+voltessa-automation-execution.timer  (OnCalendar=*:0/15 — every 15 minutes)
+  -> voltessa-automation-execution.service  (curl, Bearer CRON_SECRET)
+  -> POST https://app.voltessa.ai/api/internal/automation/execute-market-price-optimization
+  -> route.ts: crypto.timingSafeEqual auth check
+  -> runMarketPriceOptimizationScheduler():
+       for every organization with AutomationSettings.automationEnabled=true AND owning a Plant
+       named "Atlanta" (the Automation Service itself is hardcoded to Atlanta only):
+         acquire this organization's per-org lock (AutomationState.isRunning) - already running?
+           skip this cycle silently, no AutomationEvent created
+         read current + next-interval MarketPrice, stored AutomationState.currentExportMode
+         decideExportAction() (apps/web/lib/automation/export-decision.ts, pure function,
+           ±5 EUR/MWh hysteresis band around the configured threshold)
+         action NONE -> release lock, done, no AutomationEvent
+         action requires a switch -> call the existing Automation Service
+           (zero-export / no-limit, same endpoints app/dev/huawei-api already uses)
+           success -> update AutomationState.currentExportMode, create a "mode_changed" AutomationEvent
+           failure (thrown or {success:false}) -> keep previous stored state, create an
+             "automation_service_failed" AutomationEvent
+         release lock
+```
+
+- **Never queries FusionSolar directly** — reads only Voltessa's own stored `AutomationState`. The
+  daily reconciliation timer below is the only job in this engine that reads FusionSolar's real
+  state.
+- **EnvironmentFile**: `/etc/voltessa-automation-execution.env` (root-only, `chmod 600`) — its own
+  `CRON_SECRET` copy, separate file from the other three schedulers' env files, same convention.
+- The per-organization lock lives on `AutomationState` itself (`isRunning`/`lockedAt`), not a
+  dedicated lock table — see that model's doc comment in `prisma/schema.prisma`. Shared with
+  `voltessa-automation-reconciliation.timer` below, so the two can never run concurrently for the
+  same organization either.
+
+## `voltessa-automation-reconciliation.timer`
+
+Market Price Optimization Execution Engine milestone. See `apps/web/lib/automation/daily-reconciliation.ts`.
+
+```
+voltessa-automation-reconciliation.timer  (OnCalendar=*-*-* 06:00:00 Europe/Sofia — once daily)
+  -> voltessa-automation-reconciliation.service  (curl, Bearer CRON_SECRET)
+  -> POST https://app.voltessa.ai/api/internal/automation/daily-reconciliation
+  -> route.ts: crypto.timingSafeEqual auth check
+  -> runDailyReconciliation():
+       for every eligible organization (same eligibility as the execution engine above):
+         acquire the same per-org lock - already running? skip silently, no event
+         call the Automation Service's Read Status operation (the one place in this whole
+           engine that ever queries FusionSolar directly)
+         all dongles agree on one mode, and it matches AutomationState.currentExportMode
+           -> do nothing, no AutomationEvent
+         dongles disagree with each other, or disagree with the stored state
+           -> create a "reconciliation_mismatch" AutomationEvent
+           -> if a single real FusionSolar mode was determined: update AutomationState to match it,
+              create a "reconciliation_synced" AutomationEvent (Voltessa's record follows FusionSolar
+              - this job never changes the plant itself)
+         release lock
+```
+
+- **EnvironmentFile**: `/etc/voltessa-automation-reconciliation.env` (root-only, `chmod 600`).
+- Exists to catch drift between Voltessa's stored state and reality — e.g. a manual mode change via
+  `/dev/huawei-api` that the 15-minute engine was never told about.
+
 Commands:
 
 ```
 systemctl list-timers
 systemctl status voltessa-telemetry-ingestion.timer
 systemctl status voltessa-market-price-scheduler.timer
+systemctl status voltessa-automation-execution.timer
+systemctl status voltessa-automation-reconciliation.timer
 journalctl -u voltessa-telemetry-ingestion.service -f
 journalctl -u voltessa-market-price-scheduler.service -f
+journalctl -u voltessa-automation-execution.service -f
+journalctl -u voltessa-automation-reconciliation.service -f
 systemd-analyze calendar '*-*-* 14:00:00 Europe/Sofia'   # check what a timer's OnCalendar actually resolves to
 ```
 

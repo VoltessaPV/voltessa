@@ -69,6 +69,19 @@ export type MarketPriceProvider = {
     biddingZone?: string;
     referenceDate?: Date;
   }) => Promise<MarketPriceResult>;
+  /**
+   * The earliest persisted price strictly after `referenceDate` (defaults
+   * to now) - added for the Market Price Optimization Execution Engine
+   * milestone, which needs to inspect the next market interval's price
+   * without hardcoding a resolution (15-minute vs. hourly bidding zones
+   * both work identically here, since this is a query, not a fixed
+   * offset). Mirrors `getCurrentPrice` exactly, just the opposite
+   * direction/ordering.
+   */
+  getNextPrice: (options?: {
+    biddingZone?: string;
+    referenceDate?: Date;
+  }) => Promise<MarketPriceResult>;
   getDayAheadPrices: (options?: {
     biddingZone?: string;
     referenceDate?: Date;
@@ -131,6 +144,25 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
         timestamp: { lte: referenceDate },
       },
       orderBy: { timestamp: "desc" },
+    });
+
+    if (!row) {
+      return { available: false, reason: "no_persisted_price_data" };
+    }
+
+    return { available: true, price: toMarketPrice(row) };
+  },
+
+  async getNextPrice(options = {}): Promise<MarketPriceResult> {
+    const biddingZone = options.biddingZone ?? DEFAULT_BIDDING_ZONE;
+    const referenceDate = options.referenceDate ?? new Date();
+
+    const row = await prisma.marketPrice.findFirst({
+      where: {
+        biddingZone,
+        timestamp: { gt: referenceDate },
+      },
+      orderBy: { timestamp: "asc" },
     });
 
     if (!row) {
