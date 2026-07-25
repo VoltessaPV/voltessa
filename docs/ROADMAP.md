@@ -68,3 +68,53 @@
 - KACO
 - SMA
 - Notifications
+
+---
+
+# FusionSolar Automation Service Migration
+
+## Completed
+
+- Extracted all Playwright/browser-automation logic for the Atlanta plant out of
+  `apps/web` into an independent Automation Service (`automation/`, repo root) — a
+  standalone Node process with its own systemd unit on the existing Scaleway VM.
+  `apps/web` now communicates with it only over authenticated HTTP
+  (`lib/automation-client.ts`); no Playwright/Chromium code or dependency remains
+  anywhere in `apps/web`. See git history on `automation/` and
+  `apps/web/lib/fusionsolar/browser/*` for the full incident record (VM resource
+  starvation, the deterministic-navigation rewrite, nginx timeout tuning).
+- Fixed a production defect where FusionSolar's post-Save "Operation succeeded"
+  dialog blocked the automation's post-Save verification step
+  (`dismissSaveSuccessDialog` in `automation/src/fusionSolar/navigation.ts`).
+- Tuned nginx's `/automation/` proxy timeouts (`proxy_connect_timeout` 30s,
+  `proxy_send_timeout`/`proxy_read_timeout`/`send_timeout` 300s) so a legitimate
+  multi-dongle Zero Export/No Limit request can complete without a premature 504.
+- Verified end-to-end in production: Read Status, Enable Zero Export, and Enable
+  No Limit all succeed through the real Voltessa → nginx → Automation Service
+  path, with clean Chromium shutdown every time.
+- Shipped the first production version of `/automations`: a Market Price
+  Optimization card (enable/disable + €/MWh threshold, UI + persistence only,
+  backed by the existing `AutomationSettings` model) and a Battery Optimization
+  informational card, replacing the old engineering console (moved unchanged to
+  `/dev/huawei-api`).
+
+---
+
+# Market Price Optimization — Execution Engine
+
+## Planned
+
+- Implement the actual scheduling/execution logic behind the Market Price
+  Optimization card: when `AutomationSettings.automationEnabled` is true and the
+  current market price crosses `minimumExportPrice`, automatically dispatch the
+  corresponding Zero Export / No Limit command through the Automation Service.
+  The card shipped in the migration above is UI + persistence only — nothing
+  reads this setting and acts on it yet.
+- Decide where this scheduling lives (a new systemd timer, following the
+  existing `voltessa-telemetry-ingestion.timer` /
+  `voltessa-market-price-scheduler.timer` pattern, vs. another mechanism) and
+  how it avoids duplicate/conflicting commands with manual actions on
+  `/dev/huawei-api`.
+- Every automated command must record what was sent, why (which price crossed
+  which threshold), and whether it succeeded — per the "automation must always
+  be traceable" principle in `CLAUDE.md`.

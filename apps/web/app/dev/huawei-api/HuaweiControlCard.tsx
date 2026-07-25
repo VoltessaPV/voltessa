@@ -2,10 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 
-import {
-  sendHuaweiNoLimit,
-  sendHuaweiZeroExport,
-} from "@/app/(platform)/huawei-api-testing/actions";
+import { sendHuaweiNoLimit, sendHuaweiZeroExport } from "./actions";
 
 type ToastState = { kind: "success" | "error"; message: string } | null;
 

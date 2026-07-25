@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { runHuaweiDiagnosticTest } from "@/app/(platform)/huawei-api-testing/actions";
 import { filterTargetsByTypes } from "@/lib/fusionsolar/diagnostic-target-match";
 import type {
   DiagnosticDefinitionMeta,
@@ -10,6 +9,8 @@ import type {
   DiagnosticTargetOption,
   DiagnosticTestResult,
 } from "@/lib/fusionsolar/diagnostic-tests";
+
+import { runHuaweiDiagnosticTest } from "./actions";
 
 type Props = {
   targets: DiagnosticTargetOption[];
