@@ -73,14 +73,28 @@ async function requireAccess(): Promise<ReadStatusResult | null> {
 }
 
 /** Read Status: calls the Automation Service, nothing else. Voltessa
- *  never launches Playwright and never knows anything about FusionSolar. */
+ *  never launches Playwright and never knows anything about FusionSolar.
+ *  A transport-level failure (timeout, network error, missing config) is
+ *  caught here and surfaced as a normal {success:false} result - the
+ *  same shape the Automation Service's own failure responses use -
+ *  rather than propagating uncaught into Next.js's generic production
+ *  error sanitization. */
 export async function readFusionSolarAtlantaStatus(): Promise<ReadStatusResult> {
   const accessError = await requireAccess();
   if (accessError) {
     return accessError;
   }
 
-  return callAutomationService<ReadStatusResult>("/automation/fusionsolar/atlanta/status");
+  try {
+    return await callAutomationService<ReadStatusResult>("/automation/fusionsolar/atlanta/status");
+  } catch (error) {
+    return {
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      log: [],
+    };
+  }
 }
 
 export async function enableZeroExportForAtlanta(): Promise<ChangeModeResult> {
@@ -89,7 +103,17 @@ export async function enableZeroExportForAtlanta(): Promise<ChangeModeResult> {
     return { ...accessError, dongles: [] };
   }
 
-  return callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/zero-export");
+  try {
+    return await callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/zero-export");
+  } catch (error) {
+    return {
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      dongles: [],
+      log: [],
+    };
+  }
 }
 
 export async function enableNoLimitForAtlanta(): Promise<ChangeModeResult> {
@@ -98,5 +122,15 @@ export async function enableNoLimitForAtlanta(): Promise<ChangeModeResult> {
     return { ...accessError, dongles: [] };
   }
 
-  return callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/no-limit");
+  try {
+    return await callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/no-limit");
+  } catch (error) {
+    return {
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : String(error),
+      dongles: [],
+      log: [],
+    };
+  }
 }
