@@ -123,6 +123,8 @@ async function toFailureReport(error: unknown, dongleName: string | null): Promi
  * helpers as scripts/inspect-fusionsolar.ts, nothing new.
  */
 export async function readFusionSolarAtlantaStatus(): Promise<ReadStatusResult> {
+  console.log("FusionSolar debug build: ab2355b");
+
   const user = await requirePermission(Permissions.canOperatePlants);
 
   if (!(await requireAtlantaOrganization(user.organizationId))) {
