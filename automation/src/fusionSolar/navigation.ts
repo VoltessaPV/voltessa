@@ -215,6 +215,19 @@ export async function openDeviceConfiguration(page: Page): Promise<void> {
 }
 
 /**
+ * Every device detail page's URL carries its own unique device id as a
+ * `NE=<number>` hash-route segment (e.g.
+ * `#/view/device/NE=165824328/dongle/config`) - confirmed live against
+ * all three real Atlanta dongles, each with its own distinct, stable NE
+ * value across repeated visits. Returns null if the URL doesn't match -
+ * never guessed at for any other page shape.
+ */
+function extractDeviceId(url: string): string | null {
+  const match = url.match(/NE=(\d+)/);
+  return match ? match[1] : null;
+}
+
+/**
  * Navigates deterministically to a specific dongle's own Configuration
  * page. Always starts by returning to the plant overview - never
  * assumes anything about whatever dongle (if any) was open before, or
@@ -223,37 +236,46 @@ export async function openDeviceConfiguration(page: Page): Promise<void> {
  * multiple dongles in sequence, so every iteration is independent of
  * the last.
  *
- * `plantOverviewUrl` must be a URL captured via page.url() while
- * genuinely on the plant's own overview page (immediately after
- * selectPlant + expandPlant) - this re-navigates to that exact URL as
- * its first step, then re-confirms the tree is expanded (expandPlant is
- * idempotent), before selecting the dongle and opening its
- * Configuration tab.
+ * Returns to the overview via selectPlant (the same in-app click
+ * already used to reach Atlanta the very first time) - NOT via
+ * page.goto(). A hard page.goto() reload was tried first and confirmed
+ * live to be actively harmful: it re-triggers a cookie-consent banner
+ * that the real session had already dismissed once at login, and lands
+ * with the tree collapsed rather than expanded, since expand state
+ * isn't preserved across a full reload. selectPlant's in-app click has
+ * neither problem - the tree/session state carries over exactly as it
+ * does during any other in-app navigation. expandPlant is called again
+ * regardless (idempotent - a no-op if already expanded, a real click if
+ * a previous full-app anomaly ever left it collapsed).
  *
- * Verification: confirms the "Подробности" (Details) tab - confirmed
- * always present on every device detail page - exists after
- * navigating, proving the page actually landed on a device's own
- * detail view rather than remaining on the plant overview or an error
- * page. There is no confirmed FusionSolar-rendered field that echoes a
- * device's own name back as page content, so this cannot independently
- * re-derive "this page belongs to dongleName" purely from the
- * resulting page - the identity guarantee instead comes from having
- * clicked exactly that dongle's own tree node (Selectors.tree.nodeByName,
- * exact-name-matched) immediately after a guaranteed-fresh return to
- * the plant overview.
+ * Verification is two-layered:
+ *  1. The "Подробности" (Details) tab - confirmed always present on
+ *     every device detail page - must exist, proving the page landed on
+ *     some device's own detail view rather than remaining on the plant
+ *     overview or an error page. This alone is not treated as
+ *     sufficient (it can't distinguish one device's page from another's).
+ *  2. The device id (`NE=`) captured from the URL immediately after
+ *     selecting the dongle (openDongle) must be identical to the device
+ *     id captured from the URL after opening Configuration. Since
+ *     openDongle's own click targets dongleName's tree node exactly
+ *     (Selectors.tree.nodeByName, exact-match), the first NE capture is
+ *     the confirmed identity of the page we just navigated to; this
+ *     step confirms the Configuration tab click didn't silently land on
+ *     a different device's page. If either URL has no NE id, or the two
+ *     ids differ, this fails immediately rather than returning a page
+ *     that might belong to the wrong dongle.
  */
 export async function navigateToDongleConfiguration(
   page: Page,
   plantName: string,
-  plantOverviewUrl: string,
   dongleName: string,
 ): Promise<void> {
-  await runFusionSolarStep(page, "returnToPlantOverview", plantOverviewUrl, async () => {
-    await page.goto(plantOverviewUrl, { waitUntil: "networkidle" });
-  });
-
+  await selectPlant(page, plantName);
   await expandPlant(page, plantName);
   await openDongle(page, dongleName);
+
+  const deviceIdAfterSelect = extractDeviceId(page.url());
+
   await openDeviceConfiguration(page);
 
   const detailsTabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.detailsTabTitle);
@@ -264,6 +286,26 @@ export async function navigateToDongleConfiguration(
     if (count === 0) {
       throw new Error(
         `Expected "${dongleName}"'s device detail page to be open (Configuration tab) but the "Подробности" tab is missing - navigation did not land where expected`,
+      );
+    }
+
+    const deviceIdAfterConfig = extractDeviceId(page.url());
+
+    if (!deviceIdAfterSelect) {
+      throw new Error(
+        `Could not read a device id from the URL after selecting "${dongleName}" (${page.url()}) - cannot verify this page belongs to the requested dongle`,
+      );
+    }
+
+    if (!deviceIdAfterConfig) {
+      throw new Error(
+        `Could not read a device id from the URL after opening Configuration for "${dongleName}" (${page.url()}) - cannot verify this page belongs to the requested dongle`,
+      );
+    }
+
+    if (deviceIdAfterSelect !== deviceIdAfterConfig) {
+      throw new Error(
+        `Configuration page does not belong to "${dongleName}": selected device id ${deviceIdAfterSelect}, but the Configuration page shows device id ${deviceIdAfterConfig}`,
       );
     }
   });

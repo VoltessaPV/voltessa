@@ -165,12 +165,6 @@ export async function readStatus(): Promise<StatusResult> {
     logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
-    // Captured once, while genuinely on the plant overview - every
-    // per-dongle iteration below returns to exactly this URL first
-    // (navigateToDongleConfiguration), rather than trusting whatever
-    // state the previous dongle's iteration left the page in.
-    const atlantaOverviewUrl = page.url();
-
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
     logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
@@ -194,7 +188,7 @@ export async function readStatus(): Promise<StatusResult> {
       log.add("");
       log.add(`Dongle ${name}`);
 
-      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, atlantaOverviewUrl, name);
+      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, name);
       logStep(`configuration opened: ${name}`);
 
       const rawMode = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
@@ -265,11 +259,6 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
     logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
-    // See readStatus - every per-dongle iteration returns to exactly
-    // this URL first, rather than trusting whatever state the previous
-    // dongle's iteration (or its Save) left the page in.
-    const atlantaOverviewUrl = page.url();
-
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
     logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
@@ -279,7 +268,7 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
       log.add("");
       log.add(`Dongle ${name}`);
 
-      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, atlantaOverviewUrl, name);
+      await navigateToDongleConfiguration(page, ATLANTA_PLANT_NAME, name);
       logStep(`configuration opened: ${name}`);
 
       const beforeRaw = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
