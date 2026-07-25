@@ -42,11 +42,20 @@ async function clearUsernameFieldBeforeScreenshot(page: Page): Promise<void> {
 
 /**
  * Logs into FusionSolar (credentials read from environment variables -
- * see getFusionSolarAtlantaCredentials) and waits until the authenticated
- * application shell has actually loaded, not just the SSO redirect,
- * before returning the same page. Throws FusionSolarBrowserStepError
- * (screenshot, URL, page title, step name, selector) if login is
- * rejected or never completes.
+ * see getFusionSolarAtlantaCredentials) and confirms the SSO redirect
+ * away from the login page completed, then returns the same page.
+ * Throws FusionSolarBrowserStepError (screenshot, URL, page title, step
+ * name, selector) if login is rejected or never completes.
+ *
+ * Does NOT wait for the authenticated application shell's own content
+ * (e.g. the plant list) to render - a trailing
+ * page.waitForLoadState("networkidle") that once did this was removed
+ * (see git history): it was a generic, whole-page heuristic with no
+ * direct tie to what any caller actually needed, and confirmed live to
+ * be an unreliable readiness signal for this SPA (a live-updating
+ * dashboard may never go network-idle). The caller's own next step
+ * (selectPlant) is responsible for waiting on the specific element it
+ * needs, and already does.
  *
  * Does not use the shared runFusionSolarStep helper (see navigation.ts):
  * unlike every other step in this module, a login failure screenshot can
@@ -57,7 +66,9 @@ export async function login(page: Page): Promise<Page> {
   const credentials = getFusionSolarAtlantaCredentials();
 
   try {
-    await page.goto(LOGIN_URL, { waitUntil: "networkidle" });
+    // domcontentloaded, not networkidle: the very next line's explicit
+    // wait for the username field is the real readiness gate here.
+    await page.goto(LOGIN_URL, { waitUntil: "domcontentloaded" });
 
     await page.locator(Selectors.login.usernameField).waitFor({ state: "visible" });
     await page.locator(Selectors.login.usernameField).fill(credentials.username);
@@ -89,8 +100,6 @@ export async function login(page: Page): Promise<Page> {
     if (page.url().includes("/unisso/login")) {
       throw new Error("FusionSolar login did not navigate away from the login page");
     }
-
-    await page.waitForLoadState("networkidle");
 
     return page;
   } catch (error) {

@@ -74,13 +74,23 @@ export async function runFusionSolarStep<T>(
 /**
  * Selects a plant by name from the plant list (Home page). Navigation
  * only - reads the plant's overview, changes nothing.
+ *
+ * Deterministic, element-level synchronization (replaces a prior
+ * page.waitForLoadState("networkidle") here, confirmed live to be an
+ * unreliable readiness signal for this SPA - see git history): waits
+ * for the plant's own name text to exist before clicking it, then waits
+ * for that plant's tree row (Selectors.tree.rowByName) to appear -
+ * exactly what expandPlant, the next step in every real call site,
+ * itself needs.
  */
 export async function selectPlant(page: Page, name: string): Promise<void> {
   const selector = `text="${name}"`;
 
   await runFusionSolarStep(page, "selectPlant", selector, async () => {
-    await page.getByText(name, { exact: true }).first().click();
-    await page.waitForLoadState("networkidle");
+    const target = page.getByText(name, { exact: true }).first();
+    await target.waitFor({ state: "visible" });
+    await target.click();
+    await page.locator(Selectors.tree.rowByName(name)).waitFor({ state: "visible" });
   });
 }
 
@@ -111,13 +121,24 @@ export async function expandPlant(page: Page, name: string): Promise<void> {
 /**
  * Opens a dongle (or any device tree node) by name, navigating to its
  * detail view. Navigation only - changes nothing.
+ *
+ * Deterministic, element-level synchronization (replaces a prior
+ * page.waitForLoadState("networkidle") here - see selectPlant's comment
+ * for why): waits for the dongle's own tree node to exist before
+ * clicking it, then waits for the Configuration tab to appear on the
+ * resulting device detail page - exactly what openDeviceConfiguration,
+ * the next step in every real call site, itself needs to click.
  */
 export async function openDongle(page: Page, name: string): Promise<void> {
   const selector = Selectors.tree.nodeByName(name);
 
   await runFusionSolarStep(page, "openDongle", selector, async () => {
-    await page.locator(selector).click();
-    await page.waitForLoadState("networkidle");
+    const target = page.locator(selector);
+    await target.waitFor({ state: "visible" });
+    await target.click();
+
+    const configTabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.configurationTabTitle);
+    await page.locator(configTabSelector).waitFor({ state: "visible" });
   });
 }
 
@@ -198,13 +219,25 @@ export async function isDongleOnline(page: Page, name: string): Promise<boolean 
  * Navigation only - opening this tab does not itself change or save
  * anything. Distinct from openConfiguration above, which opens a
  * different, plant-level tab with a similarly-worded title.
+ *
+ * Deterministic, element-level synchronization throughout (a prior
+ * page.waitForLoadState("networkidle") between the click and the
+ * Active Power Control wait below was removed - it was fully redundant
+ * with that already-existing wait, and confirmed live to be an
+ * unreliable readiness signal for this SPA - see git history). Waits
+ * for the Configuration tab to exist before clicking it too, so this
+ * function is self-contained regardless of caller (openDongle already
+ * waits for this same condition, but reopenDeviceConfigurationAndRead
+ * calls this function directly, after leaving to Details, without that
+ * guarantee).
  */
 export async function openDeviceConfiguration(page: Page): Promise<void> {
   const tabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.configurationTabTitle);
 
   await runFusionSolarStep(page, "openDeviceConfiguration", tabSelector, async () => {
-    await page.locator(tabSelector).click();
-    await page.waitForLoadState("networkidle");
+    const tab = page.locator(tabSelector);
+    await tab.waitFor({ state: "visible" });
+    await tab.click();
 
     const activePowerControlField = page.locator(
       Selectors.deviceConfig.fieldContainerByLabel(Selectors.deviceConfig.activePowerControlModeLabel),
@@ -357,13 +390,22 @@ export async function readDeviceConfigField(page: Page, label: string): Promise<
  * Clicking the already-active Configuration tab again would not force
  * this (antd tabs don't re-fetch on a click that doesn't change the
  * active tab) - genuinely leaving first is what makes the reload real.
+ *
+ * Deterministic, element-level synchronization (a prior
+ * page.waitForLoadState("networkidle") after the Details-tab click was
+ * removed - see git history): no explicit wait is needed after that
+ * click beyond waiting for the Details tab to exist before clicking
+ * it, since openDeviceConfiguration (called next) already waits for the
+ * Configuration tab to exist before clicking it - exactly the condition
+ * this step's completion needs to guarantee.
  */
 export async function reopenDeviceConfigurationAndRead(page: Page, label: string): Promise<string | null> {
   const detailsTabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.detailsTabTitle);
 
   await runFusionSolarStep(page, "leaveConfigurationForReopen", detailsTabSelector, async () => {
-    await page.locator(detailsTabSelector).click();
-    await page.waitForLoadState("networkidle");
+    const tab = page.locator(detailsTabSelector);
+    await tab.waitFor({ state: "visible" });
+    await tab.click();
   });
 
   await openDeviceConfiguration(page);
