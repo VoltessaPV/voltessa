@@ -22,6 +22,7 @@ export {
   clickSaveButton,
   confirmSaveDialogIfPresent,
   waitForSaveConfirmation,
+  dismissSaveSuccessDialog,
   runFusionSolarStep,
   FusionSolarBrowserStepError,
 } from "./navigation.ts";

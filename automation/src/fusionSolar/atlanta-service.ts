@@ -4,6 +4,7 @@ import { createStepLogger, logFullError } from "../diagnostics.ts";
 import {
   closeBrowserSession,
   discoverChildNodeNames,
+  dismissSaveSuccessDialog,
   expandPlant,
   FusionSolarBrowserStepError,
   isDongleOnline,
@@ -307,6 +308,9 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
 
       log.add("Waiting for confirmation...");
       await waitForSaveConfirmation(page);
+
+      log.add("Dismissing success dialog...");
+      await dismissSaveSuccessDialog(page);
 
       log.add("Reopening configuration...");
       const afterRaw = await reopenDeviceConfigurationAndRead(page, Selectors.deviceConfig.activePowerControlModeLabel);

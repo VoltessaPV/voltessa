@@ -507,15 +507,17 @@ export async function confirmSaveDialogIfPresent(page: Page): Promise<void> {
 /**
  * Waits for FusionSolar's real confirmation that a Save completed, by
  * waiting for the Save button (Selectors.deviceConfig.saveButton) to
- * become disabled again. This is not a guess: no toast, message, or
- * dialog was ever observed for this field across multiple real,
- * successful saves during verification - the button itself was the
- * only confirmed signal. It stays visually active/pending for a while
- * after being clicked (a Smart Dongle relays the change to real
- * hardware, which took over 20 seconds in one verified run) before
- * going back to disabled, which is what this waits for - never a fixed
- * sleep. Throws (via runFusionSolarStep, with a screenshot) if it
- * doesn't happen within the timeout.
+ * become disabled again - the earliest reliable signal, confirmed across
+ * multiple real, successful saves during verification. It stays visually
+ * active/pending for a while after being clicked (a Smart Dongle relays
+ * the change to real hardware, which took over 20 seconds in one
+ * verified run) before going back to disabled, which is what this waits
+ * for - never a fixed sleep. Throws (via runFusionSolarStep, with a
+ * screenshot) if it doesn't happen within the timeout.
+ *
+ * FusionSolar separately shows an "Операцията е успешна" (Operation
+ * succeeded) info dialog once the save actually completes - see
+ * dismissSaveSuccessDialog, called after this one.
  */
 export async function waitForSaveConfirmation(page: Page): Promise<void> {
   const buttonText = Selectors.deviceConfig.saveButton;
@@ -532,5 +534,34 @@ export async function waitForSaveConfirmation(page: Page): Promise<void> {
       buttonText,
       { timeout: 120000 },
     );
+  });
+}
+
+/**
+ * Waits for FusionSolar's post-Save "Operation succeeded" info dialog,
+ * clicks its OK button, and waits for the modal overlay to fully close.
+ * Confirmed via a live production failure (screenshot +
+ * Playwright trace) that this dialog remains open after
+ * waitForSaveConfirmation returns, and its overlay (an AntD
+ * ant-modal-confirm-family element - Modal.info/success/confirm all
+ * share that wrapper class) intercepts pointer events for whatever tries
+ * to interact with the page next, hanging reopenDeviceConfigurationAndRead's
+ * click on the Details tab for its full timeout. Reuses the same
+ * confirmDialog/confirmDialogOkButton selectors as
+ * confirmSaveDialogIfPresent (the same dialog family), but unlike that
+ * step this dialog is expected to actually appear here, so this waits
+ * for it rather than treating it as optional.
+ */
+export async function dismissSaveSuccessDialog(page: Page): Promise<void> {
+  const selector = Selectors.deviceConfig.confirmDialog;
+
+  await runFusionSolarStep(page, "dismissSaveSuccessDialog", selector, async () => {
+    const dialog = page.locator(selector).first();
+    await dialog.waitFor({ state: "visible" });
+
+    const okButton = page.locator(Selectors.deviceConfig.confirmDialogOkButton).first();
+    await okButton.click();
+
+    await dialog.waitFor({ state: "hidden" });
   });
 }
