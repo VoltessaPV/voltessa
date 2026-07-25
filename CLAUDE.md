@@ -63,6 +63,8 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
   route handlers and server actions. This is where day-to-day feature work happens.
 - `packages/ui` — shared React component library (`@repo/ui`), consumed via `workspace:*`.
 - `packages/eslint-config`, `packages/typescript-config` — shared lint/tsconfig bases.
+- `automation/` — a standalone Node process, **not** part of the pnpm workspace, that owns Playwright
+  and all FusionSolar browser-portal automation for the Atlanta plant. See "Automation Service" below.
 - `docs/` — product/architecture docs (vision, requirements, roadmap, backlog, ADRs) plus the
   engineering guides listed above.
 - `docker/`, `business/` — present but currently empty; no containerization or business-ops
@@ -148,69 +150,67 @@ refresh alike), and `ENTSOE_API_TOKEN` (ENTSO-E Transparency Platform `securityT
 `lib/market-price/providers/entsoe.ts`; provisioned in Vercel Production/Preview only as of the
 Continuous ENTSO-E Daily Price Refresh milestone — it was declared here and in `turbo.json` well
 before that, but was never actually set as a Vercel value, so the price importer had silently never
-worked in production until then), and `FUSIONSOLAR_ATLANTA_USERNAME` / `FUSIONSOLAR_ATLANTA_PASSWORD`
-(the real FusionSolar portal login for the Atlanta plant's account — used only by
-`lib/fusionsolar/browser/*`, see "FusionSolar browser automation" below; never printed, logged, or
-hardcoded — read directly via `process.env` in `lib/fusionsolar/browser/login.ts`).
+worked in production until then), and `AUTOMATION_SERVICE_URL` / `AUTOMATION_SERVICE_SECRET`
+(the standalone Automation Service base URL and shared secret — see "Automation Service" below;
+`apps/web` never holds FusionSolar portal credentials itself).
 
 Additional env var used in `apps/web` but **not currently declared** in `turbo.json` `globalEnv`
 (known gap — add it if you touch this area): `NEXTAUTH_URL`.
 
-### FusionSolar browser automation (`lib/fusionsolar/browser/*`)
+### Automation Service (`automation/`, repo root)
 
-A temporary Playwright automation layer that drives the actual FusionSolar web portal
-(`https://eu5.fusionsolar.huawei.com/unisso/login.action`) directly, as a stand-in until the native
-Huawei/OpenEMS integration is complete — separate from, and independent of, the OAuth/gateway-based
-API integration in `lib/fusionsolar/api-client.ts` and the rest of `lib/fusionsolar/*`. `browser.ts`
-(Playwright lifecycle — see below for how launching differs between local dev and a deployed Vercel
-function), `selectors.ts` (every selector, confirmed against the live portal — update here first if
-FusionSolar's markup changes; every text value is Bulgarian, because the portal picks its rendering
-language from the browser's own Accept-Language rather than a fixed per-account setting —
-`browser.ts` pins the context's `locale` to `"bg-BG"` for exactly this reason, confirmed the hard way
-when an unpinned run silently rendered the whole UI in English and broke every text selector),
-`login.ts` (`login(page)`, credentials from env, never logs them, clears the plaintext username field
-before any failure screenshot), `navigation.ts` (navigation/read/write helpers plus the shared
-`FusionSolarBrowserStepError` + `runFusionSolarStep` every step uses to report failures with a
-screenshot/URL/title/step/selector), and `screenshots.ts` (writes to `tmp/fusionsolar/`, gitignored —
-screenshots/`report.json` can contain real customer plant data).
+A standalone, independent Node process — **not** part of the pnpm workspace (absent from
+`pnpm-workspace.yaml`, has its own `package.json`/lockfile/`node_modules`) — that owns Playwright and
+all FusionSolar browser-portal automation for the Atlanta plant. `apps/web` never launches Playwright
+and never holds FusionSolar portal credentials (`FUSIONSOLAR_ATLANTA_USERNAME`/`_PASSWORD` live only
+in `automation/`'s own env file); Voltessa is only a UI that calls this service over authenticated
+HTTP (`lib/automation-client.ts`, header `x-automation-secret`, `crypto.timingSafeEqual`-checked
+server-side — same shape as the existing `FUSIONSOLAR_GATEWAY_SECRET`/`CRON_SECRET` pattern).
+Deliberately minimal and single-purpose per its own scope: one plant (Atlanta), three operations, no
+scheduling/queues/retries/multi-plant or multi-vendor support, no framework (a raw `node:http` server)
+— do not generalize it.
 
-- **Phase 1** (`scripts/test-fusionsolar-browser.ts`): login → select Atlanta → expand Atlanta →
-  screenshot → exit. `selectPlant`/`expandPlant`/`openDongle`/`openConfiguration` (the last of these
-  opens a *plant-level* tab titled "Управление на устройството" — not a per-device Configuration
-  page; see Phase 2).
-- **Phase 2** (`scripts/inspect-fusionsolar.ts`): extends the same module (no rewrite) to discover
-  every child device (e.g. Smart Dongle) under a plant dynamically from the live tree
-  (`discoverChildNodeNames` — never a hardcoded name/count), open each one's own **Configuration**
-  tab (`openDeviceConfiguration` — a per-device tab titled "Конфигурация", distinct from
-  `openConfiguration` above despite the similar name), read labeled field values
-  (`readDeviceConfigField`, generic over both dropdown and plain-text fields), and read online/
-  offline status from the tree node's own icon (`isDongleOnline`). Writes
-  `tmp/fusionsolar/report.json` (per-dongle Active Power Control mode, firmware, online status) plus
-  a numbered screenshot per step. Confirmed against the live portal: the real Configuration page has
-  no distinctly-labeled "export limit"/"active power limit" field for this dongle model — the
-  closest candidates (a ramp-rate threshold, a fault-protection percentage) mean something different,
-  so `exportLimit`/`activePowerLimit` are always reported as `null` rather than guessed. Values in
-  `report.json` are FusionSolar's own raw (Bulgarian) text, never translated or invented; the debug
-  console (Phase 3) separately maps the two known canonical values to English labels for display only
-  — see below.
-- **Phase 3** (`app/dev/fusionsolar_atlanta/*`, the only write-capable part of this module): a
-  temporary, Atlanta-only debug console — see its own section below. Adds `setActivePowerControlMode`,
-  `clickSaveButton`, `confirmSaveDialogIfPresent`, `waitForSaveConfirmation`, and
-  `reopenDeviceConfigurationAndRead` to `navigation.ts`. The real, confirmed synchronization signal for
-  a completed Save is the Save button (`Selectors.deviceConfig.saveButton`, "Запазване") going back to
-  disabled — not a toast/message/dialog (none was ever observed for this field across multiple real,
-  successful saves during verification, despite the app using antd throughout) — and it can take
-  **over 20 seconds**, since a Smart Dongle relays the change to real hardware; `waitForSaveConfirmation`
-  waits up to 120s for this. The read-back after every Save always goes through
-  `reopenDeviceConfigurationAndRead` — navigating away to the device's "Подробности"/Details tab and
-  back to Configuration, a genuine reload — rather than reading the still-open page that performed the
-  Save, so a stale client-side value can't be mistaken for what FusionSolar actually persisted. Both
-  the write path and this reopen-and-read mechanism were live-verified against the real portal (the
-  former with explicit user sign-off first, given the real financial/operational stakes): one real
-  dongle was switched to the opposite canonical mode, read back and confirmed, then switched back and
-  confirmed again, with restoration independently re-verified via a fresh session afterward; the
-  reopen mechanism was separately confirmed (read-only, no Save involved) to return the same value as
-  an in-place read.
+Structure: `src/server.ts` (raw HTTP server, refuses to start without `AUTOMATION_SERVICE_SECRET`/
+FusionSolar credentials configured), `src/routes.ts` (the exact three routes below plus the
+shared-secret check), `src/controller.ts` (thin HTTP-shape adapter), `src/fusionSolar/atlanta-service.ts`
+(orchestration: open browser → login → open Atlanta → discover dongles → process → close browser,
+for every request — never a kept-alive session), and `src/fusionSolar/{browser,login,navigation,
+selectors,screenshots}.ts` — moved unchanged (Phase 1/2/3 login/navigation/selector/Save/verification
+logic, byte-for-byte) from what used to be `apps/web/lib/fusionsolar/browser/*`, with exactly one
+simplification: `browser.ts` no longer branches on a Vercel-serverless environment
+(`@sparticuz/chromium` vs local `playwright`) — this is now always a persistent process, so it always
+uses the plain `playwright` package's own managed Chromium install directly. That branching only ever
+existed to work around Vercel's ephemeral filesystem when this automation still ran inside `apps/web`
+(see git history on `apps/web/lib/fusionsolar/browser/browser.ts` for that now-removed code and the
+missing-file production incident that motivated moving this out of Vercel entirely).
+
+Three endpoints, exactly:
+
+- `POST /automation/fusionsolar/atlanta/status` — read-only: every dongle's name, online status, and
+  Active Power Control mode (`"Zero Export"` / `"No Limit"` / `"Unknown"` — the service maps
+  FusionSolar's raw Bulgarian field text to these canonical English labels itself; Voltessa never
+  sees or interprets the raw values).
+- `POST /automation/fusionsolar/atlanta/zero-export` and `/no-limit` — for every dongle: read current
+  mode; already-target-mode → skip untouched (no Save); opposite canonical mode → change, Save, wait
+  for FusionSolar's own confirmation (the Save button going back to disabled — no toast/message/dialog
+  was ever observed for this field), leave Configuration and reopen it fresh, then verify the reopened
+  read matches the target exactly. The first verification failure or automation error stops the whole
+  run immediately (remaining dongles untouched) and returns `{ step, dongle, screenshotPath,
+  screenshotDataUrl, playwrightError }`. Every response also carries a human-readable `log: string[]`
+  array Voltessa displays directly.
+
+`automation/scripts/{test-fusionsolar-browser,inspect-fusionsolar}.ts` are the original Phase 1/2
+manual verification scripts, moved here (not deleted) since they import this module's own
+`node_modules/playwright` — run from `automation/`, not the repo root.
+
+**Historical note**: this automation ran directly inside `apps/web` (as `lib/fusionsolar/browser/*`
+and a write-capable `app/dev/fusionsolar_atlanta/*` debug console using `playwright-core` +
+`@sparticuz/chromium` for a Vercel-serverless Chromium binary) through Phases 1–3. That path hit a
+real production incident — Next.js's build-time file tracer never copied `playwright-core`'s
+`browsers.json` or `@sparticuz/chromium`'s entire `bin/` directory (the actual Chromium binary) into
+the deployed function, regardless of `outputFileTracingIncludes` tuning — which is what motivated
+extracting this into the fully independent process described above instead. `git log` on this file and
+the old `apps/web/lib/fusionsolar/browser/*` paths has the full incident record.
 
 ### FusionSolar Atlanta debug console (`app/dev/fusionsolar_atlanta/*`)
 
@@ -219,37 +219,17 @@ under `app/(platform)`, so neither `proxy.ts`'s middleware matcher nor `(platfor
 `requireOnboardedUser()` covers it for free. Both `page.tsx` and every Server Action in `actions.ts`
 independently call `requirePermission(Permissions.canOperatePlants)` and then verify the caller's own
 `organizationId` owns a `Plant` named exactly `"Atlanta"` (`prisma.plant.findFirst`) — any other
-organization gets a plain `notFound()` (404), never a hint this page exists. Three actions: Read
-Status (reuses the Phase 2 read-only helpers), Enable Zero Export, Enable No Limit (Phase 3's write
-helpers) — the last two always re-read each dongle's current mode first and skip it untouched (no
-Save) if it's already the target mode or if it's in neither canonical mode; the first read-back
-mismatch stops the whole run immediately, remaining dongles are never touched. The two "Enable"
-buttons stay disabled client-side until Read Status has succeeded once in the current page session —
-a UX safety guard, not the security boundary (that's the server-side organization check above, which
-runs regardless of what the client does).
+organization gets a plain `notFound()` (404), never a hint this page exists. This authorization check
+stays in Voltessa (a multi-tenancy concern about who may call the Automation Service) even though the
+Automation Service itself has no concept of organizations.
 
-Because this launches a real Chromium browser from a Server Action, it needed a genuine architecture
-addition beyond "reuse the existing automation" (explicitly approved by the user, since this page must
-work when deployed normally, not just in local dev): `browser.ts` now launches via `playwright-core`
-in both environments, sourcing the Chromium **binary** differently — `@sparticuz/chromium`'s
-Lambda/Vercel-compatible build in production (its `149.x` release matches the Chromium major version
-this exact `playwright-core` release itself expects) via `executablePath`, or the full `playwright`
-package's own pre-installed binary locally (still a devDependency, used as-is by
-`scripts/test-fusionsolar-browser.ts` and `scripts/inspect-fusionsolar.ts`, and by `browser.ts` itself
-outside a serverless environment). `playwright-core` and `@sparticuz/chromium` are real `dependencies`
-now (not dev-only), both listed in `next.config.js`'s `serverExternalPackages` (alongside `playwright`
-itself, to keep Next.js from trying to bundle/trace any of the three) so their native/binary payloads
-aren't processed by Next.js's own bundler. `vercel.json` pins this route to `fra1` (same region as the
-other FusionSolar routes) with a 300s `maxDuration`, given a multi-dongle read/write run is genuinely
-long-running.
-
-**Known verification gap**: the serverless Chromium path could not be exercised end-to-end from local
-development — `@sparticuz/chromium`'s bundled binary is Linux-only and isn't runnable on a non-Linux
-dev machine, so its packaging was confirmed (correctly traced into the built function via
-`next build`'s own `.nft.json` output) but its actual *execution* on Vercel was not. The write-path
-automation logic itself (Save/confirm/read-back) **was** verified end-to-end against the real portal,
-but via a temporary local script bypassing Next.js/auth entirely (deleted afterward) — not by clicking
-the actual deployed page as a real logged-in user.
+`actions.ts` is now a pure HTTP client: three Server Actions, each just calling
+`lib/automation-client.ts` and returning the Automation Service's JSON response as-is — no Playwright
+import, no FusionSolar selector/navigation knowledge, anywhere in `apps/web`. The two "Enable" buttons
+stay disabled client-side until Read Status has succeeded once in the current page session — a UX
+safety guard, not the security boundary (that's the server-side organization check above). The console
+displays the Automation Service's `log: string[]` directly (an expandable "Execution log" panel) in
+addition to status/final-result, per the Automation Service's own response contract.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 

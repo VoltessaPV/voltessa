@@ -1,6 +1,6 @@
 /**
  * Every FusionSolar browser-automation selector lives here - no other file
- * in this module (or anywhere else in the app) should hardcode one.
+ * in this module (or anywhere else in this service) should hardcode one.
  *
  * Every selector below was confirmed by directly inspecting the real,
  * live FusionSolar portal (https://eu5.fusionsolar.huawei.com) - login

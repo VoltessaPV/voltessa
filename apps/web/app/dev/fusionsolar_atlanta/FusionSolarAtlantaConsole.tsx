@@ -2,8 +2,6 @@
 
 import { useState, useTransition } from "react";
 
-import { Selectors } from "@/lib/fusionsolar/browser/selectors";
-
 import {
   enableNoLimitForAtlanta,
   enableZeroExportForAtlanta,
@@ -11,7 +9,7 @@ import {
   type ChangeModeResult,
   type DongleChangeResult,
   type DongleStatus,
-  type FailureReport,
+  type FailureDetail,
   type ReadStatusResult,
 } from "./actions";
 
@@ -20,33 +18,23 @@ type PendingAction = "read-status" | "zero-export" | "no-limit" | null;
 const buttonClassName =
   "rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600";
 
-/** Maps a raw FusionSolar Active Power Control value to this console's
- *  display label/indicator. Anything that isn't one of the two known
- *  canonical values (see Selectors.deviceConfig.activePowerControlMode)
- *  is shown as "Unknown" rather than guessed at. */
-function describeMode(raw: string | null): { label: string; indicator: string } {
-  if (raw === Selectors.deviceConfig.activePowerControlMode.zeroExport) {
-    return { label: "Zero Export", indicator: "🟢" };
-  }
-
-  if (raw === Selectors.deviceConfig.activePowerControlMode.noLimit) {
-    return { label: "No Limit", indicator: "⚪" };
-  }
-
-  return { label: raw ?? "Unknown", indicator: "❓" };
+function modeIndicator(mode: string): string {
+  if (mode === "Zero Export") return "🟢";
+  if (mode === "No Limit") return "⚪";
+  return "❓";
 }
 
-function FailurePanel({ failure, error }: { failure: FailureReport | undefined; error: string }) {
+function FailurePanel({ failure, error }: { failure: FailureDetail | undefined; error: string }) {
   return (
     <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-300">
       <p className="font-medium">Stopped: {error}</p>
 
       {failure && (
         <dl className="mt-3 space-y-1 text-red-300/90">
-          {failure.dongleName && (
+          {failure.dongle && (
             <div>
               <dt className="inline font-medium">Dongle: </dt>
-              <dd className="inline">{failure.dongleName}</dd>
+              <dd className="inline">{failure.dongle}</dd>
             </div>
           )}
           <div>
@@ -54,8 +42,8 @@ function FailurePanel({ failure, error }: { failure: FailureReport | undefined; 
             <dd className="inline">{failure.step}</dd>
           </div>
           <div>
-            <dt className="inline font-medium">Current URL: </dt>
-            <dd className="inline break-all">{failure.url}</dd>
+            <dt className="inline font-medium">Playwright error: </dt>
+            <dd className="inline break-all">{failure.playwrightError}</dd>
           </div>
           {failure.screenshotPath && (
             <div>
@@ -70,7 +58,7 @@ function FailurePanel({ failure, error }: { failure: FailureReport | undefined; 
         // eslint-disable-next-line @next/next/no-img-element -- a locally-generated data URL, not an optimizable remote image
         <img
           src={failure.screenshotDataUrl}
-          alt={`Screenshot at failure${failure.dongleName ? ` (${failure.dongleName})` : ""}`}
+          alt={`Screenshot at failure${failure.dongle ? ` (${failure.dongle})` : ""}`}
           className="mt-3 w-full rounded-lg border border-red-500/20"
         />
       )}
@@ -85,18 +73,15 @@ function StatusList({ dongles }: { dongles: DongleStatus[] }) {
 
   return (
     <ul className="space-y-3">
-      {dongles.map((dongle) => {
-        const { label, indicator } = describeMode(dongle.activePowerControl);
-
-        return (
-          <li key={dongle.name} className="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p className="font-medium text-white">{dongle.name}</p>
-            <p className="mt-1 text-sm text-slate-300">
-              {indicator} {label}
-            </p>
-          </li>
-        );
-      })}
+      {dongles.map((dongle) => (
+        <li key={dongle.name} className="rounded-xl border border-white/10 bg-white/5 p-4">
+          <p className="font-medium text-white">{dongle.name}</p>
+          <p className="mt-1 text-sm text-slate-300">
+            {modeIndicator(dongle.mode)} {dongle.mode}
+            {dongle.online === false && <span className="ml-2 text-xs text-slate-500">(offline)</span>}
+          </p>
+        </li>
+      ))}
     </ul>
   );
 }
@@ -117,8 +102,8 @@ function ChangeReportTable({ changes }: { changes: DongleChangeResult[] }) {
           {changes.map((change) => (
             <tr key={change.name} className="border-t border-white/10">
               <td className="px-4 py-2 text-white">{change.name}</td>
-              <td className="px-4 py-2 text-slate-300">{describeMode(change.before).label}</td>
-              <td className="px-4 py-2 text-slate-300">{describeMode(change.after).label}</td>
+              <td className="px-4 py-2 text-slate-300">{change.before}</td>
+              <td className="px-4 py-2 text-slate-300">{change.after}</td>
               <td className="px-4 py-2">
                 <span
                   className={
@@ -141,13 +126,28 @@ function ChangeReportTable({ changes }: { changes: DongleChangeResult[] }) {
   );
 }
 
+function ExecutionLogPanel({ log }: { log: string[] }) {
+  if (log.length === 0) {
+    return null;
+  }
+
+  return (
+    <details className="rounded-xl border border-white/10 bg-black/30">
+      <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-slate-300">Execution log</summary>
+      <pre className="max-h-96 overflow-auto whitespace-pre-wrap px-4 pb-4 text-xs text-slate-400">
+        {log.join("\n")}
+      </pre>
+    </details>
+  );
+}
+
 export function FusionSolarAtlantaConsole() {
   const [isPending, startTransition] = useTransition();
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [statusResult, setStatusResult] = useState<ReadStatusResult | null>(null);
   const [changeResult, setChangeResult] = useState<ChangeModeResult | null>(null);
 
-  const hasReadStatus = statusResult?.ok === true;
+  const hasReadStatus = statusResult?.success === true;
 
   function runReadStatus() {
     if (isPending) {
@@ -207,27 +207,27 @@ export function FusionSolarAtlantaConsole() {
       </div>
 
       {statusResult && (
-        <section>
+        <section className="space-y-3">
           <h2 className="text-lg font-medium">Status</h2>
-          <div className="mt-3">
-            {statusResult.ok ? (
+          <div>
+            {statusResult.success ? (
               <StatusList dongles={statusResult.dongles} />
             ) : (
               <FailurePanel error={statusResult.error} failure={statusResult.failure} />
             )}
           </div>
+          <ExecutionLogPanel log={statusResult.log} />
         </section>
       )}
 
       {changeResult && (
-        <section>
-          <h2 className="text-lg font-medium">
-            {changeResult.ok ? `${changeResult.targetLabel} - Final Report` : "Change Failed"}
-          </h2>
-          <div className="mt-3 space-y-4">
-            {changeResult.changes.length > 0 && <ChangeReportTable changes={changeResult.changes} />}
-            {!changeResult.ok && <FailurePanel error={changeResult.error} failure={changeResult.failure} />}
+        <section className="space-y-3">
+          <h2 className="text-lg font-medium">{changeResult.success ? "Final Report" : "Change Failed"}</h2>
+          <div className="space-y-4">
+            {changeResult.dongles.length > 0 && <ChangeReportTable changes={changeResult.dongles} />}
+            {!changeResult.success && <FailurePanel error={changeResult.error} failure={changeResult.failure} />}
           </div>
+          <ExecutionLogPanel log={changeResult.log} />
         </section>
       )}
     </div>

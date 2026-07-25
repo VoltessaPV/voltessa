@@ -1,27 +1,8 @@
 "use server";
 
-import { readFile } from "node:fs/promises";
-
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
-import {
-  clickSaveButton,
-  closeBrowserSession,
-  confirmSaveDialogIfPresent,
-  discoverChildNodeNames,
-  expandPlant,
-  FusionSolarBrowserStepError,
-  launchBrowserSession,
-  login,
-  openDeviceConfiguration,
-  openDongle,
-  readDeviceConfigField,
-  reopenDeviceConfigurationAndRead,
-  Selectors,
-  selectPlant,
-  setActivePowerControlMode,
-  waitForSaveConfirmation,
-} from "@/lib/fusionsolar/browser";
+import { callAutomationService } from "@/lib/automation-client";
 import { prisma } from "@/lib/prisma";
 
 const ATLANTA_PLANT_NAME = "Atlanta";
@@ -29,9 +10,11 @@ const ATLANTA_PLANT_NAME = "Atlanta";
 /**
  * The access boundary for this whole debug console: the caller's own
  * organization must own a Plant literally named "Atlanta". Re-checked in
- * every action here (not just the page's own render-time check) -
- * never trust the client alone, the same defense-in-depth already used
- * by app/(platform)/automations/actions.ts.
+ * every action here (not just the page's own render-time check) - never
+ * trust the client alone. This check stays in Voltessa: it's a
+ * multi-tenancy/authorization concern about who may call the Automation
+ * Service, not FusionSolar knowledge - the Automation Service itself has
+ * no concept of organizations.
  */
 async function requireAtlantaOrganization(organizationId: string): Promise<boolean> {
   const plant = await prisma.plant.findFirst({
@@ -44,233 +27,76 @@ async function requireAtlantaOrganization(organizationId: string): Promise<boole
 
 export type DongleStatus = {
   name: string;
-  activePowerControl: string | null;
+  online: boolean | null;
+  mode: string;
 };
 
-export type FailureReport = {
-  dongleName: string | null;
+export type FailureDetail = {
   step: string;
-  url: string;
+  dongle: string | null;
   screenshotPath: string | null;
   screenshotDataUrl: string | null;
-  message: string;
+  playwrightError: string;
 };
 
 export type ReadStatusResult =
-  | { ok: true; plant: string; dongles: DongleStatus[] }
-  | { ok: false; error: string; failure?: FailureReport };
+  | { success: true; timestamp: string; dongles: DongleStatus[]; log: string[] }
+  | { success: false; timestamp: string; error: string; failure?: FailureDetail; log: string[] };
 
 export type DongleChangeOutcome = "Changed" | "Skipped" | "Failed";
 
 export type DongleChangeResult = {
   name: string;
-  before: string | null;
-  after: string | null;
+  before: string;
+  after: string;
   result: DongleChangeOutcome;
   reason: string | null;
 };
 
 export type ChangeModeResult =
-  | { ok: true; plant: string; targetLabel: string; changes: DongleChangeResult[] }
-  | { ok: false; error: string; changes: DongleChangeResult[]; failure?: FailureReport };
+  | { success: true; timestamp: string; dongles: DongleChangeResult[]; log: string[] }
+  | { success: false; timestamp: string; error: string; dongles: DongleChangeResult[]; failure?: FailureDetail; log: string[] };
 
-/**
- * tmp/fusionsolar/ (see screenshots.ts) does not persist once a Vercel
- * serverless invocation ends, so the bare file path this reads is only
- * independently useful locally - reading it back as a data URL here
- * makes the failure screenshot actually visible in the UI regardless of
- * environment.
- */
-async function readScreenshotAsDataUrl(path: string | null): Promise<string | null> {
-  if (!path) {
-    return null;
-  }
+async function requireAccess(): Promise<ReadStatusResult | null> {
+  const user = await requirePermission(Permissions.canOperatePlants);
 
-  try {
-    const buffer = await readFile(path);
-    return `data:image/png;base64,${buffer.toString("base64")}`;
-  } catch {
-    return null;
-  }
-}
-
-async function toFailureReport(error: unknown, dongleName: string | null): Promise<FailureReport> {
-  if (error instanceof FusionSolarBrowserStepError) {
+  if (!(await requireAtlantaOrganization(user.organizationId))) {
     return {
-      dongleName,
-      step: error.step,
-      url: error.url,
-      screenshotPath: error.screenshotPath,
-      screenshotDataUrl: await readScreenshotAsDataUrl(error.screenshotPath),
-      message: error.message,
+      success: false,
+      timestamp: new Date().toISOString(),
+      error: "This organization does not have an Atlanta plant",
+      log: [],
     };
   }
 
-  return {
-    dongleName,
-    step: "unknown",
-    url: "unknown",
-    screenshotPath: null,
-    screenshotDataUrl: null,
-    message: error instanceof Error ? error.message : String(error),
-  };
+  return null;
 }
 
-/**
- * Read Status: login, select Atlanta, expand its tree, discover every
- * Smart Dongle dynamically, and read each one's current Active Power
- * Control mode. Read-only - reuses the exact same navigation/reading
- * helpers as scripts/inspect-fusionsolar.ts, nothing new.
- */
+/** Read Status: calls the Automation Service, nothing else. Voltessa
+ *  never launches Playwright and never knows anything about FusionSolar. */
 export async function readFusionSolarAtlantaStatus(): Promise<ReadStatusResult> {
-  console.log("FusionSolar debug build: ab2355b");
-
-  const user = await requirePermission(Permissions.canOperatePlants);
-
-  if (!(await requireAtlantaOrganization(user.organizationId))) {
-    return { ok: false, error: "This organization does not have an Atlanta plant" };
+  const accessError = await requireAccess();
+  if (accessError) {
+    return accessError;
   }
 
-  let currentDongle: string | null = null;
-  let session: Awaited<ReturnType<typeof launchBrowserSession>> | null = null;
-
-  try {
-    session = await launchBrowserSession();
-    const page = await login(session.page);
-    await selectPlant(page, ATLANTA_PLANT_NAME);
-    await expandPlant(page, ATLANTA_PLANT_NAME);
-
-    const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
-    const dongles: DongleStatus[] = [];
-
-    for (const name of dongleNames) {
-      currentDongle = name;
-      await openDongle(page, name);
-      await openDeviceConfiguration(page);
-
-      const mode = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
-      dongles.push({ name, activePowerControl: mode });
-    }
-
-    return { ok: true, plant: ATLANTA_PLANT_NAME, dongles };
-  } catch (error) {
-    const failure = await toFailureReport(error, currentDongle);
-    return { ok: false, error: failure.message, failure };
-  } finally {
-    if (session) {
-      await closeBrowserSession(session);
-    }
-  }
-}
-
-/**
- * Shared by enableZeroExportForAtlanta/enableNoLimitForAtlanta. For
- * every dongle, sequentially (never in parallel): open Configuration,
- * read the current mode, and only if it's currently the OPPOSITE
- * canonical mode, change it - Save, wait for FusionSolar's own
- * confirmation (never a fixed sleep), then read the mode back and
- * verify it matches exactly what was requested. A dongle already in the
- * target mode is left completely alone (no Save); a dongle in neither
- * canonical mode is also left alone (never guess what an unrecognized
- * mode should become). The first read-back mismatch or automation
- * failure stops the whole run immediately - remaining dongles are never
- * touched.
- */
-async function changeAllDonglesTo(targetLabel: "Zero Export" | "No Limit"): Promise<ChangeModeResult> {
-  const user = await requirePermission(Permissions.canOperatePlants);
-
-  if (!(await requireAtlantaOrganization(user.organizationId))) {
-    return { ok: false, error: "This organization does not have an Atlanta plant", changes: [] };
-  }
-
-  const targetValue =
-    targetLabel === "Zero Export"
-      ? Selectors.deviceConfig.activePowerControlMode.zeroExport
-      : Selectors.deviceConfig.activePowerControlMode.noLimit;
-  const oppositeValue =
-    targetLabel === "Zero Export"
-      ? Selectors.deviceConfig.activePowerControlMode.noLimit
-      : Selectors.deviceConfig.activePowerControlMode.zeroExport;
-
-  const changes: DongleChangeResult[] = [];
-  let currentDongle: string | null = null;
-  let session: Awaited<ReturnType<typeof launchBrowserSession>> | null = null;
-
-  try {
-    session = await launchBrowserSession();
-    const page = await login(session.page);
-    await selectPlant(page, ATLANTA_PLANT_NAME);
-    await expandPlant(page, ATLANTA_PLANT_NAME);
-
-    const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
-
-    for (const name of dongleNames) {
-      currentDongle = name;
-      await openDongle(page, name);
-      await openDeviceConfiguration(page);
-
-      const before = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
-
-      if (before === targetValue) {
-        changes.push({ name, before, after: before, result: "Skipped", reason: `Already ${targetLabel}` });
-        continue;
-      }
-
-      if (before !== oppositeValue) {
-        changes.push({
-          name,
-          before,
-          after: before,
-          result: "Skipped",
-          reason: "Not currently Zero Export or No Limit - left unchanged",
-        });
-        continue;
-      }
-
-      await setActivePowerControlMode(page, targetValue);
-      await clickSaveButton(page);
-      await confirmSaveDialogIfPresent(page);
-      await waitForSaveConfirmation(page);
-
-      // Verify from a freshly re-opened Configuration page, not the page
-      // that performed the Save - avoids validating stale UI state
-      // instead of what FusionSolar actually persisted.
-      const after = await reopenDeviceConfigurationAndRead(page, Selectors.deviceConfig.activePowerControlModeLabel);
-
-      if (after !== targetValue) {
-        changes.push({
-          name,
-          before,
-          after,
-          result: "Failed",
-          reason: `Read-back verification failed: expected "${targetLabel}", found "${after ?? "unknown"}"`,
-        });
-
-        return {
-          ok: false,
-          error: `Read-back verification failed for "${name}" - stopped, remaining dongles were not processed`,
-          changes,
-        };
-      }
-
-      changes.push({ name, before, after, result: "Changed", reason: null });
-    }
-
-    return { ok: true, plant: ATLANTA_PLANT_NAME, targetLabel, changes };
-  } catch (error) {
-    const failure = await toFailureReport(error, currentDongle);
-    return { ok: false, error: failure.message, changes, failure };
-  } finally {
-    if (session) {
-      await closeBrowserSession(session);
-    }
-  }
+  return callAutomationService<ReadStatusResult>("/automation/fusionsolar/atlanta/status");
 }
 
 export async function enableZeroExportForAtlanta(): Promise<ChangeModeResult> {
-  return changeAllDonglesTo("Zero Export");
+  const accessError = await requireAccess();
+  if (accessError) {
+    return { ...accessError, dongles: [] };
+  }
+
+  return callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/zero-export");
 }
 
 export async function enableNoLimitForAtlanta(): Promise<ChangeModeResult> {
-  return changeAllDonglesTo("No Limit");
+  const accessError = await requireAccess();
+  if (accessError) {
+    return { ...accessError, dongles: [] };
+  }
+
+  return callAutomationService<ChangeModeResult>("/automation/fusionsolar/atlanta/no-limit");
 }

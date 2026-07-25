@@ -1,15 +1,9 @@
 /**
- * FusionSolar browser automation. Temporary layer until the native
- * Huawei/OpenEMS integration is complete.
- *
- * Phase 1: login, plant/device tree navigation, screenshots.
- * Phase 2: dynamic child-device discovery, a device's own Configuration
- * tab, and reading its current field values (Active Power Control mode,
- * firmware, ...) - read-only.
- * Phase 3: changing a device's Active Power Control mode and saving it -
- * the only write-capable part of this module. Used exclusively by the
- * Atlanta-only debug console (app/dev/fusionsolar_atlanta) - nothing
- * else in the app calls setActivePowerControlMode/clickSaveButton.
+ * FusionSolar browser automation for the Atlanta plant. Moved here
+ * unchanged from apps/web/lib/fusionsolar/browser (see git history for
+ * that module's own Phase 1/2/3 record) - this service is now the only
+ * place that launches Playwright or knows anything about FusionSolar's
+ * portal markup.
  */
 export { launchBrowserSession, closeBrowserSession, type FusionSolarBrowserSession } from "./browser";
 export { login, getFusionSolarAtlantaCredentials, type FusionSolarCredentials } from "./login";

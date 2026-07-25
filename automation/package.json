@@ -1,0 +1,25 @@
+{
+  "name": "voltessa-automation-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Temporary internal Automation Service - owns Playwright and the FusionSolar browser automation for the Atlanta plant so Voltessa (apps/web) never has to. Independent process, not part of the pnpm workspace.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "1.61.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

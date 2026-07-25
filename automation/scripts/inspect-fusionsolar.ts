@@ -9,7 +9,12 @@
  * Manual execution only - not wired into any build hook, test, or
  * startup path.
  *
- * Usage: from apps/web, `npx tsx --env-file=.env.local ../../scripts/inspect-fusionsolar.ts`
+ * Moved here (from the repo-root scripts/) when the browser automation
+ * itself moved into this standalone Automation Service - node_modules
+ * resolution for "playwright" requires this script to live under
+ * automation/.
+ *
+ * Usage: from automation/, `npx tsx scripts/inspect-fusionsolar.ts`
  *
  * Writes tmp/fusionsolar/report.json plus a numbered screenshot per step
  * (01-login, 02-atlanta-expanded, then one per discovered dongle).
@@ -23,19 +28,19 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const webDir = path.resolve(scriptDir, "../apps/web");
+const automationDir = path.resolve(scriptDir, "..");
 
 for (const file of [".env.local", ".env"]) {
-  const fullPath = path.join(webDir, file);
+  const fullPath = path.join(automationDir, file);
   if (existsSync(fullPath)) {
     dotenv.config({ path: fullPath });
   }
 }
 
-import type { Page } from "playwright-core";
+import type { Page } from "playwright";
 
-import { closeBrowserSession, launchBrowserSession } from "../apps/web/lib/fusionsolar/browser/browser";
-import { login } from "../apps/web/lib/fusionsolar/browser/login";
+import { closeBrowserSession, launchBrowserSession } from "../src/fusionSolar/browser";
+import { login } from "../src/fusionSolar/login";
 import {
   discoverChildNodeNames,
   expandPlant,
@@ -44,9 +49,9 @@ import {
   openDongle,
   readDeviceConfigField,
   selectPlant,
-} from "../apps/web/lib/fusionsolar/browser/navigation";
-import { capture, SCREENSHOT_DIR } from "../apps/web/lib/fusionsolar/browser/screenshots";
-import { Selectors } from "../apps/web/lib/fusionsolar/browser/selectors";
+} from "../src/fusionSolar/navigation";
+import { capture, SCREENSHOT_DIR } from "../src/fusionSolar/screenshots";
+import { Selectors } from "../src/fusionSolar/selectors";
 
 const PLANT_NAME = "Atlanta";
 

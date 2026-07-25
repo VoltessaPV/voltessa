@@ -6,7 +6,12 @@
  * script exists purely to prove the read-only navigation layer is
  * reliable before any later phase builds write actions on top of it.
  *
- * Usage: from apps/web, `npx tsx --env-file=.env.local ../../scripts/test-fusionsolar-browser.ts`
+ * Moved here (from the repo-root scripts/) when the browser automation
+ * itself moved into this standalone Automation Service - node_modules
+ * resolution for "playwright" requires this script to live under
+ * automation/.
+ *
+ * Usage: from automation/, `npx tsx scripts/test-fusionsolar-browser.ts`
  */
 
 import { existsSync } from "node:fs";
@@ -16,19 +21,19 @@ import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const webDir = path.resolve(scriptDir, "../apps/web");
+const automationDir = path.resolve(scriptDir, "..");
 
 for (const file of [".env.local", ".env"]) {
-  const fullPath = path.join(webDir, file);
+  const fullPath = path.join(automationDir, file);
   if (existsSync(fullPath)) {
     dotenv.config({ path: fullPath });
   }
 }
 
-import { closeBrowserSession, launchBrowserSession } from "../apps/web/lib/fusionsolar/browser/browser";
-import { login } from "../apps/web/lib/fusionsolar/browser/login";
-import { expandPlant, selectPlant } from "../apps/web/lib/fusionsolar/browser/navigation";
-import { capture } from "../apps/web/lib/fusionsolar/browser/screenshots";
+import { closeBrowserSession, launchBrowserSession } from "../src/fusionSolar/browser";
+import { login } from "../src/fusionSolar/login";
+import { expandPlant, selectPlant } from "../src/fusionSolar/navigation";
+import { capture } from "../src/fusionSolar/screenshots";
 
 const ATLANTA_PLANT_NAME = "Atlanta";
 
