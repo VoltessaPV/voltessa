@@ -135,3 +135,115 @@ export async function openConfiguration(page: Page): Promise<void> {
     await page.waitForLoadState("networkidle");
   });
 }
+
+/**
+ * Discovers the names of every direct child node under a plant (or any
+ * tree node) - e.g. every Smart Dongle under a plant - by reading the
+ * live tree, never by assuming a count or order. The parent must already
+ * be expanded (see expandPlant). Returns an empty array if the parent
+ * has no children.
+ */
+export async function discoverChildNodeNames(page: Page, parentName: string): Promise<string[]> {
+  const selector = Selectors.tree.directChildrenList(parentName);
+
+  return runFusionSolarStep(page, "discoverChildNodeNames", selector, async () => {
+    const childList = page.locator(selector);
+    await childList.waitFor({ state: "visible" });
+
+    const nameParts = childList.locator("> li.node-line .flex-node-line-name-part");
+    const count = await nameParts.count();
+
+    const names: string[] = [];
+
+    for (let index = 0; index < count; index += 1) {
+      const title = await nameParts.nth(index).getAttribute("title");
+
+      if (title) {
+        names.push(title);
+      }
+    }
+
+    return names;
+  });
+}
+
+/**
+ * Reads the connected/disconnected icon rendered next to a tree node's
+ * name (see Selectors.tree.nodeIcon) and reports whether it indicates
+ * "online". Returns null if the node (or its icon) can't be found -
+ * never guesses.
+ */
+export async function isDongleOnline(page: Page, name: string): Promise<boolean | null> {
+  const selector = Selectors.tree.nodeIcon(name);
+
+  return runFusionSolarStep(page, "isDongleOnline", selector, async () => {
+    const icon = page.locator(selector).first();
+
+    if ((await icon.count()) === 0) {
+      return null;
+    }
+
+    const src = await icon.getAttribute("src");
+
+    return src ? src.endsWith("-connected.png") : null;
+  });
+}
+
+/**
+ * Opens the currently-selected device's own Configuration tab
+ * ("Конфигурация" - see Selectors.deviceConfig) and waits for its
+ * Active Power Control section to render, since that section loads via
+ * a later async fetch than the fields above it - waiting for it is what
+ * makes "fully loaded" deterministic instead of a fixed sleep.
+ * Navigation only - opening this tab does not itself change or save
+ * anything. Distinct from openConfiguration above, which opens a
+ * different, plant-level tab with a similarly-worded title.
+ */
+export async function openDeviceConfiguration(page: Page): Promise<void> {
+  const tabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.configurationTabTitle);
+
+  await runFusionSolarStep(page, "openDeviceConfiguration", tabSelector, async () => {
+    await page.locator(tabSelector).click();
+    await page.waitForLoadState("networkidle");
+
+    const activePowerControlField = page.locator(
+      Selectors.deviceConfig.fieldContainerByLabel(Selectors.deviceConfig.activePowerControlModeLabel),
+    );
+
+    await activePowerControlField.waitFor({ state: "visible", timeout: 30000 });
+  });
+}
+
+/**
+ * Reads a labeled field's current value from a device's Configuration
+ * tab (see Selectors.deviceConfig) - works for both dropdown
+ * (.ant-select-selection-item) and plain text (input.ant-input) fields,
+ * since both expose their current value as a `title` attribute. Returns
+ * null if the field isn't present for this device - never guesses.
+ */
+export async function readDeviceConfigField(page: Page, label: string): Promise<string | null> {
+  const selector = Selectors.deviceConfig.fieldContainerByLabel(label);
+
+  return runFusionSolarStep(page, "readDeviceConfigField", selector, async () => {
+    const container = page.locator(selector).first();
+
+    if ((await container.count()) === 0) {
+      return null;
+    }
+
+    const selectValue = container.locator(Selectors.deviceConfig.selectValue).first();
+
+    if ((await selectValue.count()) > 0) {
+      const title = await selectValue.getAttribute("title");
+      return title ?? (await selectValue.innerText().catch(() => null));
+    }
+
+    const inputValue = container.locator(Selectors.deviceConfig.inputValue).first();
+
+    if ((await inputValue.count()) > 0) {
+      return await inputValue.getAttribute("value");
+    }
+
+    return null;
+  });
+}

@@ -161,18 +161,37 @@ Additional env var used in `apps/web` but **not currently declared** in `turbo.j
 A temporary Playwright automation layer that drives the actual FusionSolar web portal
 (`https://eu5.fusionsolar.huawei.com/unisso/login.action`) directly, as a stand-in until the native
 Huawei/OpenEMS integration is complete — separate from, and independent of, the OAuth/gateway-based
-API integration in `lib/fusionsolar/api-client.ts` and the rest of `lib/fusionsolar/*`. Phase 1
-(current) is read-only navigation only: `browser.ts` (Playwright lifecycle), `selectors.ts` (every
-selector, confirmed against the live portal — update here first if FusionSolar's markup changes),
-`login.ts` (`login(page)`, credentials from env, never logs them, clears the plaintext username
-field before any failure screenshot), `navigation.ts` (`selectPlant`/`expandPlant`/`openDongle`/
-`openConfiguration`, plus the shared `FusionSolarBrowserStepError` + `runFusionSolarStep` every step
-uses to report failures with a screenshot/URL/title/step/selector), and `screenshots.ts` (writes to
-`tmp/fusionsolar/`, gitignored — screenshots can contain real customer plant data). Manual
-verification script: `scripts/test-fusionsolar-browser.ts` (login → select Atlanta → expand Atlanta
-→ screenshot → exit — never opens Configuration, never presses Save). No Server Action, UI, or
-Zero Export/No Limit execution exists yet — those are explicitly later phases, built only once this
-foundation is proven reliable.
+API integration in `lib/fusionsolar/api-client.ts` and the rest of `lib/fusionsolar/*`. Still
+read-only/inspection-only as of Phase 2 — no Save, no Zero Export, no No Limit anywhere in this
+module yet. `browser.ts` (Playwright lifecycle), `selectors.ts` (every selector, confirmed against
+the live portal — update here first if FusionSolar's markup changes), `login.ts` (`login(page)`,
+credentials from env, never logs them, clears the plaintext username field before any failure
+screenshot), `navigation.ts` (navigation helpers plus the shared `FusionSolarBrowserStepError` +
+`runFusionSolarStep` every step uses to report failures with a screenshot/URL/title/step/selector),
+and `screenshots.ts` (writes to `tmp/fusionsolar/`, gitignored — screenshots/`report.json` can
+contain real customer plant data).
+
+- **Phase 1** (`scripts/test-fusionsolar-browser.ts`): login → select Atlanta → expand Atlanta →
+  screenshot → exit. `selectPlant`/`expandPlant`/`openDongle`/`openConfiguration` (the last of these
+  opens a *plant-level* tab titled "Управление на устройството" — not a per-device Configuration
+  page; see Phase 2).
+- **Phase 2** (`scripts/inspect-fusionsolar.ts`): extends the same module (no rewrite) to discover
+  every child device (e.g. Smart Dongle) under a plant dynamically from the live tree
+  (`discoverChildNodeNames` — never a hardcoded name/count), open each one's own **Configuration**
+  tab (`openDeviceConfiguration` — a per-device tab titled "Конфигурация", distinct from
+  `openConfiguration` above despite the similar name), read labeled field values
+  (`readDeviceConfigField`, generic over both dropdown and plain-text fields), and read online/
+  offline status from the tree node's own icon (`isDongleOnline`). Writes
+  `tmp/fusionsolar/report.json` (per-dongle Active Power Control mode, firmware, online status) plus
+  a numbered screenshot per step. Confirmed against the live portal: the real Configuration page has
+  no distinctly-labeled "export limit"/"active power limit" field for this dongle model — the
+  closest candidates (a ramp-rate threshold, a fault-protection percentage) mean something different,
+  so `exportLimit`/`activePowerLimit` are always reported as `null` rather than guessed. Reported
+  values (e.g. the Active Power Control mode) are whatever the account's real locale renders
+  (Bulgarian, for this account) — never translated or invented.
+
+No Server Action, UI, or write-capable endpoint exists yet for any of this — those are explicitly
+later phases, built only once read-only inspection is proven reliable.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 

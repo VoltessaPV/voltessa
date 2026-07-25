@@ -3,11 +3,17 @@ import path from "node:path";
 
 import type { Page } from "playwright";
 
-const SCREENSHOT_DIR = path.join(process.cwd(), "tmp", "fusionsolar");
+/** tmp/fusionsolar/ - shared by every screenshot this module writes and
+ *  by scripts/inspect-fusionsolar.ts's report.json, so both land in the
+ *  same place without hardcoding the path twice. */
+export const SCREENSHOT_DIR = path.join(process.cwd(), "tmp", "fusionsolar");
 
 let directoryReady: Promise<void> | null = null;
 
-function ensureScreenshotDirectory(): Promise<void> {
+/** Creates tmp/fusionsolar/ if it doesn't already exist. Exported so
+ *  callers writing other files into the same directory (e.g. report.json)
+ *  can reuse this instead of duplicating the mkdir call. */
+export function ensureScreenshotDirectory(): Promise<void> {
   directoryReady ??= mkdir(SCREENSHOT_DIR, { recursive: true }).then(() => undefined);
   return directoryReady;
 }
