@@ -81,3 +81,31 @@ export async function setStoredExportMode(
     data: { currentExportMode: mode },
   });
 }
+
+/**
+ * Notification Provider milestone's anti-spam state (see
+ * lib/automation/daily-reconciliation.ts): whether daily reconciliation is
+ * currently unable to determine the real export mode. False until the
+ * first reconciliation failure ever occurs for this organization.
+ */
+export async function isReconciliationFailing(
+  organizationId: string,
+): Promise<boolean> {
+  const state = await prisma.automationState.findUnique({
+    where: { organizationId },
+    select: { reconciliationFailing: true },
+  });
+
+  return state?.reconciliationFailing ?? false;
+}
+
+/** Sets the reconciliation-failing flag — see isReconciliationFailing. */
+export async function setReconciliationFailing(
+  organizationId: string,
+  failing: boolean,
+): Promise<void> {
+  await prisma.automationState.update({
+    where: { organizationId },
+    data: { reconciliationFailing: failing },
+  });
+}

@@ -127,32 +127,38 @@ async function executeForOrganization(organization: {
       AUTOMATION_SERVICE_PATH_BY_MODE[newMode],
     );
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     await createAutomationEvent({
       organizationId,
       type: "automation_service_failed",
-      summary: "Automation Service failed",
-      reason,
+      summary: "Export mode change failed",
+      reason: decision.reason,
+      errorMessage,
       previousMode: storedMode,
-      newMode: null,
+      // The attempted (not achieved) mode - the failure notification shows
+      // this as "Attempted: <previous> → <newMode>".
+      newMode,
       currentPrice: currentPriceResult.price.price,
       nextIntervalPrice,
+      threshold: minimumExportPrice,
     });
 
-    return { organizationId, outcome: "automation_service_failed", error: reason };
+    return { organizationId, outcome: "automation_service_failed", error: errorMessage };
   }
 
   if (!result.success) {
     await createAutomationEvent({
       organizationId,
       type: "automation_service_failed",
-      summary: "Automation Service failed",
-      reason: result.error,
+      summary: "Export mode change failed",
+      reason: decision.reason,
+      errorMessage: result.error,
       previousMode: storedMode,
-      newMode: null,
+      newMode,
       currentPrice: currentPriceResult.price.price,
       nextIntervalPrice,
+      threshold: minimumExportPrice,
     });
 
     return { organizationId, outcome: "automation_service_failed", error: result.error };
@@ -169,6 +175,7 @@ async function executeForOrganization(organization: {
     newMode,
     currentPrice: currentPriceResult.price.price,
     nextIntervalPrice,
+    threshold: minimumExportPrice,
   });
 
   return { organizationId, outcome: "switched", newMode, reason: decision.reason };

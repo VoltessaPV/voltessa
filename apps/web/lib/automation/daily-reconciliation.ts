@@ -4,7 +4,9 @@ import type { DongleStatus, ReadStatusResult } from "@/app/dev/fusionsolar_atlan
 import {
   acquireAutomationLock,
   getStoredExportMode,
+  isReconciliationFailing,
   releaseAutomationLock,
+  setReconciliationFailing,
   setStoredExportMode,
 } from "./automation-state";
 import { createAutomationEvent } from "./automation-events";
@@ -13,7 +15,7 @@ import { findAtlantaOrganizationIds } from "./eligible-organizations";
 
 export type OrganizationReconciliationOutcome =
   | { organizationId: string; outcome: "skipped_locked" }
-  | { organizationId: string; outcome: "automation_service_failed"; error: string }
+  | { organizationId: string; outcome: "reconciliation_failed"; error: string }
   | { organizationId: string; outcome: "already_matched"; mode: ExportMode | null }
   | { organizationId: string; outcome: "inconsistent_dongles" }
   | { organizationId: string; outcome: "synchronized"; previousMode: ExportMode | null; newMode: ExportMode }
@@ -113,30 +115,21 @@ async function reconcileOrganization(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
 
-    await createAutomationEvent({
-      organizationId,
-      type: "automation_service_failed",
-      summary: "Automation Service failed",
-      reason,
-      previousMode: storedMode,
-      newMode: null,
-    });
+    await recordReconciliationFailure(organizationId, storedMode, reason);
 
-    return { organizationId, outcome: "automation_service_failed", error: reason };
+    return { organizationId, outcome: "reconciliation_failed", error: reason };
   }
 
   if (!result.success) {
-    await createAutomationEvent({
-      organizationId,
-      type: "automation_service_failed",
-      summary: "Automation Service failed",
-      reason: result.error,
-      previousMode: storedMode,
-      newMode: null,
-    });
+    await recordReconciliationFailure(organizationId, storedMode, result.error);
 
-    return { organizationId, outcome: "automation_service_failed", error: result.error };
+    return { organizationId, outcome: "reconciliation_failed", error: result.error };
   }
+
+  // The Read Status call itself succeeded - FusionSolar access is working,
+  // regardless of what the dongles report below. If reconciliation was
+  // previously failing, this is the recovery moment.
+  await recordReconciliationRecoveryIfNeeded(organizationId, storedMode);
 
   const fusionSolarMode = deriveFusionSolarMode(result.dongles);
 
@@ -178,4 +171,68 @@ async function reconcileOrganization(
   });
 
   return { organizationId, outcome: "synchronized", previousMode: storedMode, newMode: fusionSolarMode };
+}
+
+/**
+ * Anti-spam for reconciliation failures (Notification Provider milestone):
+ * an AutomationEvent (and its notification) is only created on the
+ * transition INTO a failing state, never repeated on every subsequent day
+ * the same fatal FusionSolar access problem persists - "Day 2: login
+ * failed → no notification." Still logged via console.error every day for
+ * operational visibility, just without a duplicate event row.
+ */
+async function recordReconciliationFailure(
+  organizationId: string,
+  storedMode: ExportMode | null,
+  reason: string,
+): Promise<void> {
+  const alreadyFailing = await isReconciliationFailing(organizationId);
+
+  if (alreadyFailing) {
+    console.error("[Automation Daily Reconciliation] Still failing (already notified)", {
+      organizationId,
+      reason,
+    });
+
+    return;
+  }
+
+  await setReconciliationFailing(organizationId, true);
+
+  await createAutomationEvent({
+    organizationId,
+    type: "reconciliation_failed",
+    summary: "Daily FusionSolar reconciliation failed",
+    reason,
+    previousMode: storedMode,
+    newMode: null,
+  });
+}
+
+/**
+ * The other half of the anti-spam pair above: creates exactly ONE
+ * "reconciliation_restored" event (and its notification) the first time
+ * reconciliation succeeds again after having failed - a no-op if it
+ * wasn't previously failing.
+ */
+async function recordReconciliationRecoveryIfNeeded(
+  organizationId: string,
+  storedMode: ExportMode | null,
+): Promise<void> {
+  const wasFailing = await isReconciliationFailing(organizationId);
+
+  if (!wasFailing) {
+    return;
+  }
+
+  await setReconciliationFailing(organizationId, false);
+
+  await createAutomationEvent({
+    organizationId,
+    type: "reconciliation_restored",
+    summary: "Daily FusionSolar reconciliation restored",
+    reason: "FusionSolar access has been restored",
+    previousMode: storedMode,
+    newMode: null,
+  });
 }

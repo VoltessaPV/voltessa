@@ -295,6 +295,17 @@ model AutomationState {
   isRunning Boolean @default(false)
   lockedAt  DateTime?
 
+  /// Notification Provider milestone's anti-spam state for daily
+  /// reconciliation failures (see lib/automation/daily-reconciliation.ts):
+  /// true while reconciliation is currently unable to determine the real
+  /// export mode (a fatal FusionSolar access problem - login/credentials/
+  /// session/MFA failures). A "reconciliation_failed" AutomationEvent (and
+  /// its notification) is only created on the transition INTO this state,
+  /// never repeated on every subsequent day the same problem persists; a
+  /// "reconciliation_restored" AutomationEvent (and its notification) is
+  /// only created on the transition back OUT of it.
+  reconciliationFailing Boolean @default(false)
+
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -304,9 +315,17 @@ model AutomationState {
 /// milestone) - the "automation must always be traceable" principle from
 /// CLAUDE.md applied to this engine specifically. Created ONLY when
 /// something actually happened (a mode switch, a failure, a reconciliation
-/// mismatch/sync) - a normal scheduler tick that decides no action is
-/// needed creates no row, by design (see decideExportAction's "NONE"
+/// mismatch/sync/restore) - a normal scheduler tick that decides no action
+/// is needed creates no row, by design (see decideExportAction's "NONE"
 /// action and the scheduler's own skip-on-no-action logic).
+///
+/// Notification Provider milestone: creating a row here is also the single
+/// trigger point for sending a user-facing notification (see
+/// lib/notifications/automation-notifications.ts, called from
+/// createAutomationEvent in lib/automation/automation-events.ts, AFTER this
+/// row has actually committed) - not every `type` sends one; see that
+/// module for the exact mapping. Callers (the scheduler/reconciliation
+/// modules) never talk to a notification provider directly.
 model AutomationEvent {
   id String @id @default(cuid())
 
@@ -314,7 +333,8 @@ model AutomationEvent {
 
   /// Short, stable machine-readable kind, for future filtering/display -
   /// "mode_changed" | "automation_service_failed" |
-  /// "reconciliation_mismatch" | "reconciliation_synced". Kept as a plain
+  /// "reconciliation_mismatch" | "reconciliation_synced" |
+  /// "reconciliation_failed" | "reconciliation_restored". Kept as a plain
   /// string (not a Prisma enum) so adding a new kind later never needs a
   /// migration, matching this schema's existing convention for this kind of
   /// small closed-but-growable vocabulary (see MarketPrice.source).
@@ -324,15 +344,30 @@ model AutomationEvent {
   /// "Automation Service failed".
   summary String
 
-  /// Longer explanation - e.g. "Price below low band", "Forecast indicates
-  /// further price decline".
+  /// Longer explanation - the business decision reason (e.g. "Price below
+  /// low band", "Forecast indicates further price decline") for
+  /// mode-change events, or the raw error for reconciliation failures.
   reason String
+
+  /// The real Automation Service/transport error, kept separate from
+  /// `reason` only for a failed mode-change attempt - the notification for
+  /// that case shows both "why Voltessa decided this" (`reason`) and "what
+  /// actually went wrong" (`errorMessage`) as distinct fields. Null for
+  /// every other event type.
+  errorMessage String?
 
   previousMode String?
   newMode      String?
 
   currentPrice     Decimal? @db.Decimal(10, 4)
   nextIntervalPrice Decimal? @db.Decimal(10, 4)
+
+  /// The AutomationSettings.minimumExportPrice in effect at decision time -
+  /// captured here so the event (and its notification) stays accurate even
+  /// if the user later changes the threshold. Only set for mode-change
+  /// events (success or failure); null for reconciliation events, which
+  /// aren't threshold-driven.
+  threshold Decimal? @db.Decimal(10, 4)
 
   createdAt DateTime @default(now())
 
