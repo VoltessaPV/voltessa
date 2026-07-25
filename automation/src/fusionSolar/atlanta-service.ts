@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 
+import { createStepLogger, logFullError } from "../diagnostics.ts";
 import {
   closeBrowserSession,
   discoverChildNodeNames,
@@ -147,18 +148,26 @@ export async function readStatus(): Promise<StatusResult> {
   const log = new ExecutionLog();
   log.add("Starting...");
 
+  const logStep = createStepLogger("readStatus");
+  logStep("browser launch started");
   const session = await launchBrowserSession();
+  logStep("browser launched");
   let currentDongle: string | null = null;
 
   try {
     log.add("Logging into FusionSolar...");
+    logStep("login started");
     const page = await login(session.page);
+    logStep("login completed");
 
     await selectPlant(page, ATLANTA_PLANT_NAME);
+    logStep("Atlanta selected");
     await expandPlant(page, ATLANTA_PLANT_NAME);
+    logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
+    logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
 
     const dongles: DongleStatus[] = [];
@@ -170,9 +179,12 @@ export async function readStatus(): Promise<StatusResult> {
 
       const online = await isDongleOnline(page, name);
       await openDongle(page, name);
+      logStep(`dongle opened: ${name}`);
       await openDeviceConfiguration(page);
+      logStep(`configuration opened: ${name}`);
 
       const rawMode = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
+      logStep(`Active Power Control field read: ${name}`);
       const mode = describeMode(rawMode);
       log.add(`Current mode: ${mode}`);
 
@@ -184,12 +196,14 @@ export async function readStatus(): Promise<StatusResult> {
 
     return { success: true, timestamp: new Date().toISOString(), dongles, log: log.get() };
   } catch (error) {
+    logFullError(logStep, "exception caught", error);
     const { message, failure } = await toFailureDetail(error, currentDongle);
     log.add(`Failed: ${message}`);
 
     return { success: false, timestamp: new Date().toISOString(), error: message, failure, log: log.get() };
   } finally {
     await closeBrowserSession(session);
+    logStep("browser closed");
   }
 }
 
@@ -218,19 +232,27 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
       ? Selectors.deviceConfig.activePowerControlMode.noLimit
       : Selectors.deviceConfig.activePowerControlMode.zeroExport;
 
+  const logStep = createStepLogger("changeMode");
+  logStep("browser launch started");
   const session = await launchBrowserSession();
+  logStep("browser launched");
   const changes: DongleChangeResult[] = [];
   let currentDongle: string | null = null;
 
   try {
     log.add("Logging into FusionSolar...");
+    logStep("login started");
     const page = await login(session.page);
+    logStep("login completed");
 
     await selectPlant(page, ATLANTA_PLANT_NAME);
+    logStep("Atlanta selected");
     await expandPlant(page, ATLANTA_PLANT_NAME);
+    logStep("tree expanded");
     log.add(`${ATLANTA_PLANT_NAME} opened.`);
 
     const dongleNames = await discoverChildNodeNames(page, ATLANTA_PLANT_NAME);
+    logStep(`dongles discovered (${dongleNames.length})`);
     log.add(`Found ${dongleNames.length} dongle${dongleNames.length === 1 ? "" : "s"}.`);
 
     for (const name of dongleNames) {
@@ -239,9 +261,12 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
       log.add(`Dongle ${name}`);
 
       await openDongle(page, name);
+      logStep(`dongle opened: ${name}`);
       await openDeviceConfiguration(page);
+      logStep(`configuration opened: ${name}`);
 
       const beforeRaw = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
+      logStep(`Active Power Control field read: ${name}`);
       const before = describeMode(beforeRaw);
       log.add(`Current mode: ${before}`);
 
@@ -317,12 +342,14 @@ async function changeMode(targetLabel: "Zero Export" | "No Limit"): Promise<Chan
 
     return { success: true, timestamp: new Date().toISOString(), dongles: changes, log: log.get() };
   } catch (error) {
+    logFullError(logStep, "exception caught", error);
     const { message, failure } = await toFailureDetail(error, currentDongle);
     log.add(`Failed: ${message}`);
 
     return { success: false, timestamp: new Date().toISOString(), error: message, dongles: changes, failure, log: log.get() };
   } finally {
     await closeBrowserSession(session);
+    logStep("browser closed");
   }
 }
 

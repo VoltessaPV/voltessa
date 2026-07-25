@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { handleNoLimit, handleStatus, handleZeroExport } from "./controller.ts";
+import { createStepLogger } from "./diagnostics.ts";
 
 type RouteHandler = () => Promise<unknown>;
 
@@ -44,13 +45,18 @@ function sendJson(res: ServerResponse, statusCode: number, body: unknown): void 
 
 export async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const logStep = createStepLogger("http");
+  logStep(`HTTP request received: ${req.method} ${url.pathname}`);
 
   /** Unauthenticated operational health check - not one of the three
-   *  automation operations, just liveness for the deploying operator. */
-  if (req.method === "GET" && url.pathname === "/health") {
+   *  automation operations, just liveness for the deploying operator.
+   *  Prefixed like every other route: the deployed nginx location
+   *  (`/automation/`) forwards the full original path unchanged. */
+  if (req.method === "GET" && url.pathname === "/automation/health") {
     res.statusCode = 200;
     res.setHeader("Content-Type", "text/plain");
     res.end("OK");
+    logStep("HTTP response returned (health)");
     return;
   }
 
@@ -59,14 +65,19 @@ export async function handleRequest(req: IncomingMessage, res: ServerResponse): 
 
   if (!handler) {
     sendJson(res, 404, { success: false, error: "Not found" });
+    logStep("HTTP response returned (404)");
     return;
   }
 
   if (!isAuthorized(req)) {
     sendJson(res, 401, { success: false, error: "Unauthorized" });
+    logStep("HTTP response returned (401)");
     return;
   }
 
+  logStep("authentication passed");
+
   const result = await handler();
   sendJson(res, 200, result);
+  logStep("HTTP response returned");
 }
