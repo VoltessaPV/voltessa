@@ -16,6 +16,7 @@ import {
   openDeviceConfiguration,
   openDongle,
   readDeviceConfigField,
+  reopenDeviceConfigurationAndRead,
   Selectors,
   selectPlant,
   setActivePowerControlMode,
@@ -225,7 +226,10 @@ async function changeAllDonglesTo(targetLabel: "Zero Export" | "No Limit"): Prom
       await confirmSaveDialogIfPresent(page);
       await waitForSaveConfirmation(page);
 
-      const after = await readDeviceConfigField(page, Selectors.deviceConfig.activePowerControlModeLabel);
+      // Verify from a freshly re-opened Configuration page, not the page
+      // that performed the Save - avoids validating stale UI state
+      // instead of what FusionSolar actually persisted.
+      const after = await reopenDeviceConfigurationAndRead(page, Selectors.deviceConfig.activePowerControlModeLabel);
 
       if (after !== targetValue) {
         changes.push({

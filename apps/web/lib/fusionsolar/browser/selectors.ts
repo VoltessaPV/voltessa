@@ -99,6 +99,11 @@ export const Selectors = {
    */
   deviceConfig: {
     configurationTabTitle: "Конфигурация",
+    /** "Подробности" (Details) - the first/default tab on every device
+     *  detail page, always present. Used only to navigate away from
+     *  Configuration and back, forcing a genuine reload of its data
+     *  instead of re-reading the still-open page after a Save. */
+    detailsTabTitle: "Подробности",
     fieldContainerByLabel: (label: string) =>
       `div[id^="signal-config-form-item-"]:has(.signal-config-signal-name:has-text("${label}"))`,
     selectValue: ".ant-select-selection-item",

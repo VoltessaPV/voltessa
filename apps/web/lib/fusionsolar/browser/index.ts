@@ -22,6 +22,7 @@ export {
   isDongleOnline,
   openDeviceConfiguration,
   readDeviceConfigField,
+  reopenDeviceConfigurationAndRead,
   setActivePowerControlMode,
   clickSaveButton,
   confirmSaveDialogIfPresent,

@@ -195,16 +195,22 @@ screenshots/`report.json` can contain real customer plant data).
   — see below.
 - **Phase 3** (`app/dev/fusionsolar_atlanta/*`, the only write-capable part of this module): a
   temporary, Atlanta-only debug console — see its own section below. Adds `setActivePowerControlMode`,
-  `clickSaveButton`, `confirmSaveDialogIfPresent`, and `waitForSaveConfirmation` to `navigation.ts`.
-  The real, confirmed synchronization signal for a completed Save is the Save button
-  (`Selectors.deviceConfig.saveButton`, "Запазване") going back to disabled — not a toast/message/
-  dialog (none was ever observed for this field across multiple real, successful saves during
-  verification, despite the app using antd throughout) — and it can take **over 20 seconds**, since a
-  Smart Dongle relays the change to real hardware; `waitForSaveConfirmation` waits up to 120s for this.
-  Live-verified end-to-end against one real dongle (with explicit user sign-off first, given the real
-  financial/operational stakes): switched it to the opposite canonical mode, read back and confirmed,
-  then switched it back and confirmed again — restoration was independently re-verified with a fresh
-  session afterward.
+  `clickSaveButton`, `confirmSaveDialogIfPresent`, `waitForSaveConfirmation`, and
+  `reopenDeviceConfigurationAndRead` to `navigation.ts`. The real, confirmed synchronization signal for
+  a completed Save is the Save button (`Selectors.deviceConfig.saveButton`, "Запазване") going back to
+  disabled — not a toast/message/dialog (none was ever observed for this field across multiple real,
+  successful saves during verification, despite the app using antd throughout) — and it can take
+  **over 20 seconds**, since a Smart Dongle relays the change to real hardware; `waitForSaveConfirmation`
+  waits up to 120s for this. The read-back after every Save always goes through
+  `reopenDeviceConfigurationAndRead` — navigating away to the device's "Подробности"/Details tab and
+  back to Configuration, a genuine reload — rather than reading the still-open page that performed the
+  Save, so a stale client-side value can't be mistaken for what FusionSolar actually persisted. Both
+  the write path and this reopen-and-read mechanism were live-verified against the real portal (the
+  former with explicit user sign-off first, given the real financial/operational stakes): one real
+  dongle was switched to the opposite canonical mode, read back and confirmed, then switched back and
+  confirmed again, with restoration independently re-verified via a fresh session afterward; the
+  reopen mechanism was separately confirmed (read-only, no Save involved) to return the same value as
+  an in-place read.
 
 ### FusionSolar Atlanta debug console (`app/dev/fusionsolar_atlanta/*`)
 

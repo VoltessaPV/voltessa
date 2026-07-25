@@ -249,6 +249,32 @@ export async function readDeviceConfigField(page: Page, label: string): Promise<
 }
 
 /**
+ * Leaves the currently-open device Configuration tab (navigating to
+ * "Подробности" / Details) and opens Configuration again fresh, then
+ * reads a labeled field's value from that newly-opened page - a genuine
+ * reload, not a re-read of the same page that was already open.
+ *
+ * Required after every successful Save: reading a field back from the
+ * exact page that just performed the Save risks validating stale
+ * client-side UI state instead of what FusionSolar actually persisted.
+ * Clicking the already-active Configuration tab again would not force
+ * this (antd tabs don't re-fetch on a click that doesn't change the
+ * active tab) - genuinely leaving first is what makes the reload real.
+ */
+export async function reopenDeviceConfigurationAndRead(page: Page, label: string): Promise<string | null> {
+  const detailsTabSelector = Selectors.monitorTabs.byTitle(Selectors.deviceConfig.detailsTabTitle);
+
+  await runFusionSolarStep(page, "leaveConfigurationForReopen", detailsTabSelector, async () => {
+    await page.locator(detailsTabSelector).click();
+    await page.waitForLoadState("networkidle");
+  });
+
+  await openDeviceConfiguration(page);
+
+  return readDeviceConfigField(page, label);
+}
+
+/**
  * Selects a new value in the Active Power Control mode dropdown on the
  * currently-open device Configuration page (see openDeviceConfiguration).
  * `optionText` must be one of Selectors.deviceConfig.activePowerControlMode's
