@@ -129,10 +129,11 @@ export async function readFusionSolarAtlantaStatus(): Promise<ReadStatusResult> 
     return { ok: false, error: "This organization does not have an Atlanta plant" };
   }
 
-  const session = await launchBrowserSession();
   let currentDongle: string | null = null;
+  let session: Awaited<ReturnType<typeof launchBrowserSession>> | null = null;
 
   try {
+    session = await launchBrowserSession();
     const page = await login(session.page);
     await selectPlant(page, ATLANTA_PLANT_NAME);
     await expandPlant(page, ATLANTA_PLANT_NAME);
@@ -154,7 +155,9 @@ export async function readFusionSolarAtlantaStatus(): Promise<ReadStatusResult> 
     const failure = await toFailureReport(error, currentDongle);
     return { ok: false, error: failure.message, failure };
   } finally {
-    await closeBrowserSession(session);
+    if (session) {
+      await closeBrowserSession(session);
+    }
   }
 }
 
@@ -187,11 +190,12 @@ async function changeAllDonglesTo(targetLabel: "Zero Export" | "No Limit"): Prom
       ? Selectors.deviceConfig.activePowerControlMode.noLimit
       : Selectors.deviceConfig.activePowerControlMode.zeroExport;
 
-  const session = await launchBrowserSession();
   const changes: DongleChangeResult[] = [];
   let currentDongle: string | null = null;
+  let session: Awaited<ReturnType<typeof launchBrowserSession>> | null = null;
 
   try {
+    session = await launchBrowserSession();
     const page = await login(session.page);
     await selectPlant(page, ATLANTA_PLANT_NAME);
     await expandPlant(page, ATLANTA_PLANT_NAME);
@@ -255,7 +259,9 @@ async function changeAllDonglesTo(targetLabel: "Zero Export" | "No Limit"): Prom
     const failure = await toFailureReport(error, currentDongle);
     return { ok: false, error: failure.message, changes, failure };
   } finally {
-    await closeBrowserSession(session);
+    if (session) {
+      await closeBrowserSession(session);
+    }
   }
 }
 
