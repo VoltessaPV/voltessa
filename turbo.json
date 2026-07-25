@@ -18,7 +18,9 @@
   "CRON_SECRET",
   "ENTSOE_API_TOKEN",
   "NODE_ENV",
-  "VERCEL_REGION"
+  "VERCEL_REGION",
+  "VERCEL",
+  "AWS_LAMBDA_FUNCTION_NAME"
 ],
   
   "tasks": {

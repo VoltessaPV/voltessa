@@ -32,7 +32,7 @@ for (const file of [".env.local", ".env"]) {
   }
 }
 
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 
 import { closeBrowserSession, launchBrowserSession } from "../apps/web/lib/fusionsolar/browser/browser";
 import { login } from "../apps/web/lib/fusionsolar/browser/login";

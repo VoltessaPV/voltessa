@@ -1,4 +1,4 @@
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 
 import { capture } from "./screenshots";
 import { Selectors } from "./selectors";
@@ -245,5 +245,127 @@ export async function readDeviceConfigField(page: Page, label: string): Promise<
     }
 
     return null;
+  });
+}
+
+/**
+ * Selects a new value in the Active Power Control mode dropdown on the
+ * currently-open device Configuration page (see openDeviceConfiguration).
+ * `optionText` must be one of Selectors.deviceConfig.activePowerControlMode's
+ * values. This only changes the in-page form state - nothing is written
+ * to the device until clickSaveButton is called. Confirmed: selecting a
+ * value enables the Save button immediately, with no confirmation dialog
+ * at selection time.
+ */
+export async function setActivePowerControlMode(page: Page, optionText: string): Promise<void> {
+  const fieldSelector = Selectors.deviceConfig.fieldContainerByLabel(
+    Selectors.deviceConfig.activePowerControlModeLabel,
+  );
+
+  await runFusionSolarStep(page, "setActivePowerControlMode", fieldSelector, async () => {
+    const container = page.locator(fieldSelector).first();
+    await container.locator(Selectors.deviceConfig.selectValue).first().click();
+
+    const optionList = page.locator(Selectors.deviceConfig.openDropdownOptionList);
+    await optionList.waitFor({ state: "visible" });
+
+    await optionList.locator(Selectors.deviceConfig.optionByText(optionText)).first().click();
+
+    const selectedValue = container.locator(Selectors.deviceConfig.selectValue).first();
+    await selectedValue.waitFor({ state: "visible" });
+
+    const currentTitle = await selectedValue.getAttribute("title");
+
+    if (currentTitle !== optionText) {
+      throw new Error(
+        `Active Power Control mode selection did not take effect: expected "${optionText}", field now shows "${currentTitle}"`,
+      );
+    }
+  });
+}
+
+/**
+ * Clicks the Configuration page's "Запазване" (Save) button. Only call
+ * this after actually changing a field (see setActivePowerControlMode) -
+ * the button stays disabled otherwise, and clicking a disabled button is
+ * a no-op that would silently mask a caller bug, so this throws if the
+ * button is disabled rather than clicking through it.
+ *
+ * Does not itself wait for a success confirmation or handle a possible
+ * confirmation dialog - see confirmSaveDialogIfPresent and
+ * waitForSaveConfirmation, called separately so each step's failure is
+ * attributed to the right one.
+ */
+export async function clickSaveButton(page: Page): Promise<void> {
+  const selector = Selectors.deviceConfig.saveButton;
+
+  await runFusionSolarStep(page, "clickSaveButton", selector, async () => {
+    const button = page.getByRole("button", { name: selector });
+    await button.waitFor({ state: "visible" });
+
+    if (await button.isDisabled()) {
+      throw new Error("Save button is disabled - no field was actually changed before calling clickSaveButton");
+    }
+
+    await button.click();
+  });
+}
+
+/**
+ * Handles an optional confirmation dialog that may appear immediately
+ * after clicking Save, before the final success confirmation. Not
+ * verified against a real save (see Selectors.deviceConfig's comment) -
+ * if FusionSolar doesn't show one for this field, this is a fast no-op
+ * (a short, bounded wait, not a long timeout), so it's always safe to
+ * call.
+ */
+export async function confirmSaveDialogIfPresent(page: Page): Promise<void> {
+  const selector = Selectors.deviceConfig.confirmDialog;
+
+  await runFusionSolarStep(page, "confirmSaveDialogIfPresent", selector, async () => {
+    const dialog = page.locator(selector).first();
+    const appeared = await dialog
+      .waitFor({ state: "visible", timeout: 3000 })
+      .then(() => true)
+      .catch(() => false);
+
+    if (!appeared) {
+      return;
+    }
+
+    const okButton = page.locator(Selectors.deviceConfig.confirmDialogOkButton).first();
+    await okButton.click();
+    await dialog.waitFor({ state: "hidden", timeout: 15000 });
+  });
+}
+
+/**
+ * Waits for FusionSolar's real confirmation that a Save completed, by
+ * waiting for the Save button (Selectors.deviceConfig.saveButton) to
+ * become disabled again. This is not a guess: no toast, message, or
+ * dialog was ever observed for this field across multiple real,
+ * successful saves during verification - the button itself was the
+ * only confirmed signal. It stays visually active/pending for a while
+ * after being clicked (a Smart Dongle relays the change to real
+ * hardware, which took over 20 seconds in one verified run) before
+ * going back to disabled, which is what this waits for - never a fixed
+ * sleep. Throws (via runFusionSolarStep, with a screenshot) if it
+ * doesn't happen within the timeout.
+ */
+export async function waitForSaveConfirmation(page: Page): Promise<void> {
+  const buttonText = Selectors.deviceConfig.saveButton;
+
+  await runFusionSolarStep(page, "waitForSaveConfirmation", buttonText, async () => {
+    await page.waitForFunction(
+      (text) => {
+        const button = Array.from(document.querySelectorAll("button")).find((candidate) =>
+          candidate.textContent?.includes(text),
+        );
+
+        return button ? (button as HTMLButtonElement).disabled : false;
+      },
+      buttonText,
+      { timeout: 120000 },
+    );
   });
 }

@@ -6,6 +6,10 @@
     },
     "app/api/diag/fusionsolar-dns/route.ts": {
       "regions": ["fra1"]
+    },
+    "app/dev/fusionsolar_atlanta/page.tsx": {
+      "regions": ["fra1"],
+      "maxDuration": 300
     }
   }
 }

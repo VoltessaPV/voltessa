@@ -1,14 +1,15 @@
 /**
  * FusionSolar browser automation. Temporary layer until the native
- * Huawei/OpenEMS integration is complete. No configuration changes, no
- * Save, no Zero Export/No Limit - this is read-only navigation and
- * inspection only; write actions are later phases, built on top of this
- * once it's proven reliable.
+ * Huawei/OpenEMS integration is complete.
  *
  * Phase 1: login, plant/device tree navigation, screenshots.
  * Phase 2: dynamic child-device discovery, a device's own Configuration
  * tab, and reading its current field values (Active Power Control mode,
- * firmware, ...).
+ * firmware, ...) - read-only.
+ * Phase 3: changing a device's Active Power Control mode and saving it -
+ * the only write-capable part of this module. Used exclusively by the
+ * Atlanta-only debug console (app/dev/fusionsolar_atlanta) - nothing
+ * else in the app calls setActivePowerControlMode/clickSaveButton.
  */
 export { launchBrowserSession, closeBrowserSession, type FusionSolarBrowserSession } from "./browser";
 export { login, getFusionSolarAtlantaCredentials, type FusionSolarCredentials } from "./login";
@@ -21,6 +22,10 @@ export {
   isDongleOnline,
   openDeviceConfiguration,
   readDeviceConfigField,
+  setActivePowerControlMode,
+  clickSaveButton,
+  confirmSaveDialogIfPresent,
+  waitForSaveConfirmation,
   runFusionSolarStep,
   FusionSolarBrowserStepError,
 } from "./navigation";

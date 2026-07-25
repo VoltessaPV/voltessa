@@ -7,6 +7,15 @@
  * page fields/button, an authenticated plant-tree node and its expand
  * control, and the plant-overview tab bar - not guessed at. If FusionSolar
  * changes its markup, this is the one file that needs updating.
+ *
+ * Every text value below (tab titles, field labels, dropdown option
+ * text) is Bulgarian, and FusionSolar picks its rendering language from
+ * the browser's own Accept-Language rather than a fixed per-account
+ * setting - confirmed the hard way, when a run without an explicit
+ * locale rendered the whole UI in English instead and broke every one
+ * of these. browser.ts pins the browser context's locale to "bg-BG" for
+ * exactly this reason; don't remove that pin without updating every
+ * text value here to match.
  */
 export const Selectors = {
   login: {
@@ -104,5 +113,48 @@ export const Selectors = {
      *  they are not reported as if they did. */
     activePowerControlModeLabel: "Режим на управление на активна мощност",
     firmwareVersionLabel: "Версия на софтуера",
+    /** The literal option text FusionSolar renders in the Active Power
+     *  Control dropdown for each mode - confirmed by opening the real
+     *  dropdown (without selecting anything) during verification. Only
+     *  the two modes this debug console can set are named here; the
+     *  dropdown has other options (a fixed kW limit, a fixed % limit, a
+     *  digital-input schedule) that are out of scope. */
+    activePowerControlMode: {
+      noLimit: "Неограничено",
+      zeroExport: "Мрежа, свързана с нулева мощност",
+    },
+    /** An open (not yet selected) dropdown's option list. Scope a click
+     *  to `optionByText` inside this, never to the whole page - a
+     *  hidden, previously-opened dropdown can remain in the DOM. */
+    openDropdownOptionList: ".ant-select-dropdown:not(.ant-select-dropdown-hidden)",
+    optionByText: (text: string) => `.ant-select-item-option:has-text("${text}")`,
+    /**
+     * "Запазване" (Save) - a real <button>. Two confirmed, distinct
+     * behaviors of its disabled state:
+     *  - Disabled until some field's value has actually changed; NOT
+     *    re-disabled by reverting a changed field back to its original
+     *    value (antd tracks "touched", not "differs from original") -
+     *    never treat "disabled" as proof nothing changed.
+     *  - Once a real Save is clicked, stays visually active/pending
+     *    (confirmed: still showing a loading state past 20s in one real
+     *    run) until the change has actually round-tripped to the device
+     *    - a Smart Dongle relays this to real hardware, which can
+     *      genuinely take over a minute - and only THEN goes back to
+     *      disabled. This transition (enabled -> disabled again) is the
+     *      confirmed, reliable "save completed" signal this module
+     *      waits on; no toast/message/dialog was ever observed
+     *      appearing for this field across multiple real, successful
+     *      saves during verification, despite antd being used
+     *      throughout the rest of the app.
+     */
+    saveButton: "Запазване",
+    /**
+     * No confirmation dialog was observed for this field across
+     * multiple real saves during verification - kept only as a
+     * defensive, fast (short timeout), harmless no-op in case a
+     * different field ever shows one.
+     */
+    confirmDialog: ".ant-modal-confirm, .ant-modal",
+    confirmDialogOkButton: ".ant-modal-confirm-btns .ant-btn-primary, .ant-modal-footer .ant-btn-primary",
   },
 } as const;

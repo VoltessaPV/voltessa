@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
-import type { Page } from "playwright";
+import type { Page } from "playwright-core";
 
 /** tmp/fusionsolar/ - shared by every screenshot this module writes and
  *  by scripts/inspect-fusionsolar.ts's report.json, so both land in the
