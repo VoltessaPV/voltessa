@@ -1,6 +1,7 @@
 import { pageHeading as alerts } from "@/app/(platform)/alerts/heading";
 import { pageHeading as automations } from "@/app/(platform)/automations/heading";
 import { pageHeading as dashboard } from "@/app/(platform)/dashboard/heading";
+import { pageHeading as huaweiApiTesting } from "@/app/(platform)/huawei-api-testing/heading";
 import { pageHeading as market } from "@/app/(platform)/market/heading";
 import { pageHeading as plants } from "@/app/(platform)/plants/heading";
 import { pageHeading as plantDetails } from "@/app/(platform)/plants/[id]/heading";
@@ -22,6 +23,7 @@ const STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/dashboard": dashboard,
   "/market": market,
   "/automations": automations,
+  "/huawei-api-testing": huaweiApiTesting,
   "/alerts": alerts,
   "/settings": settings,
   "/plants": plants,

@@ -2,17 +2,17 @@
 
 import { useMemo, useState, useTransition } from "react";
 
-import { runHuaweiDiagnosticTest } from "@/app/(platform)/automations/actions";
+import { runHuaweiDiagnosticTest } from "@/app/(platform)/huawei-api-testing/actions";
 import { filterTargetsByTypes } from "@/lib/fusionsolar/diagnostic-target-match";
 import type {
   DiagnosticDefinitionMeta,
   DiagnosticParameterValues,
-  DiagnosticTarget,
+  DiagnosticTargetOption,
   DiagnosticTestResult,
 } from "@/lib/fusionsolar/diagnostic-tests";
 
 type Props = {
-  targets: DiagnosticTarget[];
+  targets: DiagnosticTargetOption[];
   definitions: DiagnosticDefinitionMeta[];
 };
 

@@ -3,7 +3,7 @@
  * dedicated config object rather than a bare number so it can grow to
  * include trader/trader-identifier fields in a future milestone without
  * redesigning every call site that currently reads a plain threshold
- * value. Business logic (`app/(platform)/settings/actions.ts`, the
+ * value. Business logic (`app/(platform)/automations/actions.ts`, the
  * Dashboard) reads this default instead of hardcoding "15"/"15.00"
  * itself.
  *

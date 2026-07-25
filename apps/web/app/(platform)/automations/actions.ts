@@ -1,153 +1,63 @@
 "use server";
 
+import { Prisma } from "@prisma/client";
+
+import { DEFAULT_EXPORT_THRESHOLD_CONFIG } from "@/lib/automation/export-threshold-config";
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
-import {
-  executeDiagnosticTest,
-  findDiagnosticDefinition,
-  getOrgHuaweiDiagnosticTargets,
-  isTargetSupportedByDefinition,
-  type DiagnosticParameterValues,
-  type DiagnosticTestResult,
-} from "@/lib/fusionsolar/diagnostic-tests";
-import {
-  setNoLimit,
-  setZeroExport,
-  type HuaweiControlResult,
-} from "@/lib/fusionsolar/huawei-control-service";
 import { prisma } from "@/lib/prisma";
 
-/**
- * No plant picker exists yet (out of scope for this manual-testing
- * milestone) - resolves the org's one Huawei plant, same lookup the
- * FusionSolar active-power-control diagnostic route already uses.
- */
-async function findOrgHuaweiPlantId(
-  organizationId: string,
-): Promise<string | null> {
-  const plant = await prisma.plant.findFirst({
-    where: {
-      organizationId,
-      vendor: "Huawei",
-      plantCode: { not: null },
-    },
-    select: { id: true },
-  });
+function parseMinimumExportPrice(raw: string): Prisma.Decimal {
+  const trimmed = raw.trim();
 
-  return plant?.id ?? null;
-}
-
-async function runHuaweiControlAction(
-  dispatch: (
-    plantId: string,
-    organizationId: string,
-  ) => Promise<HuaweiControlResult>,
-): Promise<HuaweiControlResult> {
-  const user = await requirePermission(Permissions.canOperatePlants);
-
-  const plantId = await findOrgHuaweiPlantId(user.organizationId);
-
-  if (!plantId) {
-    return { ok: false, error: "No Huawei plant found for this organization" };
+  if (!trimmed) {
+    return new Prisma.Decimal(DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice);
   }
 
-  return dispatch(plantId, user.organizationId);
+  try {
+    return new Prisma.Decimal(trimmed);
+  } catch {
+    return new Prisma.Decimal(DEFAULT_EXPORT_THRESHOLD_CONFIG.minimumExportPrice);
+  }
 }
 
-export async function sendHuaweiNoLimit(): Promise<HuaweiControlResult> {
-  return runHuaweiControlAction(setNoLimit);
-}
-
-export async function sendHuaweiZeroExport(): Promise<HuaweiControlResult> {
-  return runHuaweiControlAction(setZeroExport);
-}
-
-export type DiagnosticTestActionResult =
-  | { ok: true; result: DiagnosticTestResult }
+export type UpdateMarketPriceAutomationResult =
+  | { ok: true }
   | { ok: false; error: string };
 
 /**
- * Huawei Diagnostic Tests section (Automations page): runs exactly one
- * Huawei API call per invocation, via the shared `executeDiagnosticTest`
- * executor. `testId` selects a definition from `DIAGNOSTIC_DEFINITIONS`;
- * `targetKey` must be one of this organization's own Plant/Device targets
- * AND one of the types that definition declares support for (both
- * re-verified here, never trusted from the client — the client's own
- * Target-dropdown filtering is a UX convenience, not the security
- * boundary). `params` are the definition's declared extra inputs
- * (`taskId`, `collectTime`, ...); missing a required one is rejected here
- * too, not just left to Huawei to reject.
+ * The single place that writes AutomationSettings.automationEnabled /
+ * minimumExportPrice - this Market Price Optimization card is now the only
+ * UI that edits this row (previously duplicated on /settings, removed
+ * there). `currency` and `energyTrader` are deliberately left out of both
+ * the `create` and `update` payloads: `currency` falls back to the
+ * schema's own "EUR" default on create and is never touched on update;
+ * `energyTrader` stays whatever it already was (or null) - it's an
+ * unrelated, not-yet-exposed field, and touching it here would silently
+ * reset it every time this simplified form is saved.
  */
-export async function runHuaweiDiagnosticTest(
-  testId: string,
-  targetKey: string,
-  params: DiagnosticParameterValues,
-): Promise<DiagnosticTestActionResult> {
-  const user = await requirePermission(Permissions.canOperatePlants);
+export async function updateMarketPriceAutomation(input: {
+  enabled: boolean;
+  minimumExportPrice: string;
+}): Promise<UpdateMarketPriceAutomationResult> {
+  const user = await requirePermission(Permissions.canManagePlants);
 
-  const definition = findDiagnosticDefinition(testId);
+  const minimumExportPrice = parseMinimumExportPrice(input.minimumExportPrice);
 
-  if (!definition) {
-    return { ok: false, error: "Unknown diagnostic test" };
-  }
-
-  const targets = await getOrgHuaweiDiagnosticTargets(user.organizationId);
-  const target = targets?.targets.find(
-    (candidate) => candidate.key === targetKey,
-  );
-
-  if (!target) {
-    return {
-      ok: false,
-      error: "Target does not belong to this organization's Huawei plant",
-    };
-  }
-
-  if (!isTargetSupportedByDefinition(definition, target)) {
-    return {
-      ok: false,
-      error: `"${definition.label}" does not support a target of type "${target.deviceType}"`,
-    };
-  }
-
-  const missingParam = definition.parameters.find(
-    (param) => param.required && !params[param.name]?.trim(),
-  );
-
-  if (missingParam) {
-    return {
-      ok: false,
-      error: `Missing required parameter "${missingParam.label}"`,
-    };
-  }
-
-  const connection = await prisma.fusionSolarConnection.findUnique({
+  await prisma.automationSettings.upsert({
     where: {
-      organizationId_provider: {
-        organizationId: user.organizationId,
-        provider: "HuaweiFusionSolar",
-      },
+      organizationId: user.organizationId,
     },
-    select: {
-      id: true,
-      accessToken: true,
-      refreshToken: true,
-      tokenType: true,
-      scope: true,
-      expiresAt: true,
+    create: {
+      organizationId: user.organizationId,
+      automationEnabled: input.enabled,
+      minimumExportPrice,
+    },
+    update: {
+      automationEnabled: input.enabled,
+      minimumExportPrice,
     },
   });
 
-  if (!connection) {
-    return { ok: false, error: "FusionSolar connection not found" };
-  }
-
-  const result = await executeDiagnosticTest(
-    connection,
-    definition,
-    target,
-    params,
-  );
-
-  return { ok: true, result };
+  return { ok: true };
 }
