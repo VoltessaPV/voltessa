@@ -148,10 +148,31 @@ refresh alike), and `ENTSOE_API_TOKEN` (ENTSO-E Transparency Platform `securityT
 `lib/market-price/providers/entsoe.ts`; provisioned in Vercel Production/Preview only as of the
 Continuous ENTSO-E Daily Price Refresh milestone — it was declared here and in `turbo.json` well
 before that, but was never actually set as a Vercel value, so the price importer had silently never
-worked in production until then).
+worked in production until then), and `FUSIONSOLAR_ATLANTA_USERNAME` / `FUSIONSOLAR_ATLANTA_PASSWORD`
+(the real FusionSolar portal login for the Atlanta plant's account — used only by
+`lib/fusionsolar/browser/*`, see "FusionSolar browser automation" below; never printed, logged, or
+hardcoded — read directly via `process.env` in `lib/fusionsolar/browser/login.ts`).
 
 Additional env var used in `apps/web` but **not currently declared** in `turbo.json` `globalEnv`
 (known gap — add it if you touch this area): `NEXTAUTH_URL`.
+
+### FusionSolar browser automation (`lib/fusionsolar/browser/*`)
+
+A temporary Playwright automation layer that drives the actual FusionSolar web portal
+(`https://eu5.fusionsolar.huawei.com/unisso/login.action`) directly, as a stand-in until the native
+Huawei/OpenEMS integration is complete — separate from, and independent of, the OAuth/gateway-based
+API integration in `lib/fusionsolar/api-client.ts` and the rest of `lib/fusionsolar/*`. Phase 1
+(current) is read-only navigation only: `browser.ts` (Playwright lifecycle), `selectors.ts` (every
+selector, confirmed against the live portal — update here first if FusionSolar's markup changes),
+`login.ts` (`login(page)`, credentials from env, never logs them, clears the plaintext username
+field before any failure screenshot), `navigation.ts` (`selectPlant`/`expandPlant`/`openDongle`/
+`openConfiguration`, plus the shared `FusionSolarBrowserStepError` + `runFusionSolarStep` every step
+uses to report failures with a screenshot/URL/title/step/selector), and `screenshots.ts` (writes to
+`tmp/fusionsolar/`, gitignored — screenshots can contain real customer plant data). Manual
+verification script: `scripts/test-fusionsolar-browser.ts` (login → select Atlanta → expand Atlanta
+→ screenshot → exit — never opens Configuration, never presses Save). No Server Action, UI, or
+Zero Export/No Limit execution exists yet — those are explicitly later phases, built only once this
+foundation is proven reliable.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 

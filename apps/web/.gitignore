@@ -31,6 +31,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# FusionSolar browser automation screenshots (may contain real customer plant data)
+/tmp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

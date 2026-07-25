@@ -21,6 +21,9 @@ coverage
 # Vercel
 .vercel
 
+# FusionSolar browser automation screenshots (may contain real customer plant data)
+/tmp/
+
 # Build Outputs
 .next/
 out/
