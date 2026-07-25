@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-import { handleRequest } from "./routes";
+import { handleRequest } from "./routes.ts";
 
 const PORT = Number(process.env.PORT ?? 4100);
 
@@ -25,6 +25,10 @@ const server = createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Voltessa Automation Service listening on port ${PORT}`);
+// Loopback only - never reachable directly from outside the host. The
+// deployed VM's nginx (already TLS-terminating the FusionSolar gateway
+// on the same domain) proxies to this from 127.0.0.1, and local dev
+// only ever calls this from the same machine.
+server.listen(PORT, "127.0.0.1", () => {
+  console.log(`Voltessa Automation Service listening on 127.0.0.1:${PORT}`);
 });

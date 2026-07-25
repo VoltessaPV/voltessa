@@ -1,5 +1,5 @@
-import { enableNoLimit, enableZeroExport, readStatus } from "./fusionSolar/atlanta-service";
-import type { ChangeResult, StatusResult } from "./fusionSolar/atlanta-service";
+import { enableNoLimit, enableZeroExport, readStatus } from "./fusionSolar/atlanta-service.ts";
+import type { ChangeResult, StatusResult } from "./fusionSolar/atlanta-service.ts";
 
 export function handleStatus(): Promise<StatusResult> {
   return readStatus();

@@ -5,8 +5,8 @@
  * place that launches Playwright or knows anything about FusionSolar's
  * portal markup.
  */
-export { launchBrowserSession, closeBrowserSession, type FusionSolarBrowserSession } from "./browser";
-export { login, getFusionSolarAtlantaCredentials, type FusionSolarCredentials } from "./login";
+export { launchBrowserSession, closeBrowserSession, type FusionSolarBrowserSession } from "./browser.ts";
+export { login, getFusionSolarAtlantaCredentials, type FusionSolarCredentials } from "./login.ts";
 export {
   selectPlant,
   expandPlant,
@@ -23,6 +23,6 @@ export {
   waitForSaveConfirmation,
   runFusionSolarStep,
   FusionSolarBrowserStepError,
-} from "./navigation";
-export { capture, SCREENSHOT_DIR, ensureScreenshotDirectory } from "./screenshots";
-export { Selectors } from "./selectors";
+} from "./navigation.ts";
+export { capture, SCREENSHOT_DIR, ensureScreenshotDirectory } from "./screenshots.ts";
+export { Selectors } from "./selectors.ts";

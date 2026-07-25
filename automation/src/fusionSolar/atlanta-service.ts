@@ -18,7 +18,7 @@ import {
   confirmSaveDialogIfPresent,
   setActivePowerControlMode,
   waitForSaveConfirmation,
-} from "./index";
+} from "./index.ts";
 
 const ATLANTA_PLANT_NAME = "Atlanta";
 

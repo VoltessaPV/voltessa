@@ -1,8 +1,8 @@
 import type { Page } from "playwright";
 
-import { FusionSolarBrowserStepError } from "./navigation";
-import { capture } from "./screenshots";
-import { Selectors } from "./selectors";
+import { FusionSolarBrowserStepError } from "./navigation.ts";
+import { capture } from "./screenshots.ts";
+import { Selectors } from "./selectors.ts";
 
 const LOGIN_URL = "https://eu5.fusionsolar.huawei.com/unisso/login.action";
 const LOGIN_STEP = "login";

@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { handleNoLimit, handleStatus, handleZeroExport } from "./controller";
+import { handleNoLimit, handleStatus, handleZeroExport } from "./controller.ts";
 
 type RouteHandler = () => Promise<unknown>;
 
@@ -44,6 +44,16 @@ function sendJson(res: ServerResponse, statusCode: number, body: unknown): void 
 
 export async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+  /** Unauthenticated operational health check - not one of the three
+   *  automation operations, just liveness for the deploying operator. */
+  if (req.method === "GET" && url.pathname === "/health") {
+    res.statusCode = 200;
+    res.setHeader("Content-Type", "text/plain");
+    res.end("OK");
+    return;
+  }
+
   const routeKey = `${req.method} ${url.pathname}`;
   const handler = ROUTES[routeKey];
 

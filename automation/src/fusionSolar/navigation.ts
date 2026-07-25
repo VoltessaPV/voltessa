@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 
-import { capture } from "./screenshots";
-import { Selectors } from "./selectors";
+import { capture } from "./screenshots.ts";
+import { Selectors } from "./selectors.ts";
 
 /**
  * Thrown by any FusionSolar browser-automation step (login or
