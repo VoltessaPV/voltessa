@@ -125,6 +125,33 @@ export function toDiagnosticDefinitionMeta(
   };
 }
 
+/**
+ * Client-safe projection of a target — exactly the fields
+ * `HuaweiDiagnosticTestsCard` reads (dropdown key/label, type-filtering via
+ * `kind`/`deviceType`). `plantCode`/`devDn`/`huaweiDeviceId`/`devTypeId` are
+ * `buildRequestBody`'s inputs, needed only by `executeDiagnosticTest` on the
+ * server — `runHuaweiDiagnosticTest` (`automations/actions.ts`) re-fetches
+ * the full `DiagnosticTarget` from the DB by `targetKey` and never trusts a
+ * client-supplied one, so the client never needs these fields at all.
+ */
+export type DiagnosticTargetOption = {
+  key: string;
+  label: string;
+  kind: DiagnosticTargetKind;
+  deviceType: DiagnosticDeviceType;
+};
+
+export function toDiagnosticTargetOption(
+  target: DiagnosticTarget,
+): DiagnosticTargetOption {
+  return {
+    key: target.key,
+    label: target.label,
+    kind: target.kind,
+    deviceType: target.deviceType,
+  };
+}
+
 // Huawei SmartPVMS Northbound API paths/body shapes below reuse exactly
 // what's already confirmed elsewhere in this codebase — never invented:
 // getDevRealKpi (device-real-time-kpi.ts), getDevFiveMinutes
