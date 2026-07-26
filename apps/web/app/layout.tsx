@@ -67,13 +67,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // TEMPORARY EXPERIMENT: was lang="en" - testing whether the native
-  // <input type="date"> picker's first-day-of-week (MarketToolbar.tsx)
-  // follows this attribute instead of/alongside the OS locale. Revert to
-  // "en" once verified either way - see the investigation this experiment
-  // is testing.
   return (
-    <html lang="bg">
+    <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>
