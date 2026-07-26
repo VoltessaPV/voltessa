@@ -7,7 +7,7 @@ type MarketEventLogProps = {
 };
 
 const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
-  mode_changed: "bg-cyan-400",
+  mode_changed: "bg-emerald-400",
   automation_service_failed: "bg-red-400",
   reconciliation_mismatch: "bg-amber-400",
   reconciliation_synced: "bg-emerald-400",

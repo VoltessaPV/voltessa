@@ -269,15 +269,6 @@ export function buildInsights(
   const mean =
     withPrice.reduce((sum, point) => sum + point.price, 0) / withPrice.length;
   const averagePrice = Math.round(mean * 100) / 100;
-  const variance =
-    withPrice.reduce((sum, point) => sum + (point.price - mean) ** 2, 0) /
-    withPrice.length;
-  const stdDev = Math.sqrt(variance);
-  const volatility = stdDev > 45 ? "High" : stdDev > 25 ? "Medium" : "Low";
-
-  const negativeIntervalCount = withPrice.filter(
-    (point) => point.price < 0,
-  ).length;
 
   const intervalHours = resolutionMinutes / 60;
   const aboveThresholdCount = knownPoints.filter(
@@ -288,15 +279,6 @@ export function buildInsights(
   const hoursBelowThreshold =
     Math.round((knownPoints.length - aboveThresholdCount) * intervalHours * 10) /
     10;
-
-  let crossingCount = 0;
-  let previousEnabled: boolean | null = null;
-  for (const point of knownPoints) {
-    if (previousEnabled !== null && point.exportEnabled !== previousEnabled) {
-      crossingCount += 1;
-    }
-    previousEnabled = point.exportEnabled;
-  }
 
   return [
     {
@@ -311,11 +293,8 @@ export function buildInsights(
     },
     { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
     { text: `Average price: ${averagePrice} EUR/MWh`, tone: "neutral" },
-    { text: `Volatility: ${volatility}`, tone: "neutral" },
-    { text: `Negative price intervals: ${negativeIntervalCount}`, tone: "neutral" },
     { text: `Hours above threshold: ${hoursAboveThreshold} h`, tone: "positive" },
     { text: `Hours below threshold: ${hoursBelowThreshold} h`, tone: "neutral" },
-    { text: `Threshold crossings: ${crossingCount}`, tone: "neutral" },
   ];
 }
 

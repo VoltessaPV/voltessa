@@ -126,6 +126,14 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       ? priceDeltaTrend(data.summary.currentPrice.deltaVsPrevious)
       : undefined;
 
+  // Threshold card's status dot: whether the current price actually clears
+  // the configured export threshold right now, not import completeness -
+  // no live current price (e.g. a past day) reads as below threshold.
+  const isPriceAtOrAboveThreshold =
+    data.dataAvailable &&
+    data.summary.currentPrice !== null &&
+    data.summary.currentPrice.value >= data.threshold.minimumExportPrice;
+
   // Grid direction is derived once here so the chart's NOW annotation
   // stays simple — never inferred from configuration, only from the real
   // meter reading. (Market's own top cards no longer show instantaneous
@@ -262,12 +270,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               valueUnit={`${data.threshold.currency}/MWh`}
               caption="Minimum profitable price"
               statusDot={{
-                colorClass: data.summary.marketStatus.healthy
+                colorClass: isPriceAtOrAboveThreshold
                   ? "bg-emerald-400"
-                  : "bg-red-400",
-                label: data.summary.marketStatus.healthy
+                  : "bg-amber-400",
+                label: isPriceAtOrAboveThreshold
                   ? "Healthy"
-                  : "Degraded",
+                  : "Below threshold",
               }}
             />
           </section>
