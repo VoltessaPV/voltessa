@@ -85,7 +85,19 @@ function computeMultipleOf50Ticks(min: number, max: number): number[] {
   return ticks;
 }
 
-/** Groups consecutive export-enabled intervals into contiguous [start, end) ranges for shading. */
+/**
+ * Groups consecutive export-enabled intervals into contiguous [start, end)
+ * ranges for shading, then shifts both edges back by half an interval.
+ * `exportedKwh`'s `Bar` sits on a numeric/time x-axis, where recharts
+ * centers each bar on its own sample timestamp rather than left-aligning it
+ * to the interval it represents - a bar for the sample at time T visually
+ * spans [T - halfInterval, T + halfInterval). A band built from raw
+ * interval boundaries (sample timestamps themselves) therefore starts and
+ * ends half an interval later than the bars it's meant to highlight. The
+ * half-interval shift below is what makes the highlight cover exactly the
+ * same visual slots as the bars - first and last bands included, since it's
+ * a uniform shift with no separate edge case.
+ */
 function getExportBands(
   series: MarketPricePoint[],
 ): Array<{ start: number; end: number }> {
@@ -97,6 +109,7 @@ function getExportBands(
     first && second
       ? second.timestamp.getTime() - first.timestamp.getTime()
       : 0;
+  const halfIntervalMs = intervalMs / 2;
 
   series.forEach((point, index) => {
     const time = point.timestamp.getTime();
@@ -110,7 +123,10 @@ function getExportBands(
 
     if (bandStart !== null && (nextDisables || isLast)) {
       const end = isLast && point.exportEnabled ? time + intervalMs : time;
-      bands.push({ start: bandStart, end });
+      bands.push({
+        start: bandStart - halfIntervalMs,
+        end: end - halfIntervalMs,
+      });
       bandStart = null;
     }
   });
