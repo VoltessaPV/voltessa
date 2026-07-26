@@ -29,6 +29,25 @@ model User {
   accounts Account[]
   sessions Session[]
 
+  /// Settings > Profile. Kept separate from the pre-existing `name` (used by
+  /// NextAuth's own Google profile sync and AppHeader's display) rather than
+  /// parsing/splitting it — `updateProfile` keeps `name` in sync from these
+  /// two fields so existing `name`-reading code needs no changes.
+  firstName String?
+  lastName  String?
+  phone     String?
+
+  /// Settings > Security. Null for a Google-only account (no local
+  /// password ever set) - see `lib/auth/password.ts`. Format:
+  /// "<saltHex>:<hashHex>" (Node's built-in `crypto.scrypt`, no extra
+  /// dependency). This column existing does NOT wire up a Credentials
+  /// sign-in provider - only Google sign-in works today; this is storage
+  /// for the Settings page's Create/Change Password feature, ready for a
+  /// future Credentials provider to read.
+  passwordHash String?
+
+  notificationPreferences NotificationPreferences?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -92,6 +111,9 @@ model Organization {
   automationEvents   AutomationEvent[]
   deviceTelemetry    DeviceTelemetry[]
   plantDailyKpis     PlantDailyKpi[]
+
+  billingInformation   BillingInformation?
+  energyMarketSettings EnergyMarketSettings?
 }
 
 model Plant {
@@ -254,6 +276,91 @@ model AutomationSettings {
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Settings > Billing Information. One row per organization (same 1:1 shape
+/// as `AutomationSettings`) - invoicing/company-registration data, entirely
+/// separate from automation configuration. Every field nullable: an
+/// organization that hasn't filled this in yet is a valid, common state, not
+/// an error.
+model BillingInformation {
+  id String @id @default(cuid())
+
+  organizationId String @unique
+
+  companyName String?
+
+  /// Bulgarian Unified Identification Code ("ЕИК"/UIC) - the Commercial
+  /// Register's company identifier, not a VAT number.
+  uic String?
+
+  vatNumber String?
+
+  country    String?
+  city       String?
+  postalCode String?
+  address    String?
+
+  invoiceEmail String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Settings > Energy Market. One row per organization - which country's
+/// market this organization trades on and which licensed electricity
+/// supplier they're contracted with, as configured by the user (not
+/// inferred from telemetry/automation). `supplierId` is validated against
+/// `lib/market/suppliers/bg.ts`'s static supplier list server-side on every
+/// write - never trusted as an arbitrary client-submitted string - and is
+/// intentionally not a foreign key, since the supplier list is static data,
+/// not a database table.
+model EnergyMarketSettings {
+  id String @id @default(cuid())
+
+  organizationId String @unique
+
+  /// MVP scope is Bulgaria only (matches
+  /// `lib/market-price/constants.ts`'s `SUPPORTED_BIDDING_ZONES`) - a plain
+  /// string, not an enum, so a second country is adding a value, not a
+  /// migration.
+  country String @default("Bulgaria")
+
+  supplierId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Settings > Notifications. One row per user (not per organization) -
+/// which categories of automation events this specific person wants to be
+/// notified about. Scoped by `userId` alone, the same shape `Account`/
+/// `Session` already use, since this is per-identity preference data, not
+/// organization-tenant data - see `docs/CODING_STANDARDS.md`'s multi-tenancy
+/// rule, which this doesn't fall under for the same reason `Account`/
+/// `Session` don't. Storage only as of this milestone - not yet read by
+/// `lib/notifications/automation-notifications.ts`, which still notifies
+/// unconditionally for its four categories; wiring these preferences into
+/// actual notification dispatch is explicit future work.
+model NotificationPreferences {
+  id String @id @default(cuid())
+
+  userId String @unique
+
+  automationChanges Boolean @default(true)
+  exportFailures    Boolean @default(true)
+  priceAlerts       Boolean @default(false)
+  dailySummary      Boolean @default(false)
+  weeklySummary     Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /// The single source of truth for "what export mode is this organization's
