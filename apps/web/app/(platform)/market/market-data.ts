@@ -333,7 +333,6 @@ export async function getMarketPageData(params: {
       ? params.selectedDateParam
       : todayDateStr;
   const isToday = selectedDate === todayDateStr;
-  const isFutureDay = selectedDate > todayDateStr;
   const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
 
   const threshold = resolveExportThreshold(params.automationSettings);
@@ -367,15 +366,13 @@ export async function getMarketPageData(params: {
     BULGARIA_TIMEZONE,
   );
 
-  // A today/past day whose only persisted row is the residual tail hour of
-  // the *previous* CET trading day (see `hasOnlyResidualPreviousDayInterval`)
-  // has no real data of its own yet — render the same "no market data" empty
-  // state as a day with zero rows. Future days are left exactly as before:
-  // the residual interval renders like any other future-day partial state.
-  if (
-    !isFutureDay &&
-    hasOnlyResidualPreviousDayInterval(dayAheadResult.prices, periodStart)
-  ) {
+  // A day whose only persisted row is the residual tail hour of the
+  // *previous* CET trading day (see `hasOnlyResidualPreviousDayInterval`)
+  // has no real data of its own yet, regardless of whether the day is in
+  // the past, today, or the future — render the same "no market data" empty
+  // state as a day with zero rows (the exact same branch/UI a future day
+  // with zero persisted rows already hits above).
+  if (hasOnlyResidualPreviousDayInterval(dayAheadResult.prices, periodStart)) {
     return { dataAvailable: false, threshold, ...toolbarState };
   }
 
