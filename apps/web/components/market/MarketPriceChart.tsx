@@ -373,6 +373,7 @@ export function MarketPriceChart({
           background={bands.map((band) => (
             <ReferenceArea
               key={band.start}
+              yAxisId="price"
               x1={band.start}
               x2={band.end}
               fill="#34d399"
