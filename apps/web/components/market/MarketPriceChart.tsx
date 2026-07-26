@@ -253,6 +253,20 @@ export function MarketPriceChart({
       ) / 100
     : 0;
 
+  // Left price axis: adapts to the selected day's own real ENTSO-E prices
+  // - lowest known price minus 10, highest known price plus 20 - rather
+  // than a fixed range, so an unusually cheap or expensive day is never
+  // clipped or dominated by empty headroom. Falls back to a plain [-10, 20]
+  // only when the day has no known price at all (nothing to derive a
+  // range from).
+  const knownPrices = series
+    .map((point) => point.price)
+    .filter((price): price is number => price !== null);
+  const priceAxisDomain: [number, number] =
+    knownPrices.length > 0
+      ? [Math.min(...knownPrices) - 10, Math.max(...knownPrices) + 20]
+      : [-10, 20];
+
   const bands = getExportBands(series);
   const now = Date.now();
   const domainStart = data[0]?.time;
@@ -267,7 +281,7 @@ export function MarketPriceChart({
   const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
 
   const yAxes: ChartFrameYAxis[] = [
-    { yAxisId: "price", unitLabel: "EUR/MWh", domain: [-10, 20], allowDataOverflow: true },
+    { yAxisId: "price", unitLabel: "EUR/MWh", domain: priceAxisDomain, allowDataOverflow: true },
     ...(hasEnergyAxis
       ? [
           {

@@ -16,20 +16,27 @@ const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
 };
 
 /**
- * A real system event log — the automation engine's own `AutomationEvent`
- * records (see MarketEventLogEntry's doc comment), newest first. Empty
- * only when this organization genuinely has none yet.
+ * A real, user-facing event log — the automation engine's own
+ * `AutomationEvent` records, already filtered server-side to automation
+ * *behavior* (mode switches, failed automation commands), never internal
+ * sync/reconciliation bookkeeping (see `getRecentAutomationEvents`'s doc
+ * comment). Newest first, up to 10.
+ *
+ * Fixed height (~ Market Insights / Dashboard Inverters) with its own
+ * internal scrollbar, so a full list of 10 events never grows this card
+ * taller than its row siblings - only the list scrolls, the header stays
+ * pinned.
  */
 export function MarketEventLog({ entries }: MarketEventLogProps) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
-      <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
+    <div className="flex h-[280px] flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
+      <p className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
         <History className="h-3.5 w-3.5" />
-        Event Log
+        Event Log (Last 10)
       </p>
 
       {entries.length === 0 ? (
-        <div className="mt-6 flex flex-col items-center justify-center py-6 text-center">
+        <div className="mt-6 flex flex-1 flex-col items-center justify-center py-6 text-center">
           <span className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-slate-600">
             <svg
               viewBox="0 0 20 20"
@@ -43,12 +50,12 @@ export function MarketEventLog({ entries }: MarketEventLogProps) {
           </span>
           <p className="mt-3 text-sm text-slate-400">No events yet</p>
           <p className="mt-1 max-w-[220px] text-xs text-slate-600">
-            Automation decisions, Huawei commands, and trader schedules will
-            appear here once connected.
+            Automation decisions will appear here once your first mode
+            change or automation event occurs.
           </p>
         </div>
       ) : (
-        <ol className="mt-3 space-y-3">
+        <ol className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">
           {entries.map((entry, index) => (
             <li key={`${entry.timestamp.toISOString()}-${index}`} className="flex gap-3">
               <div className="flex flex-col items-center">

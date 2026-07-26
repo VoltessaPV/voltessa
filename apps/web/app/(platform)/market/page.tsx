@@ -42,19 +42,29 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
  * The Configured Mode card's real automation state (AutomationSettings +
  * AutomationState), not FusionSolar's own configuration endpoint - see
  * production-data.ts's `configuredExportMode` doc comment for why that
- * endpoint's own status is deliberately not shown here anymore.
+ * endpoint's own status is deliberately not shown here anymore. Two rows:
+ * whether automation is enabled at all, and - only meaningful once it is -
+ * which export mode it currently has the plant in.
  */
 function configuredModeStatus(
   automationEnabled: boolean,
   currentExportMode: string | null,
-): { label: string; colorClass: string } {
+): { automationLabel: string; modeLabel: string; modeColorClass: string } {
   if (!automationEnabled) {
-    return { label: "Automation Off", colorClass: "bg-slate-500" };
+    return {
+      automationLabel: "Disabled",
+      modeLabel: "Automation Off",
+      modeColorClass: "text-slate-400",
+    };
   }
 
-  return currentExportMode === "Zero Export"
-    ? { label: "Zero Export", colorClass: "bg-amber-400" }
-    : { label: "No Limit", colorClass: "bg-emerald-400" };
+  const isZeroExport = currentExportMode === "Zero Export";
+
+  return {
+    automationLabel: "Enabled",
+    modeLabel: isZeroExport ? "Zero Export" : "No Limit",
+    modeColorClass: isZeroExport ? "text-amber-400" : "text-emerald-400",
+  };
 }
 
 type MarketPageProps = {
@@ -223,10 +233,14 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
             <MarketSummaryCard
               eyebrow="Configured Mode"
-              statusDot={{
-                colorClass: configuredMode.colorClass,
-                label: configuredMode.label,
-              }}
+              rows={[
+                { label: "Automation", value: configuredMode.automationLabel },
+                {
+                  label: "Current Mode",
+                  value: configuredMode.modeLabel,
+                  valueColorClass: configuredMode.modeColorClass,
+                },
+              ]}
             />
 
             <MarketSummaryCard

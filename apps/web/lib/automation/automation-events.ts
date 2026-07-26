@@ -101,9 +101,25 @@ export type RecentAutomationEvent = {
 };
 
 /**
- * The most recent automation events for an organization, newest first —
- * read-only. The one source Market and Dashboard's Event Log both read
- * from (see `market-data.ts`'s `getMarketPageData`). Reuses
+ * The event types this user-facing log shows - automation *behavior*
+ * (a mode switch, a failed automation command), never internal system
+ * maintenance. Every `reconciliation_*` type (mismatch/synced/failed/
+ * restored) is deliberately excluded: those describe FusionSolar sync/
+ * login/access-verification bookkeeping, not something the user did or
+ * that changed the plant's operation.
+ */
+const USER_FACING_EVENT_TYPES: AutomationEventType[] = [
+  "mode_changed",
+  "automation_service_failed",
+];
+
+/**
+ * The most recent USER-FACING automation events for an organization,
+ * newest first, read-only - the one source Market and Dashboard's Event
+ * Log both read from (see `market-data.ts`'s `getMarketPageData`).
+ * Filtered at the query itself (not client-side after fetching) so "the
+ * latest 10" genuinely means the latest 10 relevant events, not 10 raw
+ * rows that might mostly be reconciliation noise. Reuses
  * `AutomationEvent`'s own `@@index([organizationId, createdAt])`.
  */
 export async function getRecentAutomationEvents(
@@ -111,7 +127,7 @@ export async function getRecentAutomationEvents(
   limit = 10,
 ): Promise<RecentAutomationEvent[]> {
   const events = await prisma.automationEvent.findMany({
-    where: { organizationId },
+    where: { organizationId, type: { in: USER_FACING_EVENT_TYPES } },
     orderBy: { createdAt: "desc" },
     take: limit,
     select: { createdAt: true, type: true, summary: true, reason: true },
