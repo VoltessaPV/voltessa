@@ -141,6 +141,24 @@ function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+/**
+ * Sofia's calendar day starts one hour before the CET/CEST market day it's
+ * windowed against (see `BULGARIA_TIMEZONE`'s own doc comment), so a Sofia
+ * day whose own CET day hasn't been imported yet still returns exactly one
+ * row: the tail hour of the *previous* CET day, landing at Sofia 00:00 for
+ * this query. That single row is real data, but it belongs to a different
+ * ENTSO-E trading day and isn't enough to render this day's chart — so it
+ * must not count as "this day has data" once the day is today or in the
+ * past (see `getMarketPageData`'s use of this).
+ */
+function hasOnlyResidualPreviousDayInterval(
+  prices: Array<{ timestamp: Date }>,
+  periodStart: Date,
+): boolean {
+  const residualCutoff = periodStart.getTime() + 60 * 60 * 1000;
+  return prices.every((p) => p.timestamp.getTime() < residualCutoff);
+}
+
 function sofiaTimeLabel(date: Date): string {
   return date.toLocaleTimeString("en-GB", {
     timeZone: "Europe/Sofia",
@@ -315,6 +333,7 @@ export async function getMarketPageData(params: {
       ? params.selectedDateParam
       : todayDateStr;
   const isToday = selectedDate === todayDateStr;
+  const isFutureDay = selectedDate > todayDateStr;
   const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
 
   const threshold = resolveExportThreshold(params.automationSettings);
@@ -343,14 +362,26 @@ export async function getMarketPageData(params: {
     return { dataAvailable: false, threshold, ...toolbarState };
   }
 
-  const resolutionMinutes = importStatus.available
-    ? importStatus.resolutionMinutes
-    : DEFAULT_RESOLUTION_MINUTES;
-
   const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
     referenceInstant,
     BULGARIA_TIMEZONE,
   );
+
+  // A today/past day whose only persisted row is the residual tail hour of
+  // the *previous* CET trading day (see `hasOnlyResidualPreviousDayInterval`)
+  // has no real data of its own yet — render the same "no market data" empty
+  // state as a day with zero rows. Future days are left exactly as before:
+  // the residual interval renders like any other future-day partial state.
+  if (
+    !isFutureDay &&
+    hasOnlyResidualPreviousDayInterval(dayAheadResult.prices, periodStart)
+  ) {
+    return { dataAvailable: false, threshold, ...toolbarState };
+  }
+
+  const resolutionMinutes = importStatus.available
+    ? importStatus.resolutionMinutes
+    : DEFAULT_RESOLUTION_MINUTES;
 
   const series = buildSeries(
     dayAheadResult.prices,
