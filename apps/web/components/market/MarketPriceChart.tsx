@@ -87,16 +87,29 @@ function computeMultipleOf50Ticks(min: number, max: number): number[] {
 
 /**
  * Groups consecutive export-enabled intervals into contiguous [start, end)
- * ranges for shading, then shifts both edges back by half an interval.
- * `exportedKwh`'s `Bar` sits on a numeric/time x-axis, where recharts
- * centers each bar on its own sample timestamp rather than left-aligning it
- * to the interval it represents - a bar for the sample at time T visually
- * spans [T - halfInterval, T + halfInterval). A band built from raw
- * interval boundaries (sample timestamps themselves) therefore starts and
- * ends half an interval later than the bars it's meant to highlight. The
- * half-interval shift below is what makes the highlight cover exactly the
- * same visual slots as the bars - first and last bands included, since it's
- * a uniform shift with no separate edge case.
+ * ranges for shading, then shifts both edges back by half an interval so
+ * the highlight covers the same visual slots as the `exportedKwh` `Bar`.
+ * `Bar` sits on a numeric/time x-axis, where recharts centers each bar on
+ * its own sample timestamp rather than left-aligning it to the interval it
+ * represents - a bar for the sample at time T visually spans
+ * [T - halfInterval, T + halfInterval). A band built from raw interval
+ * boundaries (sample timestamps themselves) therefore starts and ends half
+ * an interval later than the bars it's meant to highlight.
+ *
+ * That half-interval shift alone is only correct for interior bands - a
+ * band touching the very first or very last sample of the day would shift
+ * past that sample's own edge (the first sample's shifted start lands
+ * before the day begins; the last sample's shifted end, `dataMax` +
+ * halfInterval, lands past `dataMax`, which is `series`'s own last
+ * timestamp, not the calendar day's end - `buildSeries` stops at
+ * `periodEnd - resolutionMinutes`). `ChartFrame`'s x-axis domain is
+ * `["dataMin", "dataMax"]`, i.e. exactly `series`'s first/last timestamps,
+ * so clamping every band's edges to that same range is what makes the
+ * first and last bands stop exactly at the chart's own left/right edges -
+ * matching where the first/last bars themselves get clipped by the same
+ * plotting-area boundary - instead of extending past the domain (which
+ * `ReferenceArea`'s default `ifOverflow: "discard"` would otherwise drop
+ * entirely) or falling short of it.
  */
 function getExportBands(
   series: MarketPricePoint[],
@@ -105,11 +118,14 @@ function getExportBands(
   let bandStart: number | null = null;
   const first = series[0];
   const second = series[1];
+  const last = series[series.length - 1];
   const intervalMs =
     first && second
       ? second.timestamp.getTime() - first.timestamp.getTime()
       : 0;
   const halfIntervalMs = intervalMs / 2;
+  const domainStart = first?.timestamp.getTime();
+  const domainEnd = last?.timestamp.getTime();
 
   series.forEach((point, index) => {
     const time = point.timestamp.getTime();
@@ -123,9 +139,17 @@ function getExportBands(
 
     if (bandStart !== null && (nextDisables || isLast)) {
       const end = isLast && point.exportEnabled ? time + intervalMs : time;
+      const shiftedStart = bandStart - halfIntervalMs;
+      const shiftedEnd = end - halfIntervalMs;
       bands.push({
-        start: bandStart - halfIntervalMs,
-        end: end - halfIntervalMs,
+        start:
+          domainStart !== undefined
+            ? Math.max(shiftedStart, domainStart)
+            : shiftedStart,
+        end:
+          domainEnd !== undefined
+            ? Math.min(shiftedEnd, domainEnd)
+            : shiftedEnd,
       });
       bandStart = null;
     }
