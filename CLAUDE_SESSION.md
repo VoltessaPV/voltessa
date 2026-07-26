@@ -42,10 +42,11 @@ them into a guess:
 
 ## Onboarding procedure
 
-Before writing any code, reconstruct your own understanding of the project rather than
-relying on memory of a previous session (a previous session's understanding may itself be stale,
-and you have no way to verify it without doing this work again). Work through the sources of
-truth above to understand:
+No implementation may begin before onboarding is complete. Before writing any code, proposing a
+plan, or making any change, reconstruct your own understanding of the project rather than relying
+on memory of a previous session (a previous session's understanding may itself be stale, and you
+have no way to verify it without doing this work again). Work through the sources of truth above
+to understand:
 
 - overall system architecture and repo layout;
 - production architecture (what runs where, and why);
@@ -81,27 +82,63 @@ These are permanent and apply regardless of task size:
 - Cite evidence — a file/line, a commit, a log line, or an observed deployment/runtime check —
   whenever stating that something exists, works, or is deployed. A claim without evidence is a
   guess, not a finding.
-- Prefer extending existing architecture over introducing a new pattern, library, or abstraction
-  the task doesn't strictly need.
+- Memory is not evidence — not your own recollection, and not a prior session's summary. If you
+  cannot point to implementation, a commit, a log, or an observed runtime/production behavior,
+  treat the claim as unverified and say so.
+- Before introducing any new implementation, first determine whether an existing pattern already
+  solves the problem. Prefer, in order: reuse what exists, extend what exists, introduce something
+  new only when neither is possible. Consistency is preferred over novelty.
 - Move code instead of duplicating it.
-- Reuse existing components, helpers, and conventions whenever one already does what's needed.
 - Keep the repository clean: remove dead code you were asked to touch, don't leave placeholder or
   half-finished implementations, don't leave hidden assumptions unstated.
+- Keep commits focused on one change; keep unrelated changes — including drive-by fixes or
+  formatting — out of them.
 - If you notice unrelated pre-existing issues while working, report them to the user instead of
   fixing them as a drive-by, unless asked to fix them.
+
+## Facts, evidence, and hypotheses
+
+Keep these categories distinct in anything you report, and label which one you're offering
+whenever it isn't obvious from context:
+
+- **Observation** — something directly seen: a log line, a screenshot, a file's actual contents.
+- **Evidence** — an observation used to support a specific claim.
+- **Assumption** — something taken as true without checking it. State it as an assumption; never
+  imply it was verified.
+- **Hypothesis** — a possible explanation that evidence has not yet confirmed.
+- **Conclusion** — a claim backed by enough evidence to state with confidence.
+
+A hypothesis may be reported, but never presented as a conclusion. If the evidence you have only
+supports a hypothesis, say so explicitly and state what additional evidence would confirm or rule
+it out, rather than rounding it up to a root cause.
+
+## Production safety
+
+Assume any production system this repository touches is live, not a sandbox: real customer data,
+real automated control of physical equipment, real financial consequences. This applies by
+default, not only in areas already known to be sensitive.
+
+- Default to read-only investigation — reading logs, screenshots, code, and stored state — over
+  any action that changes production state.
+- Never execute a real production operation (a control command, a write, a state change) unless
+  explicitly requested.
+- Diagnosing a problem must never itself become the cause of a new one. If a diagnostic step would
+  change production or plant state, say so and confirm before doing it — don't treat it as
+  routine.
 
 ## Incident investigation
 
 Investigation always precedes implementation. For every production incident:
 
 1. Gather evidence — logs, error output, screenshots, traces, database/state, anything
-   observable, not recollection.
+   observable, not recollection. Prefer read-only access wherever possible (see Production
+   safety above).
 2. Inspect the implementation the evidence points to.
 3. Compare against previous occurrences of the same or a similar failure (git history, prior
    incident fixes, prior evidence if it still exists).
 4. Determine root cause from the evidence gathered — not from the most plausible-sounding guess.
-   If the evidence is insufficient to be certain, say so explicitly rather than presenting a guess
-   as a conclusion.
+   Label each finding as an observation, evidence, a hypothesis, or a conclusion (see Facts,
+   evidence, and hypotheses above); never present a hypothesis as a confirmed root cause.
 5. State a confidence level and what would raise or lower it.
 6. Stop.
 
@@ -116,8 +153,7 @@ For implementation tasks, once onboarding is complete:
 1. Understand the task in the project's own domain terms, not generic CRUD terms.
 2. Inspect the existing implementation for the area being touched — search before assuming
    something doesn't already exist.
-3. Prefer reuse over new code; follow the existing pattern for the area being touched rather than
-   introducing a parallel one.
+3. Apply the reuse/extend/new preference (see Engineering principles) to the area being touched.
 4. Implement, following the codebase's established conventions.
 5. Validate (see below).
 6. Commit, following the project's commit conventions.
