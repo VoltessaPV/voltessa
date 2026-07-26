@@ -15,6 +15,15 @@ const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
   reconciliation_restored: "bg-emerald-400",
 };
 
+/** HH:mm only, always Europe/Sofia — never the bare event timestamp, which would render in the server's own timezone (UTC on Vercel). */
+function sofiaHourMinuteLabel(date: Date): string {
+  return date.toLocaleTimeString("en-GB", {
+    timeZone: "Europe/Sofia",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /**
  * A real, user-facing event log — the automation engine's own
  * `AutomationEvent` records, already filtered server-side to automation
@@ -69,7 +78,7 @@ export function MarketEventLog({ entries }: MarketEventLogProps) {
 
               <div className="pb-1">
                 <p className="text-sm font-medium text-white">
-                  {entry.label}
+                  {sofiaHourMinuteLabel(entry.timestamp)}  {entry.label}
                 </p>
                 {entry.detail && (
                   <p className="mt-0.5 text-xs text-slate-500">

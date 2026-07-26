@@ -309,18 +309,24 @@ export function MarketPriceChart({
       ) / 100
     : 0;
 
-  // Left price axis: adapts to the selected day's own real ENTSO-E prices
-  // - lowest known price minus 10, highest known price plus 20 - rather
-  // than a fixed range, so an unusually cheap or expensive day is never
-  // clipped or dominated by empty headroom. Falls back to a plain [-10, 20]
-  // only when the day has no known price at all (nothing to derive a
-  // range from).
+  // Left price axis: adapts to the selected day's own real ENTSO-E prices.
+  // Maximum is always highest known price plus 20, unchanged. Minimum: on a
+  // day that actually goes negative, lowest known price minus 10 (so an
+  // unusually cheap day is never clipped); on a day that never goes
+  // negative, a fixed -10 instead of e.g. "lowest known price minus 10"
+  // (which produced a poor scale like 40/50 as the axis start on all-
+  // positive days) - -10 keeps the zero line visible and produces the
+  // familiar 0/50/100/150... scale. Falls back to a plain [-10, 20] only
+  // when the day has no known price at all (nothing to derive a range
+  // from).
   const knownPrices = series
     .map((point) => point.price)
     .filter((price): price is number => price !== null);
+  const minKnownPrice = knownPrices.length > 0 ? Math.min(...knownPrices) : undefined;
+  const maxKnownPrice = knownPrices.length > 0 ? Math.max(...knownPrices) : undefined;
   const priceAxisDomain: [number, number] =
-    knownPrices.length > 0
-      ? [Math.min(...knownPrices) - 10, Math.max(...knownPrices) + 20]
+    minKnownPrice !== undefined && maxKnownPrice !== undefined
+      ? [minKnownPrice < 0 ? minKnownPrice - 10 : -10, maxKnownPrice + 20]
       : [-10, 20];
   const priceAxisTicks = computeMultipleOf50Ticks(priceAxisDomain[0], priceAxisDomain[1]);
 
