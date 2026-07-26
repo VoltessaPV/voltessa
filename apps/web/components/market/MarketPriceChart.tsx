@@ -370,19 +370,17 @@ export function MarketPriceChart({
           tooltipContent={<ChartTooltip />}
           hasAnnotationMargin={Boolean(nowAnnotation)}
           xTicks={xTicks}
-        >
-          {bands.map((band) => (
+          background={bands.map((band) => (
             <ReferenceArea
               key={band.start}
               x1={band.start}
               x2={band.end}
-              fill="rgba(52,211,153,0.12)"
-              stroke="#34d399"
-              strokeOpacity={0.25}
-              strokeWidth={1}
+              fill="#34d399"
+              fillOpacity={0.1}
+              stroke="none"
             />
           ))}
-
+        >
           <ReferenceLine
             yAxisId="price"
             y={0}
@@ -410,18 +408,6 @@ export function MarketPriceChart({
             />
           )}
 
-          {hasEnergyAxis && (
-            <Bar
-              yAxisId="energy"
-              dataKey="exportedKwh"
-              fill="#a78bfa"
-              fillOpacity={0.65}
-              radius={[2, 2, 0, 0]}
-              isAnimationActive
-              animationDuration={700}
-            />
-          )}
-
           <Line
             yAxisId="price"
             type="monotone"
@@ -434,6 +420,18 @@ export function MarketPriceChart({
             isAnimationActive
             animationDuration={700}
           />
+
+          {hasEnergyAxis && (
+            <Bar
+              yAxisId="energy"
+              dataKey="exportedKwh"
+              fill="#a78bfa"
+              fillOpacity={0.65}
+              radius={[2, 2, 0, 0]}
+              isAnimationActive
+              animationDuration={700}
+            />
+          )}
         </ChartFrame>
       </div>
     </div>
