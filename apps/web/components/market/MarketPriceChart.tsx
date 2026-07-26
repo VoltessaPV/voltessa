@@ -376,7 +376,7 @@ export function MarketPriceChart({
               x1={band.start}
               x2={band.end}
               fill="#34d399"
-              fillOpacity={0.1}
+              fillOpacity={0.22}
               stroke="none"
             />
           ))}
