@@ -41,18 +41,14 @@ type ChartFrameProps = {
   hasAnnotationMargin?: boolean;
   /** Explicit X-axis tick positions (ms) — see `chart-style.ts`'s `computeFixedHourlyTicks`. Omitted falls back to recharts' automatic placement. */
   xTicks?: number[];
-  /** Rendered before `CartesianGrid` (and therefore behind it, and behind every `children` mark) — for background highlight regions like a `ReferenceArea` that should sit under the grid lines, not paint over them. Omitted renders nothing extra here. */
-  background?: ReactNode;
   /** The chart's own marks — `Line`/`Bar`/`ReferenceArea`/`ReferenceLine`, rendered as direct children of `ComposedChart`, exactly as if written inline. */
   children: ReactNode;
 };
 
-export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, background, children }: ChartFrameProps) {
+export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, children }: ChartFrameProps) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ComposedChart data={data} margin={hasAnnotationMargin ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}>
-        {background}
-
         <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
 
         <XAxis

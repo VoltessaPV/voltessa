@@ -1,6 +1,6 @@
 "use client";
 
-import { Bar, Line, ReferenceArea, ReferenceLine } from "recharts";
+import { Bar, Line, ReferenceLine } from "recharts";
 
 import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
@@ -83,79 +83,6 @@ function computeMultipleOf50Ticks(min: number, max: number): number[] {
   }
 
   return ticks;
-}
-
-/**
- * Groups consecutive export-enabled intervals into contiguous [start, end)
- * ranges for shading, then shifts both edges back by half an interval so
- * the highlight covers the same visual slots as the `exportedKwh` `Bar`.
- * `Bar` sits on a numeric/time x-axis, where recharts centers each bar on
- * its own sample timestamp rather than left-aligning it to the interval it
- * represents - a bar for the sample at time T visually spans
- * [T - halfInterval, T + halfInterval). A band built from raw interval
- * boundaries (sample timestamps themselves) therefore starts and ends half
- * an interval later than the bars it's meant to highlight.
- *
- * That half-interval shift alone is only correct for interior bands - a
- * band touching the very first or very last sample of the day would shift
- * past that sample's own edge (the first sample's shifted start lands
- * before the day begins; the last sample's shifted end, `dataMax` +
- * halfInterval, lands past `dataMax`, which is `series`'s own last
- * timestamp, not the calendar day's end - `buildSeries` stops at
- * `periodEnd - resolutionMinutes`). `ChartFrame`'s x-axis domain is
- * `["dataMin", "dataMax"]`, i.e. exactly `series`'s first/last timestamps,
- * so clamping every band's edges to that same range is what makes the
- * first and last bands stop exactly at the chart's own left/right edges -
- * matching where the first/last bars themselves get clipped by the same
- * plotting-area boundary - instead of extending past the domain (which
- * `ReferenceArea`'s default `ifOverflow: "discard"` would otherwise drop
- * entirely) or falling short of it.
- */
-function getExportBands(
-  series: MarketPricePoint[],
-): Array<{ start: number; end: number }> {
-  const bands: Array<{ start: number; end: number }> = [];
-  let bandStart: number | null = null;
-  const first = series[0];
-  const second = series[1];
-  const last = series[series.length - 1];
-  const intervalMs =
-    first && second
-      ? second.timestamp.getTime() - first.timestamp.getTime()
-      : 0;
-  const halfIntervalMs = intervalMs / 2;
-  const domainStart = first?.timestamp.getTime();
-  const domainEnd = last?.timestamp.getTime();
-
-  series.forEach((point, index) => {
-    const time = point.timestamp.getTime();
-
-    if (point.exportEnabled && bandStart === null) {
-      bandStart = time;
-    }
-
-    const isLast = index === series.length - 1;
-    const nextDisables = !point.exportEnabled;
-
-    if (bandStart !== null && (nextDisables || isLast)) {
-      const end = isLast && point.exportEnabled ? time + intervalMs : time;
-      const shiftedStart = bandStart - halfIntervalMs;
-      const shiftedEnd = end - halfIntervalMs;
-      bands.push({
-        start:
-          domainStart !== undefined
-            ? Math.max(shiftedStart, domainStart)
-            : shiftedStart,
-        end:
-          domainEnd !== undefined
-            ? Math.min(shiftedEnd, domainEnd)
-            : shiftedEnd,
-      });
-      bandStart = null;
-    }
-  });
-
-  return bands;
 }
 
 /**
@@ -266,7 +193,7 @@ function ThresholdLabel(props: {
 /**
  * The Market page's hero chart — real ENTSO-E day-ahead price (blue line,
  * left axis, EUR/MWh) and, when settlement energy + installed capacity are
- * both known, real exported energy (violet bars, right axis, kWh per
+ * both known, real exported energy (green bars, right axis, kWh per
  * 15-minute interval) — never export *power*, per this file's top doc
  * comment.
  *
@@ -342,7 +269,6 @@ export function MarketPriceChart({
     ? [0, energyAxisStep, energyAxisStep * 2, energyAxisStep * 3]
     : undefined;
 
-  const bands = getExportBands(series);
   const now = Date.now();
   const domainStart = data[0]?.time;
   const domainEnd = data[data.length - 1]?.time;
@@ -392,17 +318,12 @@ export function MarketPriceChart({
           Export threshold
         </span>
 
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="h-2.5 w-2.5 rounded-sm bg-gradient-to-b from-emerald-400/40 to-emerald-400/0" />
-          Recommended export
-        </span>
-
         {hasEnergyAxis && (
           <>
             <span className="h-3 w-px bg-white/10" />
 
             <span className="flex items-center gap-1.5 text-slate-500">
-              <span className="h-2.5 w-2.5 rounded-sm bg-violet-400" />
+              <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />
               Exported energy
             </span>
           </>
@@ -416,17 +337,6 @@ export function MarketPriceChart({
           tooltipContent={<ChartTooltip />}
           hasAnnotationMargin={Boolean(nowAnnotation)}
           xTicks={xTicks}
-          background={bands.map((band) => (
-            <ReferenceArea
-              key={band.start}
-              yAxisId="price"
-              x1={band.start}
-              x2={band.end}
-              fill="#34d399"
-              fillOpacity={0.22}
-              stroke="none"
-            />
-          ))}
         >
           <ReferenceLine
             yAxisId="price"
@@ -472,7 +382,7 @@ export function MarketPriceChart({
             <Bar
               yAxisId="energy"
               dataKey="exportedKwh"
-              fill="#a78bfa"
+              fill="#34d399"
               fillOpacity={0.65}
               radius={[2, 2, 0, 0]}
               isAnimationActive
