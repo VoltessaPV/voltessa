@@ -2,7 +2,9 @@ import Link from "next/link";
 
 import { Permissions } from "@/lib/auth/permissions";
 import { requireOnboardedUser } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
+import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
 export { pageHeading } from "./heading";
 
@@ -17,6 +19,18 @@ export default async function SettingsPage({
   searchParams,
 }: SettingsPageProps) {
   const user = await requireOnboardedUser();
+
+  // Transparent Freshness milestone: Settings renders no telemetry, so it
+  // never waits on Huawei - ensureTelemetryFresh's own after()-scheduled
+  // background mode nudges a sync only if stale, and this call returns
+  // immediately regardless of that outcome. onSettled runs once the sync
+  // actually finishes (well after this render has already been sent), so
+  // that if the user opens Dashboard/Market next, the data is already
+  // fresh rather than requiring them to notice and refresh manually.
+  await ensureTelemetryFresh(user.organizationId, {
+    mode: "background",
+    onSettled: revalidateTelemetryPagesIfSynced,
+  });
 
   // Mirrors the same `canViewPlants` gate the standalone /plants routes use
   // (Sidebar simplification milestone: plant management moved into Settings,

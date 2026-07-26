@@ -1,11 +1,11 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import {
   computeExportRevenue,
   type RevenueSummary,
 } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
 
-import { RefreshButton } from "@/components/dashboard/RefreshButton";
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketInfo } from "@/components/market/MarketInfo";
@@ -44,6 +44,15 @@ type MarketPageProps = {
 export default async function MarketPage({ searchParams }: MarketPageProps) {
   const user = await requireOnboardedUser();
   const params = await searchParams;
+
+  // Transparent Freshness milestone: Market renders telemetry (Current
+  // Export, revenue, the price/export chart's settlement overlay), so it
+  // blocks on synchronization exactly like Dashboard - see
+  // ensureTelemetryFresh's own doc comment. No cache invalidation needed
+  // here: this route is fully dynamic (see dashboard/page.tsx's identical
+  // comment for why), so getProductionPageData/getMarketPageData below
+  // already read live database state regardless.
+  await ensureTelemetryFresh(user.organizationId, { mode: "blocking" });
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
@@ -117,8 +126,6 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             isToday={data.isToday}
           />
         </div>
-
-        <RefreshButton />
       </div>
 
       {!data.dataAvailable ? (

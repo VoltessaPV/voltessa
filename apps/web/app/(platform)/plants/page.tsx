@@ -2,12 +2,22 @@ import Link from "next/link";
 
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
+import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
 export { pageHeading } from "./heading";
 
 export default async function PlantsPage() {
   const user = await requirePermission(Permissions.canViewPlants);
+
+  // Transparent Freshness milestone: see settings/page.tsx's identical
+  // comment - this page lists plant configuration, not live telemetry, so
+  // it never blocks.
+  await ensureTelemetryFresh(user.organizationId, {
+    mode: "background",
+    onSettled: revalidateTelemetryPagesIfSynced,
+  });
 
   const plants = await prisma.plant.findMany({
     where: {

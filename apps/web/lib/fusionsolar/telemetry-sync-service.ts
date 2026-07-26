@@ -1,3 +1,5 @@
+import { after } from "next/server";
+
 import { importDeviceTelemetry } from "@/lib/fusionsolar/import-device-telemetry";
 import { importPlantDailyKpi } from "@/lib/fusionsolar/import-plant-daily-kpi";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
@@ -289,4 +291,96 @@ export async function synchronizeFusionSolarConnection(
       data: { telemetrySyncStatus: "IDLE" },
     });
   }
+}
+
+export type TelemetryFreshnessResult = "fresh" | "synced" | "failed" | "already_running";
+
+export type EnsureTelemetryFreshOptions =
+  | { mode: "blocking" }
+  | { mode: "background"; onSettled?: (result: TelemetryFreshnessResult) => void };
+
+/** Maps `synchronizeFusionSolarConnection`'s own outcome to the flat result `ensureTelemetryFresh` exposes - the one place that translation happens. */
+function toFreshnessResult(outcome: SynchronizeFusionSolarConnectionResult): TelemetryFreshnessResult {
+  switch (outcome.status) {
+    case "skipped_fresh":
+      return "fresh";
+    case "synced":
+      return "synced";
+    case "skipped_already_running":
+      return "already_running";
+    case "connection_not_found":
+    case "failed":
+      return "failed";
+  }
+}
+
+/**
+ * The single place in the application that decides whether an
+ * organization's FusionSolar telemetry needs synchronizing right now, and
+ * how urgently. Every page that depends on telemetry freshness calls this
+ * - and only this - never `synchronizeFusionSolarConnection` directly;
+ * "is it fresh" and "is a sync already running" stay decided in exactly
+ * one place (this function's own delegation to `synchronizeFusionSolarConnection`,
+ * which already owns the freshness threshold and the sync lease - neither
+ * is recomputed here).
+ *
+ * Deliberately returns a plain result instead of performing any Next.js
+ * cache invalidation itself - revalidating `/dashboard`/`/market` is a UI
+ * concern the caller decides, not a synchronization concern. The one
+ * Next.js-specific primitive this function still owns is `after()` for
+ * "background" mode, and that's a runtime-lifetime guarantee, not a UI
+ * one: without it, a fire-and-forget sync can be killed when a serverless
+ * function instance is recycled once the response has been sent.
+ *
+ * "blocking" (Dashboard/Market): awaits the real outcome and returns only
+ * once genuinely done - these pages render telemetry and must never show
+ * a mix of data from different sync cycles.
+ *
+ * "background" (Settings/Automations/Alerts/Plants): schedules the sync
+ * via `after()` and returns immediately without blocking the caller's own
+ * render. The real outcome is only knowable once that scheduled work
+ * completes, by which point the original request has already finished -
+ * `onSettled`, invoked from inside the same `after()` continuation, is the
+ * only remaining way a caller can react to it (e.g. to revalidate
+ * Dashboard/Market's cached entries so a later visit is already fresh).
+ */
+export async function ensureTelemetryFresh(
+  organizationId: string,
+  options: { mode: "blocking" },
+): Promise<TelemetryFreshnessResult>;
+export async function ensureTelemetryFresh(
+  organizationId: string,
+  options: { mode: "background"; onSettled?: (result: TelemetryFreshnessResult) => void },
+): Promise<void>;
+export async function ensureTelemetryFresh(
+  organizationId: string,
+  options: EnsureTelemetryFreshOptions,
+): Promise<TelemetryFreshnessResult | void> {
+  const connection = await prisma.fusionSolarConnection.findUnique({
+    where: {
+      organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" },
+    },
+    select: { id: true },
+  });
+
+  if (!connection) {
+    // Nothing to synchronize - not a failure, just nothing to do.
+    if (options.mode === "blocking") {
+      return "fresh";
+    }
+    return;
+  }
+
+  if (options.mode === "blocking") {
+    const outcome = await synchronizeFusionSolarConnection(connection.id);
+    return toFreshnessResult(outcome);
+  }
+
+  const connectionId = connection.id;
+  const onSettled = options.onSettled;
+
+  after(async () => {
+    const outcome = await synchronizeFusionSolarConnection(connectionId);
+    onSettled?.(toFreshnessResult(outcome));
+  });
 }

@@ -1,11 +1,11 @@
 import { requireOnboardedUser } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { LiveEnergyChart } from "@/components/dashboard/LiveEnergyChart";
-import { RefreshButton } from "@/components/dashboard/RefreshButton";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
@@ -78,6 +78,18 @@ export { pageHeading } from "./heading";
  * renders once inside `AppHeader` (via `PageHeading`, reading this page's
  * own `pageHeading` - see `./heading.ts`) instead of here - this page
  * starts directly with `MarketToolbar`.
+ *
+ * ## Transparent Freshness milestone
+ *
+ * The manual Refresh button is gone - Dashboard now blocks on
+ * `ensureTelemetryFresh` (`lib/fusionsolar/telemetry-sync-service.ts`)
+ * before loading page data, so every render already reflects telemetry no
+ * more than `FUSIONSOLAR_SYNC_FRESHNESS_MS` old, transparently. Market
+ * does the identical thing; Settings/Automations/Alerts/Plants call the
+ * same helper in background mode instead, since they render no telemetry
+ * and must never wait on Huawei. `resolvePlantContext` (called inside
+ * `getDashboardPageData` below) no longer has any synchronization
+ * side effect of its own - see its doc comment.
  */
 
 /**
@@ -117,6 +129,18 @@ export default async function DashboardPage({
   const user = await requireOnboardedUser();
   const params = await searchParams;
 
+  // Transparent Freshness milestone: Dashboard renders telemetry, so it
+  // blocks on synchronization instead of showing a possibly-stale snapshot
+  // - see ensureTelemetryFresh's own doc comment for why this, and only
+  // this, decides whether/how a sync runs. No cache invalidation needed
+  // here: this route is fully dynamic (uses cookies() via
+  // requireOnboardedUser, confirmed by the build output showing `ƒ`, not
+  // `○`), so it's never in the Full Route Cache, and the client Router
+  // Cache doesn't hold dynamic segments by default (no staleTimes override
+  // in next.config.js) - getDashboardPageData below already reads live
+  // database state regardless, with nothing cached anywhere to invalidate.
+  await ensureTelemetryFresh(user.organizationId, { mode: "blocking" });
+
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
     select: { minimumExportPrice: true, currency: true },
@@ -140,8 +164,6 @@ export default async function DashboardPage({
             isToday={data.isToday}
           />
         </div>
-
-        <RefreshButton />
       </div>
 
       {!data.plantAvailable ? (
