@@ -44,7 +44,7 @@ import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone
  * display-boundary fix — see `lib/market-price/provider.ts`'s
  * `getDayAheadPrices` `timeZone` option.
  */
-const BULGARIA_TIMEZONE = "Europe/Sofia";
+export const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 export type MarketPricePoint = {
   timestamp: Date;

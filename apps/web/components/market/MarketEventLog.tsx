@@ -1,6 +1,9 @@
 import { History } from "lucide-react";
 
-import type { MarketEventLogEntry } from "@/app/(platform)/market/market-data";
+import {
+  BULGARIA_TIMEZONE,
+  type MarketEventLogEntry,
+} from "@/app/(platform)/market/market-data";
 
 type MarketEventLogProps = {
   entries: MarketEventLogEntry[];
@@ -15,13 +18,26 @@ const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
   reconciliation_restored: "bg-emerald-400",
 };
 
-/** HH:mm only, always Europe/Sofia — never the bare event timestamp, which would render in the server's own timezone (UTC on Vercel). */
-function sofiaHourMinuteLabel(date: Date): string {
-  return date.toLocaleTimeString("en-GB", {
-    timeZone: "Europe/Sofia",
+/**
+ * DD/MM/YYYY HH:mm, no seconds — always in `BULGARIA_TIMEZONE`, the same
+ * timezone `market-data.ts`/`production-data.ts` use for every other
+ * timestamp on the Market page, never the server's own timezone (UTC on
+ * Vercel) or the viewer's browser timezone.
+ */
+function marketTimestampLabel(date: Date): string {
+  const datePart = date.toLocaleDateString("en-GB", {
+    timeZone: BULGARIA_TIMEZONE,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  const timePart = date.toLocaleTimeString("en-GB", {
+    timeZone: BULGARIA_TIMEZONE,
     hour: "2-digit",
     minute: "2-digit",
   });
+
+  return `${datePart} ${timePart}`;
 }
 
 /**
@@ -78,7 +94,7 @@ export function MarketEventLog({ entries }: MarketEventLogProps) {
 
               <div className="pb-1">
                 <p className="text-sm font-medium text-white">
-                  {sofiaHourMinuteLabel(entry.timestamp)}  {entry.label}
+                  {marketTimestampLabel(entry.timestamp)}  {entry.label}
                 </p>
                 {entry.detail && (
                   <p className="mt-0.5 text-xs text-slate-500">
