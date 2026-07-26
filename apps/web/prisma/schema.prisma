@@ -330,6 +330,10 @@ model EnergyMarketSettings {
 
   supplierId String?
 
+  /// References `lib/market/distribution/bg.ts`'s static DSO list by `id`,
+  /// same non-foreign-key convention as `supplierId` above.
+  dsoId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

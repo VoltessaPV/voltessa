@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { signOut } from "@/auth";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { requireCurrentUser, requireOnboardedUser } from "@/lib/auth/session";
+import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { getBulgarianElectricitySuppliers } from "@/lib/market/suppliers/bg";
 import { prisma } from "@/lib/prisma";
 
@@ -186,9 +187,9 @@ export async function updateBilling(
 }
 
 /**
- * Settings > Energy Market. `supplierId` is validated against the static
- * supplier list server-side — never trusted as an arbitrary client string,
- * since it isn't a database foreign key.
+ * Settings > Energy Market. `supplierId`/`dsoId` are each validated against
+ * their static list server-side — never trusted as an arbitrary client
+ * string, since neither is a database foreign key.
  */
 export async function updateEnergyMarket(
   _prevState: ActionResult,
@@ -198,6 +199,7 @@ export async function updateEnergyMarket(
 
   const country = readOptionalString(formData, "country") ?? "Bulgaria";
   const supplierId = readOptionalString(formData, "supplierId");
+  const dsoId = readOptionalString(formData, "dsoId");
 
   if (
     supplierId !== null &&
@@ -206,10 +208,17 @@ export async function updateEnergyMarket(
     return { success: false, message: "Unknown electricity supplier" };
   }
 
+  if (
+    dsoId !== null &&
+    !getBulgarianDistributionOperators().some((operator) => operator.id === dsoId)
+  ) {
+    return { success: false, message: "Unknown distribution network operator" };
+  }
+
   await prisma.energyMarketSettings.upsert({
     where: { organizationId: user.organizationId },
-    create: { organizationId: user.organizationId, country, supplierId },
-    update: { country, supplierId },
+    create: { organizationId: user.organizationId, country, supplierId, dsoId },
+    update: { country, supplierId, dsoId },
   });
 
   revalidatePath("/settings");

@@ -93,17 +93,17 @@ const BULGARIAN_ELECTRICITY_SUPPLIERS: readonly ElectricitySupplier[] = [
 ];
 
 /**
- * Regular suppliers sorted alphabetically by `officialLatinName`, with the
- * one `special: true` entry ("Supplier of Last Resort" — the statutory
- * fallback supplier every free-market customer is entitled to if they have
- * no chosen supplier) always appended last, never mixed into the
- * alphabetical order. The dropdown that renders this is expected to draw a
- * separator before whichever entry has `special: true` rather than
- * hardcoding that it's the last item.
+ * Regular suppliers sorted alphabetically by `officialBulgarianName` — the
+ * field the UI displays — with the one `special: true` entry ("Supplier of
+ * Last Resort" — the statutory fallback supplier every free-market customer
+ * is entitled to if they have no chosen supplier) always appended last,
+ * never mixed into the alphabetical order. The dropdown that renders this
+ * is expected to draw a separator before whichever entry has
+ * `special: true` rather than hardcoding that it's the last item.
  */
 export function getBulgarianElectricitySuppliers(): ElectricitySupplier[] {
   const regular = BULGARIAN_ELECTRICITY_SUPPLIERS.filter((supplier) => !supplier.special).sort(
-    (a, b) => a.officialLatinName.localeCompare(b.officialLatinName),
+    (a, b) => a.officialBulgarianName.localeCompare(b.officialBulgarianName, "bg"),
   );
   const special = BULGARIAN_ELECTRICITY_SUPPLIERS.filter((supplier) => supplier.special);
 

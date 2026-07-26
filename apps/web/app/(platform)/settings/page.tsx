@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { BillingCard } from "@/components/settings/BillingCard";
-import { DangerZoneCard } from "@/components/settings/DangerZoneCard";
 import { EnergyMarketCard } from "@/components/settings/EnergyMarketCard";
 import { NotificationsCard } from "@/components/settings/NotificationsCard";
 import { ProfileCard } from "@/components/settings/ProfileCard";
@@ -101,7 +100,7 @@ export default async function SettingsPage({
     params.fusionsolar === "token_exchange_ok";
 
   return (
-    <div className="mx-auto max-w-4xl space-y-5">
+    <div className="space-y-5">
       <div>
         <p className="text-sm text-slate-500">
           Manage your account, organization billing, energy market, and
@@ -136,6 +135,7 @@ export default async function SettingsPage({
       <EnergyMarketCard
         country={energyMarketSettings?.country ?? "Bulgaria"}
         supplierId={energyMarketSettings?.supplierId ?? null}
+        dsoId={energyMarketSettings?.dsoId ?? null}
       />
 
       <NotificationsCard
@@ -248,8 +248,6 @@ export default async function SettingsPage({
           </div>
         </SettingsCard>
       )}
-
-      <DangerZoneCard email={user.email} />
     </div>
   );
 }
