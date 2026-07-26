@@ -69,7 +69,7 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
                   />
                 </div>
 
-                <div className="flex justify-end">
+                <div className="flex justify-end pt-1">
                   <SubmitButton
                     isPending={isCreatingPending}
                     label="Create Password"
@@ -105,7 +105,7 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
                 />
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-end pt-1">
                 <SubmitButton
                   isPending={isChangingPending}
                   label="Change Password"

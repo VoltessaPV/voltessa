@@ -46,64 +46,62 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
       description="Country, electricity supplier, and distribution network operator for this organization."
     >
       <form action={formAction} className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-slate-500">
-              Country
-            </span>
-            <select name="country" defaultValue={country} className={selectClassName}>
-              <option value="Bulgaria">Bulgaria</option>
-            </select>
-          </label>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-slate-500">
+            Country
+          </span>
+          <select name="country" defaultValue={country} className={selectClassName}>
+            <option value="Bulgaria">Bulgaria</option>
+          </select>
+        </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-slate-500">
-              Electricity supplier
-            </span>
-            <select
-              name="supplierId"
-              defaultValue={supplierId ?? ""}
-              className={selectClassName}
-            >
-              <option value="">Not selected</option>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-slate-500">
+            Electricity supplier
+          </span>
+          <select
+            name="supplierId"
+            defaultValue={supplierId ?? ""}
+            className={selectClassName}
+          >
+            <option value="">Not selected</option>
 
-              {regularSuppliers.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.officialBulgarianName}
-                </option>
-              ))}
+            {regularSuppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.officialBulgarianName}
+              </option>
+            ))}
 
-              {specialSuppliers.length > 0 && (
-                <option disabled>──────────</option>
-              )}
+            {specialSuppliers.length > 0 && (
+              <option disabled>──────────</option>
+            )}
 
-              {specialSuppliers.map((supplier) => (
-                <option key={supplier.id} value={supplier.id}>
-                  {supplier.officialBulgarianName}
-                </option>
-              ))}
-            </select>
-          </label>
+            {specialSuppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.officialBulgarianName}
+              </option>
+            ))}
+          </select>
+        </label>
 
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-slate-500">
-              Distribution Network Operator
-            </span>
-            <select
-              name="dsoId"
-              defaultValue={dsoId ?? ""}
-              className={selectClassName}
-            >
-              <option value="">Not selected</option>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-medium text-slate-500">
+            Distribution Network Operator
+          </span>
+          <select
+            name="dsoId"
+            defaultValue={dsoId ?? ""}
+            className={selectClassName}
+          >
+            <option value="">Not selected</option>
 
-              {operators.map((operator) => (
-                <option key={operator.id} value={operator.id}>
-                  {operator.officialBulgarianName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+            {operators.map((operator) => (
+              <option key={operator.id} value={operator.id}>
+                {operator.officialBulgarianName}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <div className="flex justify-end pt-1">
           <SubmitButton isPending={isPending} label="Save" />

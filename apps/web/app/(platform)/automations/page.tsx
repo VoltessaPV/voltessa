@@ -23,12 +23,12 @@ export default async function AutomationsPage() {
   });
 
   return (
-    <div>
-      <p className="mb-8 text-white/60">
+    <div className="mr-auto max-w-7xl space-y-3">
+      <p className="text-white/60">
         Configure automated rules for this plant.
       </p>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+      <div className="space-y-5">
         <MarketPriceOptimizationCard
           initialEnabled={automationSettings?.automationEnabled ?? false}
           initialMinimumExportPrice={

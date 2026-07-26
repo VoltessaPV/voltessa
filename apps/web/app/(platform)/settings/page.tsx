@@ -100,7 +100,7 @@ export default async function SettingsPage({
     params.fusionsolar === "token_exchange_ok";
 
   return (
-    <div className="space-y-5">
+    <div className="mr-auto max-w-7xl space-y-5">
       <div>
         <p className="text-sm text-slate-500">
           Manage your account, organization billing, energy market, and
