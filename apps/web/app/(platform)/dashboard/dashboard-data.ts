@@ -371,7 +371,7 @@ export async function getDashboardPageData(
   // `inverterTelemetry` preloaded above so `getProductionPageData` skips
   // its own equivalent (otherwise redundant) resolution and fetch.
   const [marketData, production, chartSeriesRaw, dailyKpi] = await Promise.all([
-    getMarketPageData({ selectedDateParam, automationSettings }),
+    getMarketPageData({ organizationId, selectedDateParam, automationSettings }),
     getProductionPageData(organizationId, selectedDateParam, { context, inverterTelemetry }),
     getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
     getPlantDailyKpi(plant.id, dayStart),

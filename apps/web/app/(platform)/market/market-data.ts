@@ -20,6 +20,10 @@
  */
 
 import {
+  getRecentAutomationEvents,
+  type AutomationEventType,
+} from "@/lib/automation/automation-events";
+import {
   isExportRecommended,
   resolveExportThreshold,
   type ExportThresholdConfig,
@@ -71,23 +75,15 @@ export type MarketSummaryData = {
 };
 
 /**
- * A real system event — not derived from prices. Every variant here is
- * something a future milestone will actually emit; none are populated
- * yet, which is why `getMarketPageData` always returns an empty log
- * today (see its doc comment). Kept as a real, forward-typed shape
- * rather than a loose `string` so wiring in the first real producer
- * later is additive, not a redesign.
+ * A real system event — the automation engine's own `AutomationEvent`
+ * table (`lib/automation/automation-events.ts`), never derived from
+ * prices. `type` reuses `AutomationEventType` directly rather than a
+ * separate, parallel vocabulary, so this can never drift from what the
+ * engine actually emits.
  */
 export type MarketEventLogEntry = {
   timestamp: Date;
-  type:
-    | "export_enabled"
-    | "export_stopped"
-    | "threshold_crossed"
-    | "automation_executed"
-    | "huawei_command_sent"
-    | "trader_schedule_generated"
-    | "manual_override";
+  type: AutomationEventType;
   label: string;
   detail?: string;
 };
@@ -102,6 +98,8 @@ export type DistributionBucket = {
 export type MarketInsight = {
   text: string;
   tone: "neutral" | "positive" | "warning";
+  /** Overrides the tone-based dot color when set — used only by the Highest/Lowest price insights, to match Price Distribution's High/Low ring colors exactly. */
+  dotColorClass?: string;
 };
 
 export type MarketToolbarState = {
@@ -180,6 +178,14 @@ function buildSeries(
 }
 
 /** Exported so scripts/create-landing-snapshot.ts can reuse this exact aggregation instead of duplicating it — no behavior change for the existing internal caller below. */
+/**
+ * Price Distribution's High/Low ring colors — named here (not just inline
+ * in `buckets` below) so `buildInsights`'s Highest/Lowest price entries can
+ * reuse the exact same values instead of a second, easily-drifting literal.
+ */
+const DISTRIBUTION_HIGH_COLOR_CLASS = "bg-emerald-400";
+const DISTRIBUTION_LOW_COLOR_CLASS = "bg-amber-400";
+
 export function buildDistribution(
   knownPoints: MarketPricePoint[],
 ): DistributionBucket[] {
@@ -189,9 +195,9 @@ export function buildDistribution(
   // these three bands and colors (High=green, Mid=blue, Low=amber),
   // ordered High first.
   const buckets = [
-    { label: "High", rangeLabel: "> 150", min: 150, max: Infinity, colorClass: "bg-emerald-400" },
+    { label: "High", rangeLabel: "> 150", min: 150, max: Infinity, colorClass: DISTRIBUTION_HIGH_COLOR_CLASS },
     { label: "Mid", rangeLabel: "75–150", min: 75, max: 150, colorClass: "bg-blue-400" },
-    { label: "Low", rangeLabel: "< 75", min: -Infinity, max: 75, colorClass: "bg-amber-400" },
+    { label: "Low", rangeLabel: "< 75", min: -Infinity, max: 75, colorClass: DISTRIBUTION_LOW_COLOR_CLASS },
   ];
 
   return buckets
@@ -278,10 +284,12 @@ export function buildInsights(
     {
       text: `Highest price today: ${highest.price} EUR/MWh at ${sofiaTimeLabel(highest.timestamp)}`,
       tone: "warning",
+      dotColorClass: DISTRIBUTION_HIGH_COLOR_CLASS,
     },
     {
       text: `Lowest price today: ${lowest.price} EUR/MWh at ${sofiaTimeLabel(lowest.timestamp)}`,
       tone: "positive",
+      dotColorClass: DISTRIBUTION_LOW_COLOR_CLASS,
     },
     { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
     { text: `Average price: ${averagePrice} EUR/MWh`, tone: "neutral" },
@@ -294,6 +302,7 @@ export function buildInsights(
 }
 
 export async function getMarketPageData(params: {
+  organizationId: string;
   selectedDateParam: string | undefined;
   automationSettings: {
     minimumExportPrice: { toString(): string };
@@ -317,16 +326,17 @@ export async function getMarketPageData(params: {
     nextDateParam: shiftDateString(selectedDate, 1),
   };
 
-  // These three reads don't depend on each other's results (only the
-  // subsequent processing below does) — fetched in parallel instead of
-  // three sequential round trips.
-  const [dayAheadResult, importStatus, currentResult] = await Promise.all([
+  // These reads don't depend on each other's results (only the subsequent
+  // processing below does) — fetched in parallel instead of four
+  // sequential round trips.
+  const [dayAheadResult, importStatus, currentResult, recentEvents] = await Promise.all([
     dbMarketPriceProvider.getDayAheadPrices({
       referenceDate: referenceInstant,
       timeZone: BULGARIA_TIMEZONE,
     }),
     dbMarketPriceProvider.getLatestImportStatus(),
     isToday ? dbMarketPriceProvider.getCurrentPrice() : Promise.resolve(null),
+    getRecentAutomationEvents(params.organizationId),
   ]);
 
   if (!dayAheadResult.available) {
@@ -428,10 +438,12 @@ export async function getMarketPageData(params: {
     series,
     isPartialImport: isToday && importStatus.available && importStatus.isPartial,
     summary,
-    // No automation, Huawei execution, or trader integration exists yet —
-    // there is nothing real to log. An empty, honestly-empty log is
-    // correct here, not a bug; see MarketEventLogEntry's doc comment.
-    eventLog: [],
+    eventLog: recentEvents.map((event) => ({
+      timestamp: event.createdAt,
+      type: event.type,
+      label: event.summary,
+      detail: event.reason,
+    })),
     distribution: buildDistribution(knownPoints),
     insights: buildInsights(knownPoints, resolutionMinutes),
     ...toolbarState,

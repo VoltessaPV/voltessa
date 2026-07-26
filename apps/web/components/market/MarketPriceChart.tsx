@@ -267,7 +267,7 @@ export function MarketPriceChart({
   const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
 
   const yAxes: ChartFrameYAxis[] = [
-    { yAxisId: "price", unitLabel: "EUR/MWh" },
+    { yAxisId: "price", unitLabel: "EUR/MWh", domain: [-10, 20], allowDataOverflow: true },
     ...(hasEnergyAxis
       ? [
           {
@@ -332,6 +332,13 @@ export function MarketPriceChart({
               strokeWidth={1}
             />
           ))}
+
+          <ReferenceLine
+            yAxisId="price"
+            y={0}
+            stroke="#64748b"
+            strokeWidth={1}
+          />
 
           <ReferenceLine
             yAxisId="price"

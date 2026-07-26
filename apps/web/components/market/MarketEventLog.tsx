@@ -7,20 +7,18 @@ type MarketEventLogProps = {
 };
 
 const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
-  export_enabled: "bg-emerald-400",
-  export_stopped: "bg-slate-500",
-  threshold_crossed: "bg-amber-400",
-  automation_executed: "bg-cyan-400",
-  huawei_command_sent: "bg-blue-400",
-  trader_schedule_generated: "bg-violet-400",
-  manual_override: "bg-red-400",
+  mode_changed: "bg-cyan-400",
+  automation_service_failed: "bg-red-400",
+  reconciliation_mismatch: "bg-amber-400",
+  reconciliation_synced: "bg-emerald-400",
+  reconciliation_failed: "bg-red-400",
+  reconciliation_restored: "bg-emerald-400",
 };
 
 /**
- * A real system event log — not derived from prices. Empty until a real
- * producer exists (automation engine, Huawei execution, trader
- * scheduling, manual overrides); see MarketEventLogEntry's doc comment
- * for the exact event types this is already typed to accept.
+ * A real system event log — the automation engine's own `AutomationEvent`
+ * records (see MarketEventLogEntry's doc comment), newest first. Empty
+ * only when this organization genuinely has none yet.
  */
 export function MarketEventLog({ entries }: MarketEventLogProps) {
   return (

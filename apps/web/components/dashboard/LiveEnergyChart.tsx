@@ -42,6 +42,14 @@ const Y_AXES: ChartFrameYAxis[] = [{ yAxisId: "power", unitLabel: "kW" }];
  * instantly as "leaving the site" vs. "coming from the site") without
  * changing the real, positive-magnitude value `dashboard-data.ts`
  * computes and returns.
+ *
+ * ## UI refinement (draw-order pass)
+ *
+ * `consumptionKw`'s `Line` is now written before `pvKw`'s - colors/scales/
+ * layout unchanged, only which line paints on top when the two values are
+ * close. Recharts (SVG) draws children in document order, so a later
+ * sibling always sits above an earlier one; no z-index prop exists on
+ * `Line` itself.
  */
 function ChartTooltip({
   active,
@@ -155,8 +163,8 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
           <Line
             yAxisId="power"
             type="monotone"
-            dataKey="pvKw"
-            stroke="#34d399"
+            dataKey="consumptionKw"
+            stroke="#f87171"
             strokeWidth={2}
             dot={false}
             activeDot={{ r: 3.5 }}
@@ -164,11 +172,14 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
             isAnimationActive
             animationDuration={700}
           />
+          {/* Rendered after (so visually above) consumptionKw - see this
+              file's own top doc comment: keeps the PV line visible when the
+              two values are close, since later SVG siblings paint on top. */}
           <Line
             yAxisId="power"
             type="monotone"
-            dataKey="consumptionKw"
-            stroke="#f87171"
+            dataKey="pvKw"
+            stroke="#34d399"
             strokeWidth={2}
             dot={false}
             activeDot={{ r: 3.5 }}

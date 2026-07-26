@@ -1,3 +1,4 @@
+import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import {
@@ -37,6 +38,25 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
   return { direction, label: `${sign}${Math.abs(delta).toFixed(2)} EUR/MWh` };
 }
 
+/**
+ * The Configured Mode card's real automation state (AutomationSettings +
+ * AutomationState), not FusionSolar's own configuration endpoint - see
+ * production-data.ts's `configuredExportMode` doc comment for why that
+ * endpoint's own status is deliberately not shown here anymore.
+ */
+function configuredModeStatus(
+  automationEnabled: boolean,
+  currentExportMode: string | null,
+): { label: string; colorClass: string } {
+  if (!automationEnabled) {
+    return { label: "Automation Off", colorClass: "bg-slate-500" };
+  }
+
+  return currentExportMode === "Zero Export"
+    ? { label: "Zero Export", colorClass: "bg-amber-400" }
+    : { label: "No Limit", colorClass: "bg-emerald-400" };
+}
+
 type MarketPageProps = {
   searchParams: Promise<{ date?: string }>;
 };
@@ -56,18 +76,25 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
-    select: { minimumExportPrice: true, currency: true },
+    select: { minimumExportPrice: true, currency: true, automationEnabled: true },
   });
 
   // Two completely independent data sources, composed only here — see
   // market-data.ts / production-data.ts module doc comments.
-  const [data, production] = await Promise.all([
+  const [data, production, currentExportMode] = await Promise.all([
     getMarketPageData({
+      organizationId: user.organizationId,
       selectedDateParam: params.date,
       automationSettings,
     }),
     getProductionPageData(user.organizationId, params.date),
+    getStoredExportMode(user.organizationId),
   ]);
+
+  const configuredMode = configuredModeStatus(
+    automationSettings?.automationEnabled ?? false,
+    currentExportMode,
+  );
 
   const revenue: RevenueSummary = data.dataAvailable
     ? computeExportRevenue(data.series, production.settlementEnergySeries)
@@ -197,12 +224,9 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <MarketSummaryCard
               eyebrow="Configured Mode"
               statusDot={{
-                colorClass: production.configuredExportModeLabel.colorClass,
-                label: production.configuredExportModeLabel.label,
+                colorClass: configuredMode.colorClass,
+                label: configuredMode.label,
               }}
-              rows={[
-                { label: "Source", value: "Huawei configuration endpoint" },
-              ]}
             />
 
             <MarketSummaryCard

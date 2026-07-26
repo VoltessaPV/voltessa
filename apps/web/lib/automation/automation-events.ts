@@ -92,3 +92,35 @@ export async function createAutomationEvent(
     });
   }
 }
+
+export type RecentAutomationEvent = {
+  createdAt: Date;
+  type: AutomationEventType;
+  summary: string;
+  reason: string;
+};
+
+/**
+ * The most recent automation events for an organization, newest first —
+ * read-only. The one source Market and Dashboard's Event Log both read
+ * from (see `market-data.ts`'s `getMarketPageData`). Reuses
+ * `AutomationEvent`'s own `@@index([organizationId, createdAt])`.
+ */
+export async function getRecentAutomationEvents(
+  organizationId: string,
+  limit = 10,
+): Promise<RecentAutomationEvent[]> {
+  const events = await prisma.automationEvent.findMany({
+    where: { organizationId },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    select: { createdAt: true, type: true, summary: true, reason: true },
+  });
+
+  return events.map((event) => ({
+    createdAt: event.createdAt,
+    type: event.type as AutomationEventType,
+    summary: event.summary,
+    reason: event.reason,
+  }));
+}

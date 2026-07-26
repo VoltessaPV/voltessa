@@ -21,7 +21,7 @@ export function MarketInsights({ insights }: MarketInsightsProps) {
         {insights.map((insight, index) => (
           <li key={index} className="flex items-start gap-2">
             <span
-              className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${TONE_DOT_CLASS[insight.tone]}`}
+              className={`mt-1 h-1.5 w-1.5 shrink-0 rounded-full ${insight.dotColorClass ?? TONE_DOT_CLASS[insight.tone]}`}
             />
             <span className="text-xs leading-snug text-slate-300">
               {insight.text}

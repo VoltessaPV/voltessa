@@ -1,3 +1,4 @@
+import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
@@ -90,6 +91,15 @@ export { pageHeading } from "./heading";
  * and must never wait on Huawei. `resolvePlantContext` (called inside
  * `getDashboardPageData` below) no longer has any synchronization
  * side effect of its own - see its doc comment.
+ *
+ * ## UI refinements (Event Log / Zero Export badge pass)
+ *
+ * `data.eventLog` now carries real `AutomationEvent` rows (see
+ * `market-data.ts`'s `getMarketPageData` - Market and Dashboard read the
+ * exact same query). InvertersCard additionally receives `zeroExportActive`
+ * (AutomationSettings.automationEnabled && AutomationState.currentExportMode
+ * === "Zero Export"), fetched here the same way Market's Configured Mode
+ * card does.
  */
 
 /**
@@ -143,14 +153,20 @@ export default async function DashboardPage({
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },
-    select: { minimumExportPrice: true, currency: true },
+    select: { minimumExportPrice: true, currency: true, automationEnabled: true },
   });
 
-  const data = await getDashboardPageData(
-    user.organizationId,
-    automationSettings,
-    params.date,
-  );
+  const [data, currentExportMode] = await Promise.all([
+    getDashboardPageData(user.organizationId, automationSettings, params.date),
+    getStoredExportMode(user.organizationId),
+  ]);
+
+  // Inverters card's subtle Zero Export badge - see InvertersCard's own
+  // doc comment. Same automation-state source as Market's Configured Mode
+  // card (AutomationSettings.automationEnabled + AutomationState.currentExportMode).
+  const zeroExportActive =
+    (automationSettings?.automationEnabled ?? false) &&
+    currentExportMode === "Zero Export";
 
   return (
     <div className="mr-auto max-w-7xl space-y-3">
@@ -292,7 +308,7 @@ export default async function DashboardPage({
           </section>
 
           <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
-            <InvertersCard inverters={data.inverters} />
+            <InvertersCard inverters={data.inverters} zeroExportActive={zeroExportActive} />
             <WeatherCard />
             <GlidepathCard />
             <MarketEventLog entries={data.eventLog} />
