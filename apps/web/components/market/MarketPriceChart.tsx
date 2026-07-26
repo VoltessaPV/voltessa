@@ -69,6 +69,22 @@ type UnifiedDatum = {
   exportedKwh: number | null;
 };
 
+/**
+ * Left price axis tick labels - only round multiples of 50 EUR/MWh that
+ * actually lie within `[min, max]`, never the domain's own (often
+ * fractional) endpoints. The domain itself is untouched by this - only
+ * which values get a visible label changes.
+ */
+function computeMultipleOf50Ticks(min: number, max: number): number[] {
+  const ticks: number[] = [];
+
+  for (let tick = Math.ceil(min / 50) * 50; tick <= max; tick += 50) {
+    ticks.push(tick);
+  }
+
+  return ticks;
+}
+
 /** Groups consecutive export-enabled intervals into contiguous [start, end) ranges for shading. */
 function getExportBands(
   series: MarketPricePoint[],
@@ -266,6 +282,19 @@ export function MarketPriceChart({
     knownPrices.length > 0
       ? [Math.min(...knownPrices) - 10, Math.max(...knownPrices) + 20]
       : [-10, 20];
+  const priceAxisTicks = computeMultipleOf50Ticks(priceAxisDomain[0], priceAxisDomain[1]);
+
+  // Right export-energy axis ticks: four round steps derived from the
+  // plant's own AC capacity, not the fixed decimal values recharts would
+  // otherwise pick from maxExportedKwhPerInterval. The domain itself
+  // (0..maxExportedKwhPerInterval) is unchanged - only which values get a
+  // visible label changes.
+  const energyAxisStep = hasEnergyAxis
+    ? Math.floor((installedCapacityKw as number) / 12 / 5) * 5
+    : 0;
+  const energyAxisTicks = hasEnergyAxis
+    ? [0, energyAxisStep, energyAxisStep * 2, energyAxisStep * 3]
+    : undefined;
 
   const bands = getExportBands(series);
   const now = Date.now();
@@ -281,7 +310,13 @@ export function MarketPriceChart({
   const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
 
   const yAxes: ChartFrameYAxis[] = [
-    { yAxisId: "price", unitLabel: "EUR/MWh", domain: priceAxisDomain, allowDataOverflow: true },
+    {
+      yAxisId: "price",
+      unitLabel: "EUR/MWh",
+      domain: priceAxisDomain,
+      allowDataOverflow: true,
+      ticks: priceAxisTicks,
+    },
     ...(hasEnergyAxis
       ? [
           {
@@ -289,6 +324,7 @@ export function MarketPriceChart({
             orientation: "right" as const,
             domain: [0, maxExportedKwhPerInterval] as [number, number],
             allowDataOverflow: true,
+            ticks: energyAxisTicks,
             unitLabel: "kWh",
           },
         ]

@@ -28,6 +28,8 @@ export type ChartFrameYAxis = {
   orientation?: "left" | "right";
   domain?: [number, number];
   allowDataOverflow?: boolean;
+  /** Explicit tick positions (in the axis's own data units) - the domain itself is untouched, this only changes which values get a label. Omitted falls back to recharts' automatic placement. */
+  ticks?: number[];
   unitLabel: string;
 };
 
@@ -75,6 +77,7 @@ export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, x
             tickMargin={8}
             domain={axis.domain}
             allowDataOverflow={axis.allowDataOverflow}
+            ticks={axis.ticks}
             label={{
               value: axis.unitLabel,
               angle: -90,

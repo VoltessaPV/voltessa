@@ -44,12 +44,20 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
  * production-data.ts's `configuredExportMode` doc comment for why that
  * endpoint's own status is deliberately not shown here anymore. Two rows:
  * whether automation is enabled at all, and - only meaningful once it is -
- * which export mode it currently has the plant in.
+ * which export mode it currently has the plant in. "Enabled" uses the same
+ * green accent as the Live badge/Healthy status (`text-emerald-400`,
+ * see MarketToolbar's "Live" label) - "Disabled" stays unstyled, falling
+ * through to MarketSummaryCard's own default row color.
  */
 function configuredModeStatus(
   automationEnabled: boolean,
   currentExportMode: string | null,
-): { automationLabel: string; modeLabel: string; modeColorClass: string } {
+): {
+  automationLabel: string;
+  automationColorClass?: string;
+  modeLabel: string;
+  modeColorClass: string;
+} {
   if (!automationEnabled) {
     return {
       automationLabel: "Disabled",
@@ -62,6 +70,7 @@ function configuredModeStatus(
 
   return {
     automationLabel: "Enabled",
+    automationColorClass: "text-emerald-400",
     modeLabel: isZeroExport ? "Zero Export" : "No Limit",
     modeColorClass: isZeroExport ? "text-amber-400" : "text-emerald-400",
   };
@@ -234,7 +243,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <MarketSummaryCard
               eyebrow="Configured Mode"
               rows={[
-                { label: "Automation", value: configuredMode.automationLabel },
+                {
+                  label: "Automation",
+                  value: configuredMode.automationLabel,
+                  valueColorClass: configuredMode.automationColorClass,
+                },
                 {
                   label: "Current Mode",
                   value: configuredMode.modeLabel,
