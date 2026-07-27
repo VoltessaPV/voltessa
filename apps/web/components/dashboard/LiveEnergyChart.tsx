@@ -35,8 +35,10 @@ const Y_AXES: ChartFrameYAxis[] = [{ yAxisId: "power", unitLabel: "kW" }];
  * ## Dashboard UI Refinement (Final Design Pass) milestone
  *
  * Terminology and colors now match the milestone's global naming pass:
- * PV Output (green), Total Consumption (red), Import from Grid (purple),
- * Fed to Grid (blue). `data` itself is untouched — `gridImportKw` is
+ * PV Output (green), Total Consumption (red), Import from Grid (orange —
+ * `#fb923c`, the same color System Overview's `EnergyFlowDiagram` already
+ * uses for its Grid node/import flow, not a new one), Fed to Grid (blue).
+ * `data` itself is untouched — `gridImportKw` is
  * negated only for the rendered `Line`'s `dataKey`, in this
  * presentation-only component, so it plots below the X axis (reads
  * instantly as "leaving the site" vs. "coming from the site") without
@@ -133,7 +135,7 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
           Total Consumption
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
-          <span className="h-0.5 w-3 rounded-full bg-violet-400" />
+          <span className="h-0.5 w-3 rounded-full bg-orange-400" />
           Import from Grid
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
@@ -191,7 +193,7 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
             yAxisId="power"
             type="monotone"
             dataKey="gridImportNegKw"
-            stroke="#a78bfa"
+            stroke="#fb923c"
             strokeWidth={2}
             dot={false}
             activeDot={{ r: 3.5 }}
