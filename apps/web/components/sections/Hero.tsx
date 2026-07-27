@@ -17,14 +17,14 @@ export default function Hero() {
       <Navbar />
 
       <section id="hero" className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
-        <div className="mx-auto w-full max-w-[1600px] px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
+        <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
 
           <div>
             <Badge>
               AI-powered Renewable Operations
             </Badge>
 
-            <h1 className="mt-8 text-5xl xl:text-6xl font-bold leading-tight">
+            <h1 className="mt-8 text-3xl font-bold leading-tight sm:text-4xl md:text-5xl xl:text-6xl">
               AI Platform
               <br />
               <span className="text-blue-500">
@@ -40,10 +40,10 @@ export default function Hero() {
               to automate operations and maximize revenue.
             </p>
 
-            <div className="mt-10 flex gap-4">
-              <RequestDemoButton />
+            <div className="mt-10 flex flex-col gap-4 sm:flex-row">
+              <RequestDemoButton className="w-full text-center sm:w-auto" />
 
-              <TalkToUsButton />
+              <TalkToUsButton className="w-full text-center sm:w-auto" />
             </div>
 
             <div className="mt-10 tracking-[0.35em] text-sm uppercase text-slate-500">

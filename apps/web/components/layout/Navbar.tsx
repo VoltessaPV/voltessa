@@ -1,16 +1,17 @@
 import Image from "next/image";
 import { ContactNavLink } from "./ContactNavLink";
+import { MobileNavMenu } from "./MobileNavMenu";
 import { SectionNavLink } from "./SectionNavLink";
 import { RequestDemoButton } from "../ui/RequestDemoButton";
 
 export default function Navbar() {
   return (
     <header className="fixed inset-x-0 top-0 z-50">
-      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-8">
+      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-3 px-4 sm:px-8">
 
         {/* Logo */}
 
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 shrink items-center gap-3">
           <Image
             src="/logo/voltessa-mark.png"
             alt="Voltessa"
@@ -19,7 +20,7 @@ export default function Navbar() {
             priority
           />
 
-          <span className="text-2xl font-semibold tracking-tight text-white">
+          <span className="truncate text-lg font-semibold tracking-tight text-white sm:text-2xl">
             Voltessa
           </span>
         </div>
@@ -36,9 +37,13 @@ export default function Navbar() {
           <ContactNavLink />
         </nav>
 
-        {/* CTA */}
+        {/* CTA + mobile menu */}
 
-        <RequestDemoButton className="px-6 py-3 text-sm" />
+        <div className="flex shrink-0 items-center gap-2">
+          <RequestDemoButton className="px-4 py-2 text-xs sm:px-6 sm:py-3 sm:text-sm" />
+
+          <MobileNavMenu />
+        </div>
 
       </div>
     </header>

@@ -24,6 +24,7 @@ import {
   SNAPSHOT_MARKET_DATA,
   SNAPSHOT_PRODUCTION_DATA,
 } from "@/lib/demo/landing-snapshot";
+import { useElementWidth } from "@/lib/hooks/useElementWidth";
 import type { SolarWeather, SolarWeatherPoint } from "@/lib/weather/openMeteo";
 
 import BrowserBar from "../dashboard/BrowserBar";
@@ -380,14 +381,35 @@ export function PlatformPreview() {
   const [active, setActive] = useState<PreviewKey>("dashboard");
   const ActivePanel = PANELS[active];
 
+  // Responsive Design Sprint: the canvas below is a fixed CANVAS_WIDTH x
+  // CANVAS_HEIGHT layout, scaled down with a CSS transform to look like a
+  // real screenshot rather than squeezing through narrower responsive
+  // breakpoints (see this file's top doc comment). That scale used to be
+  // the single constant `SCALE` (980 / CANVAS_WIDTH) — correct only for
+  // exactly the 980px-wide desktop hero slot, and severely CLIPPED (not
+  // just shrunk) on any narrower viewport, since `overflow-hidden` on the
+  // wrapper below cuts off whatever the transform doesn't shrink to fit.
+  // `frameWidth` is this component's own real rendered width (via
+  // ResizeObserver, same primitive `ChartFrame` uses for chart tick
+  // density), so the scale always matches the actual space available —
+  // never more than the original `SCALE` (this frame is capped at
+  // `max-w-[980px]`, so `frameWidth` never exceeds 980px either), so
+  // desktop is unaffected; narrower frames shrink further instead of
+  // clipping.
+  const [frameRef, frameWidth] = useElementWidth<HTMLDivElement>();
+  const scale = frameWidth > 0 ? frameWidth / CANVAS_WIDTH : SCALE;
+
   return (
-    <div className="w-full max-w-[980px] overflow-hidden rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl">
+    <div
+      ref={frameRef}
+      className="w-full max-w-[980px] overflow-hidden rounded-3xl border border-slate-800 bg-[#0B1020] shadow-2xl"
+    >
       <BrowserBar />
 
-      <div className="w-full overflow-hidden" style={{ height: CANVAS_HEIGHT * SCALE }}>
+      <div className="w-full overflow-hidden" style={{ height: CANVAS_HEIGHT * scale }}>
         <div
           className="flex origin-top-left bg-[#050816] text-white"
-          style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT, transform: `scale(${SCALE})` }}
+          style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT, transform: `scale(${scale})` }}
         >
           <PreviewSidebar active={active} onSelect={setActive} />
 

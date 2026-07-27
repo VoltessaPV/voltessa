@@ -14,7 +14,7 @@ import { TalkToUsButton } from "../ui/TalkToUsButton";
 export default function ContactSection() {
   return (
     <section id="contact" className="border-t border-slate-900 bg-[#050816] py-24 text-white">
-      <div className="mx-auto grid max-w-7xl items-center gap-12 px-8 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-8 lg:grid-cols-2">
         <div>
           <Badge>Contact</Badge>
 

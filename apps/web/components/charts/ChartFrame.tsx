@@ -11,7 +11,7 @@ import {
   CHART_MARGIN_WITH_ANNOTATION,
   formatSofiaTime,
 } from "@/components/charts/chart-style";
-import { useChartWidth } from "@/components/charts/useChartWidth";
+import { useElementWidth } from "@/lib/hooks/useElementWidth";
 
 /**
  * Minimum horizontal room (px) a single `HH:mm` X-axis tick label needs
@@ -80,7 +80,7 @@ type ChartFrameProps = {
 };
 
 export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, children }: ChartFrameProps) {
-  const [widthRef, containerWidth] = useChartWidth<HTMLDivElement>();
+  const [widthRef, containerWidth] = useElementWidth<HTMLDivElement>();
 
   return (
     <div ref={widthRef} className="h-full w-full">

@@ -17,7 +17,7 @@ const ROADMAP_STEPS = [
 export default function RoadmapSection() {
   return (
     <section className="border-t border-slate-900 bg-[#050816] py-24 text-white">
-      <div className="mx-auto max-w-7xl px-8">
+      <div className="mx-auto max-w-7xl px-4 sm:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-4xl font-bold leading-tight">Platform Roadmap</h2>
         </div>
