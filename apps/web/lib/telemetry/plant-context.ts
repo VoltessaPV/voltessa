@@ -28,6 +28,8 @@ export type PlantRenderContext = {
     id: string;
     name: string;
     capacityKw: Prisma.Decimal | null;
+    latitude: Prisma.Decimal | null;
+    longitude: Prisma.Decimal | null;
   };
   /** `null` when the organization has no FusionSolar connection at all (not yet onboarded, or revoked). */
   connectionId: string | null;
@@ -47,6 +49,8 @@ export async function resolvePlantContext(
       id: true,
       name: true,
       capacityKw: true,
+      latitude: true,
+      longitude: true,
     },
   });
 

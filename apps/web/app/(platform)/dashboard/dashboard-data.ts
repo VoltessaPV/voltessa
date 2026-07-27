@@ -109,6 +109,7 @@ import {
 } from "@/lib/telemetry/queries";
 import { getPlantDailyKpi } from "@/lib/telemetry/plant-daily-kpi";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
+import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
 
 import { getMarketPageData } from "@/app/(platform)/market/market-data";
 import { getProductionPageData, type ProductionReading } from "@/app/(platform)/market/production-data";
@@ -198,6 +199,8 @@ export type DashboardPageData =
       latestTelemetryAt: Date | null;
       market: DashboardMarketWidgetData;
       eventLog: MarketEventLogEntry[];
+      /** `null` whenever the plant has no configured coordinates, or Open-Meteo is unavailable — see `fetchSolarWeatherSafe`. */
+      weather: SolarWeather | null;
     } & DashboardToolbarState);
 
 /**
@@ -307,6 +310,28 @@ function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+/**
+ * `getSolarWeather` throws on any failure (network, non-2xx, malformed
+ * response) — see its own doc comment. This is the one place that decides
+ * how the Dashboard degrades: an Open-Meteo outage becomes `null`, not an
+ * unhandled rejection that would take down the whole page, per the Solar
+ * Weather widget's "must never break the page" requirement.
+ */
+async function fetchSolarWeatherSafe(
+  latitude: number | null,
+  longitude: number | null,
+): Promise<SolarWeather | null> {
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+
+  try {
+    return await getSolarWeather(latitude, longitude);
+  } catch {
+    return null;
+  }
+}
+
 export async function getDashboardPageData(
   organizationId: string,
   automationSettings: {
@@ -370,11 +395,15 @@ export async function getDashboardPageData(
   // support — neither function needed a single change. `context`/
   // `inverterTelemetry` preloaded above so `getProductionPageData` skips
   // its own equivalent (otherwise redundant) resolution and fetch.
-  const [marketData, production, chartSeriesRaw, dailyKpi] = await Promise.all([
+  const [marketData, production, chartSeriesRaw, dailyKpi, weather] = await Promise.all([
     getMarketPageData({ organizationId, selectedDateParam, automationSettings }),
     getProductionPageData(organizationId, selectedDateParam, { context, inverterTelemetry }),
     getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
     getPlantDailyKpi(plant.id, dayStart),
+    fetchSolarWeatherSafe(
+      plant.latitude?.toNumber() ?? null,
+      plant.longitude?.toNumber() ?? null,
+    ),
   ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
@@ -462,5 +491,6 @@ export async function getDashboardPageData(
     latestTelemetryAt: production.latestTelemetryAt,
     market: { currentPrice, exportRecommended, threshold },
     eventLog: marketData.dataAvailable ? marketData.eventLog : [],
+    weather,
   };
 }

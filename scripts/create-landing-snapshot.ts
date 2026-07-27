@@ -324,6 +324,11 @@ async function main() {
     latestTelemetryAt: frozenNow,
     market: marketWidget,
     eventLog,
+    // The Solar Weather widget calls Open-Meteo live (lib/weather/openMeteo.ts) —
+    // this frozen marketing snapshot deliberately never performs that I/O
+    // (see this script's own doc comment), so the widget renders its
+    // "temporarily unavailable" state on the landing page preview.
+    weather: null,
   };
 
   const marketData: Extract<MarketPageResult, { dataAvailable: true }> = {
