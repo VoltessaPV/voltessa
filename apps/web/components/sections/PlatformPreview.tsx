@@ -16,6 +16,7 @@ import { MarketInfo } from "@/components/market/MarketInfo";
 import { MarketInsights } from "@/components/market/MarketInsights";
 import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
+import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { PreviewSidebar, type PreviewKey } from "@/components/sections/preview/PreviewSidebar";
 import Card from "@/components/ui/Card";
 import {
@@ -129,7 +130,7 @@ const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
 
 function DashboardPanel() {
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         <MarketSummaryCard eyebrow="Yield Today" value={data.kpis.producedTodayKwh?.toFixed(1)} valueUnit="kWh" />
         <MarketSummaryCard eyebrow="Total Yield" value={data.kpis.totalYieldKwh ? (data.kpis.totalYieldKwh / 1000).toFixed(1) : undefined} valueUnit="MWh" />
@@ -169,13 +170,13 @@ function DashboardPanel() {
         <GlidepathCard />
         <MarketEventLog entries={data.eventLog} />
       </section>
-    </div>
+    </PageContainer>
   );
 }
 
 function MarketPanel() {
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
         <MarketSummaryCard
           eyebrow="Today's Revenue"
@@ -284,13 +285,13 @@ function MarketPanel() {
         <MarketDistribution buckets={market.distribution} />
         <MarketInfo country={market.summary.marketStatus.country} source={market.summary.marketStatus.source} lastUpdateLabel={null} />
       </section>
-    </div>
+    </PageContainer>
   );
 }
 
 function BessPanel() {
   return (
-    <div className="mr-auto max-w-7xl">
+    <PageContainer>
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
         <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Status</p>
         <p className="mt-3 text-sm text-slate-400">No battery systems connected.</p>
@@ -298,7 +299,7 @@ function BessPanel() {
           Voltessa automatically detects and manages battery assets when available.
         </p>
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
@@ -346,24 +347,24 @@ function MarketPriceOptimizationPreviewCard() {
 /** Same structure as the real `app/(platform)/automations/page.tsx`: an intro line, then the two cards stacked full-width. */
 function AutomationsPanel() {
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <p className="text-white/60">Configure automated rules for this plant.</p>
 
       <div className="space-y-5">
         <MarketPriceOptimizationPreviewCard />
         <BatteryOptimizationCard />
       </div>
-    </div>
+    </PageContainer>
   );
 }
 
 function AlertsPanel() {
   return (
-    <div className="mr-auto max-w-7xl">
+    <PageContainer>
       <section>
         <p className="text-white/60">Review operational alerts and important platform events.</p>
       </section>
-    </div>
+    </PageContainer>
   );
 }
 

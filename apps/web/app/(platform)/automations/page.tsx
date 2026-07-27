@@ -1,5 +1,6 @@
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { MarketPriceOptimizationCard } from "@/components/automations/MarketPriceOptimizationCard";
+import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
@@ -23,7 +24,7 @@ export default async function AutomationsPage() {
   });
 
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <p className="text-white/60">
         Configure automated rules for this plant.
       </p>
@@ -38,6 +39,6 @@ export default async function AutomationsPage() {
 
         <BatteryOptimizationCard />
       </div>
-    </div>
+    </PageContainer>
   );
 }

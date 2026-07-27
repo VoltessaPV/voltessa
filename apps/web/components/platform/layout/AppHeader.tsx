@@ -15,15 +15,17 @@ function displayRole(role: string): string {
 
 export function AppHeader({ user }: AppHeaderProps) {
   return (
-    <header className="flex h-16 items-center justify-between border-b border-white/10 px-6">
-      <PageHeading />
+    <header className="flex h-16 items-center justify-between gap-3 border-b border-white/10 pl-16 pr-4 lg:px-6">
+      <div className="min-w-0 flex-1">
+        <PageHeading />
+      </div>
 
-      <div className="text-left">
-        <p className="text-sm font-medium">
+      <div className="min-w-0 shrink-0 text-left">
+        <p className="truncate text-sm font-medium">
           {user.name ?? user.email ?? "User"}
         </p>
 
-        <p className="text-xs text-white/50">{displayRole(user.role)}</p>
+        <p className="truncate text-xs text-white/50">{displayRole(user.role)}</p>
       </div>
     </header>
   );

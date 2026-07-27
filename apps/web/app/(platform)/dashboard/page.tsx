@@ -11,6 +11,7 @@ import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getDashboardPageData } from "./dashboard-data";
 
@@ -169,7 +170,7 @@ export default async function DashboardPage({
     currentExportMode === "Zero Export";
 
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <MarketToolbar
@@ -307,7 +308,7 @@ export default async function DashboardPage({
             </div>
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
             <InvertersCard inverters={data.inverters} zeroExportActive={zeroExportActive} />
             <WeatherCard weather={data.weather} />
             <GlidepathCard />
@@ -324,6 +325,6 @@ export default async function DashboardPage({
             : "No data"}
         </span>
       </p>
-    </div>
+    </PageContainer>
   );
 }

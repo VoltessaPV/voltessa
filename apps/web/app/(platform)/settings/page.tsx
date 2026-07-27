@@ -6,6 +6,7 @@ import { NotificationsCard } from "@/components/settings/NotificationsCard";
 import { ProfileCard } from "@/components/settings/ProfileCard";
 import { SecurityCard } from "@/components/settings/SecurityCard";
 import { SettingsCard } from "@/components/settings/SettingsCard";
+import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
@@ -100,7 +101,7 @@ export default async function SettingsPage({
     params.fusionsolar === "token_exchange_ok";
 
   return (
-    <div className="mr-auto max-w-7xl space-y-5">
+    <PageContainer className="space-y-5">
       <div>
         <p className="text-sm text-slate-500">
           Manage your account, organization billing, energy market, and
@@ -220,9 +221,9 @@ export default async function SettingsPage({
                 {plants.map((plant) => (
                   <li
                     key={plant.id}
-                    className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
+                    className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
                   >
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <Link
                         href={`/plants/${plant.id}`}
                         className="text-sm font-medium text-blue-400 hover:text-blue-300"
@@ -237,7 +238,7 @@ export default async function SettingsPage({
 
                     <Link
                       href={`/plants/${plant.id}/edit`}
-                      className="text-xs text-slate-500 transition hover:text-white"
+                      className="shrink-0 text-xs text-slate-500 transition hover:text-white"
                     >
                       Edit
                     </Link>
@@ -248,6 +249,6 @@ export default async function SettingsPage({
           </div>
         </SettingsCard>
       )}
-    </div>
+    </PageContainer>
   );
 }

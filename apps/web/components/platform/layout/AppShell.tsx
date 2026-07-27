@@ -17,10 +17,10 @@ export function AppShell({ children, user }: AppShellProps) {
     <div className="min-h-screen bg-[#050816] text-white">
       <AppSidebar />
 
-      <div className="min-h-screen pl-64">
+      <div className="min-h-screen lg:pl-64">
         <AppHeader user={user} />
 
-        <main className="p-6">{children}</main>
+        <main className="p-3 sm:p-4 lg:p-6">{children}</main>
       </div>
     </div>
   );

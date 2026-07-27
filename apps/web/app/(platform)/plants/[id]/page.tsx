@@ -31,19 +31,19 @@ export default async function PlantDetailsPage({ params }: Props) {
 
   return (
     <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-white">{plant.name}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="min-w-0 truncate text-2xl font-semibold text-white">{plant.name}</h2>
 
         <Link
           href={`/plants/${plant.id}/edit`}
-          className="rounded-xl bg-blue-600 px-4 py-2 hover:bg-blue-500"
+          className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 hover:bg-blue-500"
         >
           Edit
         </Link>
       </div>
 
       <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-        <dl className="grid grid-cols-3 gap-8">
+        <dl className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <dt className="text-sm text-white/50">Vendor</dt>
 

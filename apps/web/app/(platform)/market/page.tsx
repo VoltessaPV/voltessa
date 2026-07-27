@@ -14,6 +14,7 @@ import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getMarketPageData } from "./market-data";
 import { getProductionPageData } from "./production-data";
@@ -173,7 +174,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     nowAnnotationParts.length > 0 ? nowAnnotationParts.join(" · ") : undefined;
 
   return (
-    <div className="mr-auto max-w-7xl space-y-3">
+    <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <MarketToolbar
@@ -305,7 +306,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             </div>
           </section>
 
-          <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+          <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
             <MarketEventLog entries={data.eventLog} />
             <MarketInsights insights={data.insights} />
             <MarketDistribution buckets={data.distribution} />
@@ -327,6 +328,6 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           </section>
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

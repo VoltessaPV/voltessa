@@ -142,7 +142,7 @@ export default function NewPlantPage() {
 
         <button
           type="submit"
-          className="rounded-xl bg-blue-600 px-5 py-3 font-medium transition hover:bg-blue-500"
+          className="w-full rounded-xl bg-blue-600 px-5 py-3 font-medium transition hover:bg-blue-500 sm:w-auto"
         >
           Create Plant
         </button>

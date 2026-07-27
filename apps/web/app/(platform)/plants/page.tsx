@@ -30,14 +30,14 @@ export default async function PlantsPage() {
 
   return (
     <div>
-      <div className="mb-8 flex items-center justify-between">
+      <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-white/60">
           Manage photovoltaic plants connected to your organization.
         </p>
 
         <Link
           href="/plants/new"
-          className="rounded-xl bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500"
+          className="shrink-0 rounded-xl bg-blue-600 px-4 py-2 text-center font-medium hover:bg-blue-500"
         >
           Add Plant
         </Link>

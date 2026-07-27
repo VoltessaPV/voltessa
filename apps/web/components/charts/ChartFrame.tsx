@@ -11,6 +11,40 @@ import {
   CHART_MARGIN_WITH_ANNOTATION,
   formatSofiaTime,
 } from "@/components/charts/chart-style";
+import { useChartWidth } from "@/components/charts/useChartWidth";
+
+/**
+ * Minimum horizontal room (px) a single `HH:mm` X-axis tick label needs
+ * before it risks colliding with its neighbor — used to thin an explicit
+ * tick array down to whatever actually fits the chart's real rendered
+ * width (Responsive Design Sprint). At a typical desktop chart width this
+ * never removes anything (the full 90-minute tick set already fits), so
+ * desktop is unaffected; on a narrow phone-width chart it keeps roughly
+ * every Nth label instead of rendering all of them crushed together.
+ */
+const MIN_PX_PER_X_TICK = 55;
+
+/**
+ * `ticks` is already evenly spaced (every chart passes an explicit,
+ * regularly-stepped array — see `computeFixedChartTicks`), so thinning by
+ * a constant stride keeps the remaining labels evenly spaced too, rather
+ * than picking an arbitrary subset.
+ */
+function thinXTicks(ticks: number[] | undefined, containerWidth: number): number[] | undefined {
+  if (!ticks || ticks.length === 0 || containerWidth <= 0) {
+    return ticks;
+  }
+
+  const maxTicks = Math.max(2, Math.floor(containerWidth / MIN_PX_PER_X_TICK));
+
+  if (ticks.length <= maxTicks) {
+    return ticks;
+  }
+
+  const stride = Math.ceil(ticks.length / maxTicks);
+
+  return ticks.filter((_, index) => index % stride === 0);
+}
 
 /**
  * The one chart shell every `recharts` chart in the app renders through
@@ -46,52 +80,56 @@ type ChartFrameProps = {
 };
 
 export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, children }: ChartFrameProps) {
+  const [widthRef, containerWidth] = useChartWidth<HTMLDivElement>();
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={data} margin={hasAnnotationMargin ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}>
-        <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
+    <div ref={widthRef} className="h-full w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={hasAnnotationMargin ? CHART_MARGIN_WITH_ANNOTATION : CHART_MARGIN}>
+          <CartesianGrid vertical={false} stroke={CHART_GRID_STROKE} />
 
-        <XAxis
-          dataKey="time"
-          type="number"
-          scale="time"
-          domain={["dataMin", "dataMax"]}
-          ticks={xTicks}
-          tickFormatter={formatSofiaTime}
-          tick={CHART_AXIS_TICK}
-          tickLine={false}
-          axisLine={CHART_AXIS_LINE}
-          tickMargin={10}
-          minTickGap={48}
-        />
-
-        {yAxes.map((axis) => (
-          <YAxis
-            key={axis.yAxisId}
-            yAxisId={axis.yAxisId}
-            orientation={axis.orientation}
+          <XAxis
+            dataKey="time"
+            type="number"
+            scale="time"
+            domain={["dataMin", "dataMax"]}
+            ticks={thinXTicks(xTicks, containerWidth)}
+            tickFormatter={formatSofiaTime}
             tick={CHART_AXIS_TICK}
             tickLine={false}
-            axisLine={false}
-            width={axis.orientation === "right" ? 52 : 44}
-            tickMargin={8}
-            domain={axis.domain}
-            allowDataOverflow={axis.allowDataOverflow}
-            ticks={axis.ticks}
-            label={{
-              value: axis.unitLabel,
-              angle: -90,
-              position: axis.orientation === "right" ? "insideRight" : "insideLeft",
-              fill: "#64748b",
-              fontSize: 10,
-            }}
+            axisLine={CHART_AXIS_LINE}
+            tickMargin={10}
+            minTickGap={48}
           />
-        ))}
 
-        <Tooltip content={tooltipContent} />
+          {yAxes.map((axis) => (
+            <YAxis
+              key={axis.yAxisId}
+              yAxisId={axis.yAxisId}
+              orientation={axis.orientation}
+              tick={CHART_AXIS_TICK}
+              tickLine={false}
+              axisLine={false}
+              width={axis.orientation === "right" ? 52 : 44}
+              tickMargin={8}
+              domain={axis.domain}
+              allowDataOverflow={axis.allowDataOverflow}
+              ticks={axis.ticks}
+              label={{
+                value: axis.unitLabel,
+                angle: -90,
+                position: axis.orientation === "right" ? "insideRight" : "insideLeft",
+                fill: "#64748b",
+                fontSize: 10,
+              }}
+            />
+          ))}
 
-        {children}
-      </ComposedChart>
-    </ResponsiveContainer>
+          <Tooltip content={tooltipContent} />
+
+          {children}
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   );
 }

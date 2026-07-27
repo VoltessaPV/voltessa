@@ -16,9 +16,9 @@ export function PageHeading() {
   const { eyebrow, title } = resolvePageHeading(pathname);
 
   return (
-    <div>
-      <p className="text-xs font-medium text-cyan-400">{eyebrow}</p>
-      <h1 className="mt-0.5 text-xl font-semibold tracking-tight text-white">
+    <div className="min-w-0">
+      <p className="truncate text-xs font-medium text-cyan-400">{eyebrow}</p>
+      <h1 className="mt-0.5 truncate text-xl font-semibold tracking-tight text-white">
         {title}
       </h1>
     </div>
