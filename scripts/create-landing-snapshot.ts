@@ -266,6 +266,16 @@ async function main() {
   const revenue = computeExportRevenue(series, settlementEnergySeries);
 
   // ---- Event log: derived from real threshold-crossing transitions up to 14:35 ----
+  // NOTE: this derivation only ever produces `type: "mode_changed"` entries
+  // (from actual threshold crossings in `series`) — it can never produce a
+  // real `automation_service_failed` example, and produces an empty array
+  // entirely on a day whose price never crosses the threshold (as it did
+  // when this snapshot was last generated). The shipped
+  // `apps/web/lib/demo/landing-snapshot.ts` hand-overlays a small
+  // `EXAMPLE_EVENT_LOG` (real production label/detail wording, not
+  // invented) in that case, purely for the landing page's Event Log demo —
+  // re-apply that overlay after regenerating if this loop again yields []
+  // or you want failure/Zero-Export examples in the mockup.
 
   const eventLog: MarketEventLogEntry[] = [];
   let previousEnabled: boolean | null = null;
