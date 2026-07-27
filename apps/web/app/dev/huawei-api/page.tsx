@@ -30,7 +30,7 @@ export default async function HuaweiApiTestingPage() {
   const targets = await getOrgHuaweiDiagnosticTargets(user.organizationId);
 
   return (
-    <div className="min-h-screen bg-[#050816] px-8 py-12 text-white">
+    <div className="min-h-screen bg-[#050816] px-4 py-12 text-white sm:px-8">
       <div className="mx-auto max-w-3xl space-y-8">
         <div>
           <h1 className="text-2xl font-semibold">Huawei API Testing</h1>
