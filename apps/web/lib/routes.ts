@@ -5,6 +5,8 @@ export const routes = {
 
   login: "/login",
 
+  createAccount: "/create-account",
+
   privacy: "/privacy",
 
   terms: "/terms",

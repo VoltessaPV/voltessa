@@ -14,11 +14,10 @@ type AuthNavActionsProps = {
  * both Navbar's desktop header row and MobileNavMenu's drawer, replacing
  * the header's previous "Request Demo" button (Request Demo/Talk to Us stay
  * in the Hero and Contact sections, just no longer duplicated in the
- * header). Reuses the existing Google OAuth flow at /login for both
- * returning and new visitors — PrismaAdapter auto-provisions a User record
- * on first sign-in, so there is no separate registration flow to link to -
- * and the existing /dashboard route once authenticated. No new session or
- * routing logic.
+ * header). "Log In" opens the dedicated /login page (Google + email/
+ * password); "Create Account" opens the dedicated /create-account page —
+ * see the Authentication System Refresh milestone. No new session logic
+ * here; both pages reuse the existing auth mechanisms.
  */
 export function AuthNavActions({ isAuthenticated, className }: AuthNavActionsProps) {
   if (isAuthenticated) {
@@ -35,7 +34,7 @@ export function AuthNavActions({ isAuthenticated, className }: AuthNavActionsPro
         Log In
       </Link>
 
-      <Link href={routes.login} className={buttonClassName("primary", className)}>
+      <Link href={routes.createAccount} className={buttonClassName("primary", className)}>
         Create Account
       </Link>
     </>

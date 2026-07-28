@@ -17,6 +17,9 @@ import { randomBytes, scrypt, timingSafeEqual } from "node:crypto";
 const SCRYPT_KEY_LENGTH = 64;
 const SALT_LENGTH_BYTES = 16;
 
+/** Shared by Settings' create/change password and the /login, /create-account Server Actions. */
+export const MINIMUM_PASSWORD_LENGTH = 8;
+
 function scryptAsync(password: string, salt: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     scrypt(password, salt, SCRYPT_KEY_LENGTH, (error, derivedKey) => {

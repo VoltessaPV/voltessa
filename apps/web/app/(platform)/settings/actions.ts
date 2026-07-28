@@ -3,15 +3,13 @@
 import { revalidatePath } from "next/cache";
 
 import { signOut } from "@/auth";
-import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { hashPassword, MINIMUM_PASSWORD_LENGTH, verifyPassword } from "@/lib/auth/password";
 import { requireCurrentUser, requireOnboardedUser } from "@/lib/auth/session";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { getBulgarianElectricitySuppliers } from "@/lib/market/suppliers/bg";
 import { prisma } from "@/lib/prisma";
 
 export type ActionResult = { success: boolean; message: string } | null;
-
-const MINIMUM_PASSWORD_LENGTH = 8;
 
 /** Trims a FormData field; empty string becomes `null` (never stored as `""`). */
 function readOptionalString(formData: FormData, key: string): string | null {

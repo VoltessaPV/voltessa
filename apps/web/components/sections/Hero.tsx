@@ -55,7 +55,7 @@ export default async function Hero() {
             </div>
 
             <Link
-              href={isAuthenticated ? routes.dashboard : routes.login}
+              href={isAuthenticated ? routes.dashboard : routes.createAccount}
               className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-300 transition hover:text-blue-400"
             >
               {isAuthenticated ? "Go to My Voltessa" : "Create Account"}
