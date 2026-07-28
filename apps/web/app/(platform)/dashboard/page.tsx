@@ -11,6 +11,8 @@ import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getDashboardPageData } from "./dashboard-data";
@@ -184,12 +186,12 @@ export default async function DashboardPage({
       </div>
 
       {!data.plantAvailable ? (
-        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
-          <p className="text-sm font-medium text-white">No plant connected</p>
-          <p className="mt-1 text-xs text-slate-500">
-            Connect a FusionSolar plant to see live operational data.
-          </p>
-        </section>
+        <EmptyState
+          title="No plant connected"
+          description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
+        >
+          <ConnectFusionSolarButton />
+        </EmptyState>
       ) : (
         <>
           <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">

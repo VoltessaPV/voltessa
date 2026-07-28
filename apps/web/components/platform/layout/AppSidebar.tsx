@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bot, LayoutDashboard, LineChart, LogOut, Menu, Settings, X } from "lucide-react";
+import { Battery, Bell, Bot, LayoutDashboard, LineChart, LogOut, Menu, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -16,6 +16,11 @@ const navigation = [
     label: "Market",
     href: "/market",
     icon: LineChart,
+  },
+  {
+    label: "BESS",
+    href: "/bess",
+    icon: Battery,
   },
   {
     label: "Automations",

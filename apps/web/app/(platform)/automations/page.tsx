@@ -1,10 +1,13 @@
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { MarketPriceOptimizationCard } from "@/components/automations/MarketPriceOptimizationCard";
+import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
+import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
 export { pageHeading } from "./heading";
@@ -18,6 +21,26 @@ export default async function AutomationsPage() {
     mode: "background",
     onSettled: revalidateTelemetryPagesIfSynced,
   });
+
+  // Checked before AutomationSettings is even queried: both cards below
+  // configure export/battery behavior for a plant that doesn't exist yet
+  // without one, so neither renders at all - a single onboarding card
+  // replaces them instead of two cards that would otherwise silently
+  // configure nothing.
+  const plantContext = await resolvePlantContext(user.organizationId);
+
+  if (!plantContext) {
+    return (
+      <PageContainer className="space-y-3">
+        <EmptyState
+          title="No plant connected"
+          description="Market Price Optimization and Battery Optimization become available after connecting a plant."
+        >
+          <ConnectFusionSolarButton />
+        </EmptyState>
+      </PageContainer>
+    );
+  }
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId: user.organizationId },

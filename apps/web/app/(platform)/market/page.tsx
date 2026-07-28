@@ -6,6 +6,7 @@ import {
   type RevenueSummary,
 } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
+import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
@@ -14,6 +15,8 @@ import { MarketInsights } from "@/components/market/MarketInsights";
 import { MarketPriceChart } from "@/components/market/MarketPriceChart";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
+import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getMarketPageData } from "./market-data";
@@ -84,6 +87,28 @@ type MarketPageProps = {
 export default async function MarketPage({ searchParams }: MarketPageProps) {
   const user = await requireOnboardedUser();
   const params = await searchParams;
+
+  // Checked before any other data fetching (ENTSO-E price import, revenue,
+  // production telemetry) - none of that is plant-specific, so without a
+  // plant this page would otherwise still render real market-price widgets
+  // with every production-derived field permanently "unavailable". This is
+  // a different, earlier gate than the existing `!data.dataAvailable`
+  // check below, which stays as the empty state for "has a plant, but
+  // ENTSO-E hasn't been imported for this day yet".
+  const plantContext = await resolvePlantContext(user.organizationId);
+
+  if (!plantContext) {
+    return (
+      <PageContainer className="space-y-3">
+        <EmptyState
+          title="No plant connected"
+          description="Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
+        >
+          <ConnectFusionSolarButton />
+        </EmptyState>
+      </PageContainer>
+    );
+  }
 
   // Transparent Freshness milestone: Market renders telemetry (Current
   // Export, revenue, the price/export chart's settlement overlay), so it
