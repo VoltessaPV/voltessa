@@ -3,9 +3,13 @@
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
 
-import { RequestDemoButton } from "../ui/RequestDemoButton";
+import { AuthNavActions } from "./AuthNavActions";
 import { ContactNavLink } from "./ContactNavLink";
 import { SectionNavLink } from "./SectionNavLink";
+
+type MobileNavMenuProps = {
+  isAuthenticated: boolean;
+};
 
 /**
  * Mobile counterpart to Navbar's own nav links, which are `hidden` below
@@ -13,9 +17,11 @@ import { SectionNavLink } from "./SectionNavLink";
  * Contact were completely unreachable from the Navbar below 768px, not
  * just tucked behind a menu. Self-contained (owns its own open/close
  * state), same pattern as the platform shell's `AppSidebar` mobile
- * drawer — no cross-component state needed.
+ * drawer — no cross-component state needed. Also the only place the
+ * header's auth CTAs (AuthNavActions) reach mobile visitors, since
+ * Navbar's own copy is `hidden md:flex`.
  */
-export function MobileNavMenu() {
+export function MobileNavMenu({ isAuthenticated }: MobileNavMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -45,7 +51,9 @@ export function MobileNavMenu() {
             <ContactNavLink />
           </nav>
 
-          <RequestDemoButton className="mt-6 w-full py-3 text-center text-sm" />
+          <div className="mt-6 flex flex-col gap-3">
+            <AuthNavActions isAuthenticated={isAuthenticated} className="w-full py-3 text-center text-sm" />
+          </div>
         </div>
       )}
     </div>

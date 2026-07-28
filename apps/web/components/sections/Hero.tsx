@@ -1,3 +1,8 @@
+import Link from "next/link";
+
+import { getCurrentUser } from "@/lib/auth/session";
+import { routes } from "@/lib/routes";
+
 import Badge from "../ui/Badge";
 import { RequestDemoButton } from "../ui/RequestDemoButton";
 import { TalkToUsButton } from "../ui/TalkToUsButton";
@@ -11,7 +16,10 @@ import Footer from "../layout/Footer";
 import { CTAProvider } from "../providers/CTAProvider";
 
 
-export default function Hero() {
+export default async function Hero() {
+  const user = await getCurrentUser();
+  const isAuthenticated = user !== null;
+
   return (
     <CTAProvider>
       <Navbar />
@@ -45,6 +53,14 @@ export default function Hero() {
 
               <TalkToUsButton className="w-full text-center sm:w-auto" />
             </div>
+
+            <Link
+              href={isAuthenticated ? routes.dashboard : routes.login}
+              className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-300 transition hover:text-blue-400"
+            >
+              {isAuthenticated ? "Go to My Voltessa" : "Create Account"}
+              <span aria-hidden="true">→</span>
+            </Link>
 
             <div className="mt-10 tracking-[0.35em] text-sm uppercase text-slate-500">
               SOLAR • BESS • MARKET • AI AUTOMATION

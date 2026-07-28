@@ -1,10 +1,16 @@
 import Image from "next/image";
+
+import { getCurrentUser } from "@/lib/auth/session";
+
+import { AuthNavActions } from "./AuthNavActions";
 import { ContactNavLink } from "./ContactNavLink";
 import { MobileNavMenu } from "./MobileNavMenu";
 import { SectionNavLink } from "./SectionNavLink";
-import { RequestDemoButton } from "../ui/RequestDemoButton";
 
-export default function Navbar() {
+export default async function Navbar() {
+  const user = await getCurrentUser();
+  const isAuthenticated = user !== null;
+
   return (
     <header className="fixed inset-x-0 top-0 z-50">
       <div className="mx-auto flex h-20 max-w-7xl items-center justify-between gap-3 px-4 sm:px-8">
@@ -37,12 +43,17 @@ export default function Navbar() {
           <ContactNavLink />
         </nav>
 
-        {/* CTA + mobile menu */}
+        {/* Auth CTAs + mobile menu */}
 
         <div className="flex shrink-0 items-center gap-2">
-          <RequestDemoButton className="px-4 py-2 text-xs sm:px-6 sm:py-3 sm:text-sm" />
+          <div className="hidden items-center gap-2 md:flex">
+            <AuthNavActions
+              isAuthenticated={isAuthenticated}
+              className="px-3 py-1.5 text-xs md:px-4 md:py-2 lg:px-6 lg:py-3 lg:text-sm"
+            />
+          </div>
 
-          <MobileNavMenu />
+          <MobileNavMenu isAuthenticated={isAuthenticated} />
         </div>
 
       </div>
