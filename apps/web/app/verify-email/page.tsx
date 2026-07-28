@@ -20,19 +20,11 @@ type VerifyEmailPageProps = {
  * consumed) or by `registerWithPassword`'s redirect after registration.
  * No technical detail (token values, database state, provider errors) ever
  * reaches this page - just which of a handful of known states to show.
+ * There is no "success" state here anymore: a successful click now signs
+ * the user in and lands them on `/dashboard` directly (see confirm/route.ts).
  */
 export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageProps) {
   const { email, status } = await searchParams;
-
-  if (status === "success") {
-    return (
-      <AuthCard title="Email verified" subtitle="Your email address has been verified.">
-        <Link href={routes.login} className={buttonClassName("primary", "block w-full text-center")}>
-          Log In
-        </Link>
-      </AuthCard>
-    );
-  }
 
   if (status === "expired") {
     return (

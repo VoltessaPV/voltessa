@@ -1,4 +1,5 @@
 import { PageHeading } from "./PageHeading";
+import { UserMenu } from "./UserMenu";
 
 type AppHeaderProps = {
   user: {
@@ -20,13 +21,7 @@ export function AppHeader({ user }: AppHeaderProps) {
         <PageHeading />
       </div>
 
-      <div className="min-w-0 shrink-0 text-left">
-        <p className="truncate text-sm font-medium">
-          {user.name ?? user.email ?? "User"}
-        </p>
-
-        <p className="truncate text-xs text-white/50">{displayRole(user.role)}</p>
-      </div>
+      <UserMenu name={user.name ?? user.email ?? "User"} role={displayRole(user.role)} />
     </header>
   );
 }

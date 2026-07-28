@@ -11,7 +11,13 @@ const CANONICAL_HOST = new URL(authUrl).host;
 const MARKETING_HOSTS = new Set(["voltessa.ai", "www.voltessa.ai"]);
 
 /** Every auth page/route that must run on the canonical platform host, never the marketing host - session cookies are scoped there. */
-const AUTH_PAGE_PATHS = ["/login", "/create-account", "/verify-email"];
+const AUTH_PAGE_PATHS = [
+  "/login",
+  "/create-account",
+  "/verify-email",
+  "/forgot-password",
+  "/reset-password",
+];
 
 function isAuthPagePath(pathname: string): boolean {
   return AUTH_PAGE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
@@ -43,5 +49,12 @@ export default auth((req) => {
 });
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/create-account", "/verify-email/:path*"],
+  matcher: [
+    "/dashboard/:path*",
+    "/login",
+    "/create-account",
+    "/verify-email/:path*",
+    "/forgot-password",
+    "/reset-password",
+  ],
 };

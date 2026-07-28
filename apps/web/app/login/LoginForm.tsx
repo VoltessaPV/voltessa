@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useActionState } from "react";
 
@@ -32,19 +33,29 @@ export function LoginForm() {
 
       <form action={formAction} className="space-y-4">
         <AuthField label="Email" name="email" type="email" autoComplete="email" required />
-        <AuthField
-          label="Password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-        />
 
-        {result && !result.success && result.reason === "invalid" && (
+        <div>
+          <AuthField
+            label="Password"
+            name="password"
+            type="password"
+            autoComplete="current-password"
+            required
+          />
+
+          <Link
+            href={routes.forgotPassword}
+            className="mt-1.5 inline-block text-xs font-medium text-blue-400 transition hover:text-blue-300"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
+        {result && !isPending && !result.success && result.reason === "invalid" && (
           <p className="text-sm text-red-400">{result.message}</p>
         )}
 
-        {result && !result.success && result.reason === "unverified" && (
+        {result && !isPending && !result.success && result.reason === "unverified" && (
           <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
             <p className="text-sm text-amber-300">{result.message}</p>
             <ResendForm email={result.email} />
@@ -56,9 +67,10 @@ export function LoginForm() {
           disabled={isPending}
           className={buttonClassName(
             "primary",
-            "w-full text-center disabled:cursor-not-allowed disabled:opacity-50",
+            "flex w-full items-center justify-center gap-2 text-center disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           {isPending ? "Signing in..." : "Log In"}
         </button>
       </form>

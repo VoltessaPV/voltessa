@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { AuthCard } from "@/components/auth/AuthCard";
+import { QueryToast } from "@/components/ui/QueryToast";
 
 import { LoginForm } from "./LoginForm";
 
@@ -17,8 +18,12 @@ export default async function LoginPage() {
   }
 
   return (
-    <AuthCard title="Log in to Voltessa" subtitle="Welcome back.">
-      <LoginForm />
-    </AuthCard>
+    <>
+      <AuthCard title="Log in to Voltessa" subtitle="Welcome back.">
+        <LoginForm />
+      </AuthCard>
+
+      <QueryToast />
+    </>
   );
 }

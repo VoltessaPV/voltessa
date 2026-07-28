@@ -9,6 +9,10 @@ export const routes = {
 
   verifyEmail: "/verify-email",
 
+  forgotPassword: "/forgot-password",
+
+  resetPassword: "/reset-password",
+
   privacy: "/privacy",
 
   terms: "/terms",

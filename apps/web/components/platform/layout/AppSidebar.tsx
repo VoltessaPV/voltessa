@@ -1,8 +1,10 @@
 "use client";
 
-import { Bell, Bot, LayoutDashboard, LineChart, Menu, Settings, X } from "lucide-react";
+import { Bell, Bot, LayoutDashboard, LineChart, LogOut, Menu, Settings, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+
+import { signOutAction } from "@/lib/auth/actions";
 
 const navigation = [
   {
@@ -108,6 +110,18 @@ export function AppSidebar() {
             </div>
 
             <SidebarNav onNavigate={() => setIsOpen(false)} />
+
+            <div className="mt-auto shrink-0 border-t border-white/10 p-3">
+              <form action={signOutAction}>
+                <button
+                  type="submit"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                  Sign out
+                </button>
+              </form>
+            </div>
           </aside>
         </div>
       )}

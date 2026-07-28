@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useActionState } from "react";
 
@@ -46,16 +47,19 @@ export function RegisterForm() {
           required
         />
 
-        {result && !result.success && <p className="text-sm text-red-400">{result.message}</p>}
+        {result && !isPending && !result.success && (
+          <p className="text-sm text-red-400">{result.message}</p>
+        )}
 
         <button
           type="submit"
           disabled={isPending}
           className={buttonClassName(
             "primary",
-            "w-full text-center disabled:cursor-not-allowed disabled:opacity-50",
+            "flex w-full items-center justify-center gap-2 text-center disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           {isPending ? "Creating account..." : "Create Account"}
         </button>
       </form>

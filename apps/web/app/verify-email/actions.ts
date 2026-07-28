@@ -18,7 +18,11 @@ const GENERIC_MESSAGE = "If that email needs verification, we've sent a new link
  * deliberately NOT generic: telling someone their account is already
  * verified reveals nothing an attacker couldn't already learn by simply
  * trying to log in, and it's the literal, helpful answer to why nothing
- * new was sent.
+ * new was sent. The 60-second-cooldown message is also not generic (it
+ * only ever appears for a real, unverified account) - a deliberate,
+ * narrow trade-off for clear spam-prevention feedback, accepted alongside
+ * the enumeration-safety choices above rather than silently working
+ * around it.
  */
 export async function resendVerificationEmail(
   _prevState: ResendResult,
@@ -43,7 +47,14 @@ export async function resendVerificationEmail(
     return { success: true, message: "This account is already verified — you can log in." };
   }
 
-  await sendVerificationEmail(user.id, user.email!);
+  const result = await sendVerificationEmail(user.id, user.email!);
+
+  if (!result.sent) {
+    return {
+      success: false,
+      message: `Please wait ${result.retryAfterSeconds}s before requesting another email.`,
+    };
+  }
 
   return { success: true, message: GENERIC_MESSAGE };
 }

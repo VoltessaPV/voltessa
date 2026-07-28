@@ -10,22 +10,18 @@ type VerifyEmailTemplateProps = {
 export function VerifyEmailTemplate({ verificationUrl }: VerifyEmailTemplateProps) {
   return (
     <EmailLayout>
-      <Preview>Verify your email to finish setting up your Voltessa account</Preview>
+      <Preview>Verify your email address to activate your Voltessa account</Preview>
 
-      <EmailHeading>Verify your email</EmailHeading>
+      <EmailHeading>Welcome to Voltessa</EmailHeading>
 
-      <EmailText>
-        Click the button below to verify your email address and finish setting up your
-        Voltessa account.
-      </EmailText>
+      <EmailText>Please verify your email address to activate your account.</EmailText>
 
       <Button href={verificationUrl} style={buttonStyle}>
-        Verify email
+        Verify Email
       </Button>
 
       <EmailText>
-        This link expires in 24 hours. If you didn&apos;t create a Voltessa account, you can
-        safely ignore this email.
+        If you didn&apos;t create this account you can safely ignore this email.
       </EmailText>
     </EmailLayout>
   );
@@ -58,7 +54,7 @@ export async function deliverVerificationEmail(
 
   await sendEmail({
     to,
-    subject: "Verify your email",
+    subject: "Verify your Voltessa account",
     html,
   });
 }

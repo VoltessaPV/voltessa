@@ -1,5 +1,6 @@
 "use client";
 
+import { Loader2 } from "lucide-react";
 import { useActionState } from "react";
 
 import { buttonClassName } from "@/components/ui/Button";
@@ -26,7 +27,7 @@ export function ResendForm({ email }: ResendFormProps) {
     <form action={formAction} className="space-y-3">
       <input type="hidden" name="email" value={email} />
 
-      {result && (
+      {result && !isPending && (
         <p className={`text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
           {result.message}
         </p>
@@ -37,9 +38,10 @@ export function ResendForm({ email }: ResendFormProps) {
         disabled={isPending}
         className={buttonClassName(
           "secondary",
-          "w-full text-center disabled:cursor-not-allowed disabled:opacity-50",
+          "flex w-full items-center justify-center gap-2 text-center disabled:cursor-not-allowed disabled:opacity-50",
         )}
       >
+        {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
         {isPending ? "Sending..." : "Resend verification email"}
       </button>
     </form>

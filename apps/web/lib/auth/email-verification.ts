@@ -4,6 +4,7 @@ import { deliverVerificationEmail } from "@/lib/email/templates/verify-email";
 import { prisma } from "@/lib/prisma";
 
 const TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 
 function buildVerificationUrl(token: string): string {
   const authUrl = process.env.AUTH_URL;
@@ -14,13 +15,22 @@ function buildVerificationUrl(token: string): string {
   return `${authUrl}/verify-email/confirm?token=${token}`;
 }
 
+export type SendVerificationEmailResult =
+  | { sent: true }
+  | { sent: false; retryAfterSeconds: number };
+
 /**
  * The one place an `EmailVerificationToken` is created - registration
  * (`app/create-account/actions.ts`) and resend
  * (`app/verify-email/actions.ts`) both call this instead of duplicating
- * token generation. Deletes any existing token(s) for this user first, so
- * a resend invalidates the previous link (never more than one valid token
- * per user at a time) rather than accumulating rows.
+ * token generation. A brand-new registration never has a prior token, so
+ * it always sends immediately - the cooldown only ever affects resend,
+ * which always has one (registration already created it).
+ *
+ * Deletes any existing token(s) for this user before creating a new one
+ * (once the cooldown check passes), so a resend invalidates the previous
+ * link rather than accumulating rows - never more than one live token per
+ * user.
  *
  * `sendEmail` (via `deliverVerificationEmail`) never throws - a delivery
  * failure doesn't roll back the token or fail the calling registration/
@@ -29,7 +39,23 @@ function buildVerificationUrl(token: string): string {
  * development" even when the console provider's own HTML dump would
  * otherwise require scanning for it.
  */
-export async function sendVerificationEmail(userId: string, email: string): Promise<void> {
+export async function sendVerificationEmail(
+  userId: string,
+  email: string,
+): Promise<SendVerificationEmailResult> {
+  const mostRecent = await prisma.emailVerificationToken.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+
+  if (mostRecent) {
+    const elapsedMs = Date.now() - mostRecent.createdAt.getTime();
+    if (elapsedMs < RESEND_COOLDOWN_MS) {
+      return { sent: false, retryAfterSeconds: Math.ceil((RESEND_COOLDOWN_MS - elapsedMs) / 1000) };
+    }
+  }
+
   await prisma.emailVerificationToken.deleteMany({ where: { userId } });
 
   const token = randomBytes(32).toString("hex");
@@ -49,10 +75,12 @@ export async function sendVerificationEmail(userId: string, email: string): Prom
   }
 
   await deliverVerificationEmail(email, verificationUrl);
+
+  return { sent: true };
 }
 
 export type ConsumeTokenResult =
-  | { ok: true }
+  | { ok: true; userId: string }
   | { ok: false; reason: "expired"; email: string }
   | { ok: false; reason: "invalid" };
 
@@ -84,5 +112,5 @@ export async function consumeEmailVerificationToken(token: string): Promise<Cons
     data: { emailVerified: new Date() },
   });
 
-  return { ok: true };
+  return { ok: true, userId: record.userId };
 }

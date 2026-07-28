@@ -56,6 +56,7 @@ model User {
   passwordHash String?
 
   emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
 
   notificationPreferences NotificationPreferences?
 
@@ -69,10 +70,11 @@ model User {
 /// because the NextAuth Prisma adapter requires it; nothing in this app
 /// uses it, and overloading it with a second, unrelated purpose was
 /// explicitly rejected in favor of a dedicated model per token type).
-/// Password reset gets its own equivalent model in a later phase, not this
-/// one. Not organization-scoped - a token belongs to a `User` and email
-/// verification happens before any organization exists, same exception
-/// `MarketPrice` documents for its own, different reason.
+/// Password reset uses its own equivalent model, `PasswordResetToken` below
+/// - same reasoning, not shared with this one either. Not organization-
+/// scoped - a token belongs to a `User` and email verification happens
+/// before any organization exists, same exception `MarketPrice` documents
+/// for its own, different reason.
 ///
 /// One row per outstanding token: `sendVerificationEmail` deletes any
 /// existing token(s) for the user before creating a new one, so a resend
@@ -80,6 +82,36 @@ model User {
 /// alive. Single-use - deleted immediately by `consumeEmailVerificationToken`
 /// on successful verification, and on expiry.
 model EmailVerificationToken {
+  id String @id @default(cuid())
+
+  userId String
+
+  /// Cryptographically random (`crypto.randomBytes(32).toString("hex")`) -
+  /// never a sequential or guessable identifier.
+  token String @unique
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Authentication System Refresh, Phase 2.1. Dedicated model, deliberately
+/// not sharing `EmailVerificationToken` despite the identical shape - same
+/// "explicit, single-purpose model per token type" preference that model's
+/// own doc comment already records. One row per outstanding token:
+/// `sendPasswordResetEmail` deletes any existing token(s) for the user
+/// first, so requesting a new reset link invalidates a previous one rather
+/// than leaving two valid tokens alive. Single-use - deleted immediately by
+/// `consumePasswordResetToken` on successful consumption, and on expiry.
+/// 60-minute expiry (shorter than email verification's 24 hours - a
+/// password reset link is more sensitive to leak/replay than a signup
+/// confirmation). Not organization-scoped, same reasoning as
+/// `EmailVerificationToken`.
+model PasswordResetToken {
   id String @id @default(cuid())
 
   userId String
