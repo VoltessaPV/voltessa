@@ -1,7 +1,5 @@
 import type { ReactNode } from "react";
 
-import { QueryToast } from "@/components/ui/QueryToast";
-
 import { AppHeader } from "./AppHeader";
 import { AppSidebar } from "./AppSidebar";
 
@@ -24,8 +22,6 @@ export function AppShell({ children, user }: AppShellProps) {
 
         <main className="p-3 sm:p-4 lg:p-6">{children}</main>
       </div>
-
-      <QueryToast />
     </div>
   );
 }

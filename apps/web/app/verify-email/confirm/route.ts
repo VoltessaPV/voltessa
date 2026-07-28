@@ -14,9 +14,11 @@ import { consumeEmailVerificationToken } from "@/lib/auth/email-verification";
  * row is gone), never a corrupted or re-verified state.
  *
  * On success, signs the user straight in (via the same `createDatabaseSession`
- * helper password login uses) and lands on `/dashboard` with a success
- * toast - clicking the link is the whole verification experience, no
- * separate manual login step required.
+ * helper password login uses) and lands on the dedicated success state of
+ * `/verify-email` - clicking the link is the whole verification
+ * experience, no separate manual login step required. The success page
+ * itself checks whether a session exists (it will, from the line above)
+ * to decide between "Go to Dashboard" and "Log In".
  */
 export async function GET(request: Request): Promise<Response> {
   const token = new URL(request.url).searchParams.get("token");
@@ -29,7 +31,7 @@ export async function GET(request: Request): Promise<Response> {
 
   if (result.ok) {
     await createDatabaseSession(result.userId);
-    return NextResponse.redirect(new URL("/dashboard?toast=email-verified", request.url));
+    return NextResponse.redirect(new URL("/verify-email?status=success", request.url));
   }
 
   if (result.reason === "expired") {

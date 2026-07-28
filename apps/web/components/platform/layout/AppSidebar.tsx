@@ -54,6 +54,29 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 /**
+ * The primary Sign Out entry point - was only reachable via the header's
+ * user dropdown (easy to miss), now a real nav item styled identically to
+ * `SidebarNav`'s own links, directly below them behind a divider, in both
+ * the desktop sidebar and the mobile drawer. `UserMenu`'s dropdown keeps
+ * its own Sign Out item too - harmless redundancy, not removed.
+ */
+function SignOutNavItem() {
+  return (
+    <div className="border-t border-white/10 px-3 py-4">
+      <form action={signOutAction}>
+        <button
+          type="submit"
+          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+        >
+          <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+          Sign Out
+        </button>
+      </form>
+    </div>
+  );
+}
+
+/**
  * Responsive AppSidebar (Responsive Design Sprint). Desktop (`lg:` and up)
  * is pixel-identical to before: the same fixed 256px `<aside>`, same
  * classes, always visible — per the sprint's "desktop must remain visually
@@ -76,6 +99,8 @@ export function AppSidebar() {
         </div>
 
         <SidebarNav />
+
+        <SignOutNavItem />
       </aside>
 
       <button
@@ -111,17 +136,7 @@ export function AppSidebar() {
 
             <SidebarNav onNavigate={() => setIsOpen(false)} />
 
-            <div className="mt-auto shrink-0 border-t border-white/10 p-3">
-              <form action={signOutAction}>
-                <button
-                  type="submit"
-                  className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
-                >
-                  <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-                  Sign out
-                </button>
-              </form>
-            </div>
+            <SignOutNavItem />
           </aside>
         </div>
       )}

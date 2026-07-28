@@ -7,10 +7,7 @@ import { createDatabaseSession } from "@/lib/auth/create-session";
 import { verifyPassword } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
-export type SignInResult =
-  | { success: false; reason: "invalid"; message: string }
-  | { success: false; reason: "unverified"; message: string; email: string }
-  | null;
+export type SignInResult = { success: false; message: string } | null;
 
 /** Unchanged from the previous /login page - moved here so both this page's actions live in one place. */
 export async function continueWithGoogle(): Promise<void> {
@@ -18,15 +15,20 @@ export async function continueWithGoogle(): Promise<void> {
 }
 
 /**
- * `reason: "invalid"` never distinguishes "no such account", "account has
- * no password" (a Google-only account), or "wrong password" - a single
- * generic result for all three. `emailVerified` is checked only AFTER the
- * password is confirmed correct, specifically so an attacker can't use
- * this endpoint to enumerate which emails are registered-but-unverified
- * without already knowing the password - a Google-only account (no
- * `passwordHash`) can never reach the `unverified` branch either, since
- * `passwordValid` is false before that check runs, so Google sign-in is
- * completely unaffected by this phase.
+ * Never distinguishes "no such account", "account has no password" (a
+ * Google-only account), or "wrong password" - a single generic result for
+ * all three. `emailVerified` is checked only AFTER the password is
+ * confirmed correct, specifically so an attacker can't use this endpoint
+ * to enumerate which emails are registered-but-unverified without already
+ * knowing the password - a Google-only account (no `passwordHash`) can
+ * never reach the unverified branch either, since `passwordValid` is
+ * false before that check runs, so Google sign-in is completely
+ * unaffected by this phase.
+ *
+ * An unverified account never renders anything inline on this page - it
+ * redirects to /verify-email?email=..., the same dedicated screen
+ * registration lands on, with Resend already wired to that known email.
+ * The credentials just typed here are never asked for again to resend.
  */
 export async function signInWithPassword(
   _prevState: SignInResult,
@@ -36,7 +38,7 @@ export async function signInWithPassword(
   const password = formData.get("password");
 
   if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
-    return { success: false, reason: "invalid", message: "Email and password are required" };
+    return { success: false, message: "Email and password are required" };
   }
 
   const user = await prisma.user.findUnique({
@@ -49,16 +51,11 @@ export async function signInWithPassword(
     : false;
 
   if (!user || !passwordValid) {
-    return { success: false, reason: "invalid", message: "Invalid email or password" };
+    return { success: false, message: "Invalid email or password" };
   }
 
   if (!user.emailVerified) {
-    return {
-      success: false,
-      reason: "unverified",
-      message: "Please verify your email before signing in.",
-      email: user.email!,
-    };
+    redirect(`/verify-email?email=${encodeURIComponent(user.email!)}`);
   }
 
   await createDatabaseSession(user.id);

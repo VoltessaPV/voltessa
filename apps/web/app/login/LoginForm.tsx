@@ -8,7 +8,6 @@ import { AuthField } from "@/components/auth/AuthField";
 import { buttonClassName } from "@/components/ui/Button";
 import { routes } from "@/lib/routes";
 
-import { ResendForm } from "../verify-email/ResendForm";
 import { continueWithGoogle, signInWithPassword, type SignInResult } from "./actions";
 
 export function LoginForm() {
@@ -51,15 +50,8 @@ export function LoginForm() {
           </Link>
         </div>
 
-        {result && !isPending && !result.success && result.reason === "invalid" && (
+        {result && !isPending && !result.success && (
           <p className="text-sm text-red-400">{result.message}</p>
-        )}
-
-        {result && !isPending && !result.success && result.reason === "unverified" && (
-          <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
-            <p className="text-sm text-amber-300">{result.message}</p>
-            <ResendForm email={result.email} />
-          </div>
         )}
 
         <button

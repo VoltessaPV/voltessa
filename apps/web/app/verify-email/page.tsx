@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { auth } from "@/auth";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { buttonClassName } from "@/components/ui/Button";
 import { routes } from "@/lib/routes";
@@ -17,14 +18,30 @@ type VerifyEmailPageProps = {
 /**
  * Pure display, driven entirely by query params set by
  * `app/verify-email/confirm/route.ts` (the only place a token is actually
- * consumed) or by `registerWithPassword`'s redirect after registration.
- * No technical detail (token values, database state, provider errors) ever
- * reaches this page - just which of a handful of known states to show.
- * There is no "success" state here anymore: a successful click now signs
- * the user in and lands them on `/dashboard` directly (see confirm/route.ts).
+ * consumed), by `registerWithPassword`'s redirect after registration, or
+ * by `signInWithPassword`'s redirect when a correct password belongs to
+ * an unverified account. No technical detail (token values, database
+ * state, provider errors) ever reaches this page - just which of a
+ * handful of known states to show.
  */
 export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageProps) {
   const { email, status } = await searchParams;
+
+  if (status === "success") {
+    const session = await auth();
+    const isAuthenticated = Boolean(session?.user?.email);
+
+    return (
+      <AuthCard title="Email verified successfully" subtitle="Your account is now active.">
+        <Link
+          href={isAuthenticated ? routes.dashboard : routes.login}
+          className={buttonClassName("primary", "block w-full text-center")}
+        >
+          {isAuthenticated ? "Go to Dashboard" : "Log In"}
+        </Link>
+      </AuthCard>
+    );
+  }
 
   if (status === "expired") {
     return (
@@ -72,8 +89,12 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
 
   return (
     <AuthCard
-      title="Check your inbox"
-      subtitle={email ? `We've sent a verification email to ${email}` : "We've sent you a verification email."}
+      title="Verify your email"
+      subtitle={
+        email
+          ? `We've sent a verification email to ${email}. Please verify your email before signing in.`
+          : "We've sent you a verification email. Please verify your email before signing in."
+      }
     >
       <div className="space-y-4">
         {email && <ResendForm email={email} />}
@@ -86,7 +107,7 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
             Change email address
           </Link>
           <Link href={routes.login} className="block text-slate-400 transition hover:text-white">
-            Return to Login
+            Back to Login
           </Link>
         </div>
       </div>
