@@ -7,7 +7,10 @@ import { createDatabaseSession } from "@/lib/auth/create-session";
 import { verifyPassword } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
-export type SignInResult = { success: false; message: string } | null;
+export type SignInResult =
+  | { success: false; reason: "invalid"; message: string }
+  | { success: false; reason: "unverified"; message: string; email: string }
+  | null;
 
 /** Unchanged from the previous /login page - moved here so both this page's actions live in one place. */
 export async function continueWithGoogle(): Promise<void> {
@@ -15,11 +18,15 @@ export async function continueWithGoogle(): Promise<void> {
 }
 
 /**
- * Never distinguishes "no such account", "account has no password" (a
- * Google-only account), or "wrong password" in the returned message - a
- * single generic result for all three, standard practice for a login form
- * specifically (unlike registration, where naming the conflict is normal
- * SaaS UX - see registerWithPassword).
+ * `reason: "invalid"` never distinguishes "no such account", "account has
+ * no password" (a Google-only account), or "wrong password" - a single
+ * generic result for all three. `emailVerified` is checked only AFTER the
+ * password is confirmed correct, specifically so an attacker can't use
+ * this endpoint to enumerate which emails are registered-but-unverified
+ * without already knowing the password - a Google-only account (no
+ * `passwordHash`) can never reach the `unverified` branch either, since
+ * `passwordValid` is false before that check runs, so Google sign-in is
+ * completely unaffected by this phase.
  */
 export async function signInWithPassword(
   _prevState: SignInResult,
@@ -29,12 +36,12 @@ export async function signInWithPassword(
   const password = formData.get("password");
 
   if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
-    return { success: false, message: "Email and password are required" };
+    return { success: false, reason: "invalid", message: "Email and password are required" };
   }
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, passwordHash: true },
+    select: { id: true, email: true, passwordHash: true, emailVerified: true },
   });
 
   const passwordValid = user?.passwordHash
@@ -42,7 +49,16 @@ export async function signInWithPassword(
     : false;
 
   if (!user || !passwordValid) {
-    return { success: false, message: "Invalid email or password" };
+    return { success: false, reason: "invalid", message: "Invalid email or password" };
+  }
+
+  if (!user.emailVerified) {
+    return {
+      success: false,
+      reason: "unverified",
+      message: "Please verify your email before signing in.",
+      email: user.email!,
+    };
   }
 
   await createDatabaseSession(user.id);

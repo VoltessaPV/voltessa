@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { signIn } from "@/auth";
-import { createDatabaseSession } from "@/lib/auth/create-session";
+import { sendVerificationEmail } from "@/lib/auth/email-verification";
 import { hashPassword, MINIMUM_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
@@ -16,10 +16,10 @@ export async function continueWithGoogle(): Promise<void> {
 
 /**
  * Collects only email/password/confirmPassword - no phone/company/supplier;
- * that belongs to onboarding and Settings, not account creation. Email
- * verification doesn't exist yet in this phase, so a new account is
- * immediately usable (`emailVerified` stays null, honestly reflecting that
- * nothing checks it yet) - a later phase adds the gate and the email.
+ * that belongs to onboarding and Settings, not account creation. Does not
+ * create a session - `emailVerified` stays null until the user clicks the
+ * verification link (see `lib/auth/email-verification.ts`), and
+ * `signInWithPassword` refuses to sign in an unverified account.
  */
 export async function registerWithPassword(
   _prevState: RegisterResult,
@@ -71,7 +71,7 @@ export async function registerWithPassword(
     select: { id: true },
   });
 
-  await createDatabaseSession(user.id);
+  await sendVerificationEmail(user.id, email);
 
-  redirect("/dashboard");
+  redirect(`/verify-email?email=${encodeURIComponent(email)}`);
 }

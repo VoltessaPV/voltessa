@@ -15,9 +15,17 @@ enum UserRole {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String?   @unique
+  id    String  @id @default(cuid())
+  name  String?
+  email String? @unique
+
+  /// Authentication System Refresh, Phase 2. Set once via
+  /// `EmailVerificationToken` - required before `signInWithPassword` grants
+  /// a session for a password account. Always null for a Google-only
+  /// account today (Google sign-in doesn't check or set this column - see
+  /// `lib/auth/config.ts`); every Google sign-in is trusted unconditionally
+  /// regardless of this field's value, and no verification email is ever
+  /// sent to one.
   emailVerified DateTime?
   image         String?
 
@@ -37,19 +45,56 @@ model User {
   lastName  String?
   phone     String?
 
-  /// Settings > Security. Null for a Google-only account (no local
-  /// password ever set) - see `lib/auth/password.ts`. Format:
+  /// Settings > Security, and (Authentication System Refresh) email/password
+  /// sign-in at /login and /create-account. Null for a Google-only account
+  /// (no local password ever set) - see `lib/auth/password.ts`. Format:
   /// "<saltHex>:<hashHex>" (Node's built-in `crypto.scrypt`, no extra
-  /// dependency). This column existing does NOT wire up a Credentials
-  /// sign-in provider - only Google sign-in works today; this is storage
-  /// for the Settings page's Create/Change Password feature, ready for a
-  /// future Credentials provider to read.
+  /// dependency). Never read via NextAuth's Credentials provider - that
+  /// provider always mints a JWT session cookie, incompatible with this
+  /// app's database session strategy (see `lib/auth/create-session.ts`) -
+  /// password sign-in is a custom Server Action instead.
   passwordHash String?
+
+  emailVerificationTokens EmailVerificationToken[]
 
   notificationPreferences NotificationPreferences?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// Authentication System Refresh, Phase 2. Dedicated, single-purpose model
+/// for email-verification tokens only - deliberately not sharing the
+/// pre-existing `VerificationToken` table below (that model exists only
+/// because the NextAuth Prisma adapter requires it; nothing in this app
+/// uses it, and overloading it with a second, unrelated purpose was
+/// explicitly rejected in favor of a dedicated model per token type).
+/// Password reset gets its own equivalent model in a later phase, not this
+/// one. Not organization-scoped - a token belongs to a `User` and email
+/// verification happens before any organization exists, same exception
+/// `MarketPrice` documents for its own, different reason.
+///
+/// One row per outstanding token: `sendVerificationEmail` deletes any
+/// existing token(s) for the user before creating a new one, so a resend
+/// invalidates the previous link rather than leaving two valid tokens
+/// alive. Single-use - deleted immediately by `consumeEmailVerificationToken`
+/// on successful verification, and on expiry.
+model EmailVerificationToken {
+  id String @id @default(cuid())
+
+  userId String
+
+  /// Cryptographically random (`crypto.randomBytes(32).toString("hex")`) -
+  /// never a sequential or guessable identifier.
+  token String @unique
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Account {

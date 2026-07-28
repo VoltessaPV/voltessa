@@ -7,6 +7,8 @@ export const routes = {
 
   createAccount: "/create-account",
 
+  verifyEmail: "/verify-email",
+
   privacy: "/privacy",
 
   terms: "/terms",

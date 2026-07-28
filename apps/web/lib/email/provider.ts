@@ -3,9 +3,10 @@
  * `lib/notifications/provider.ts`'s existing shape for the same reason: the
  * rest of the app - auth flows today, welcome/billing/invitation/alert
  * emails later - talks only to `lib/email/service.ts`'s `sendEmail`, never
- * to a concrete provider. Adding a real provider (Resend) means adding a
- * new file under `lib/email/providers/` and pointing `service.ts` at it -
- * never changing a caller.
+ * to a concrete provider (Resend, `providers/resend.ts`, or the console
+ * fallback, `providers/console.ts`). Adding a second real provider means
+ * adding a new file under `lib/email/providers/` and pointing
+ * `service.ts` at it - never changing a caller.
  */
 
 export type Email = {

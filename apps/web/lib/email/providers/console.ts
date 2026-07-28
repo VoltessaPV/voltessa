@@ -1,11 +1,10 @@
 import type { Email, EmailProvider } from "../provider";
 
 /**
- * Default provider until Resend is wired up (Authentication System Refresh,
- * Phase 1 - no auth flow in this phase actually sends email yet, so this
- * exists purely so `lib/email/service.ts` has a real, working implementation
- * to delegate to from day one). Logs instead of sending - safe to run in any
- * environment, no API key required.
+ * Fallback provider used whenever `RESEND_API_KEY`/`EMAIL_FROM` aren't
+ * configured (see `lib/email/service.ts`) - local dev without real
+ * credentials, or a genuinely misconfigured deployment. Logs instead of
+ * sending - safe to run in any environment, no API key required.
  */
 export const consoleEmailProvider: EmailProvider = {
   name: "console",
