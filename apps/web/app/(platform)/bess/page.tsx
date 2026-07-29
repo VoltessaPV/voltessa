@@ -34,7 +34,7 @@ export default async function BessPage() {
       <PageContainer className="space-y-3">
         <EmptyState
           title="No plant connected"
-          description="Battery energy storage features become available after connecting a plant."
+          description="Connect a power plant to see live operational data, energy flow, and inverter status."
         >
           <ConnectFusionSolarButton />
         </EmptyState>
@@ -46,7 +46,7 @@ export default async function BessPage() {
     <PageContainer className="space-y-3">
       <EmptyState
         title="Battery Energy Storage System"
-        description="No battery storage system configured. Battery optimization and energy storage features become available after connecting a supported battery. This page is intentionally a placeholder for future development."
+        description="No battery storage system configured. Battery optimization and energy storage features become available after connecting a supported battery."
       />
     </PageContainer>
   );

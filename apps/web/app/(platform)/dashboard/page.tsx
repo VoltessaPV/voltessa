@@ -188,7 +188,7 @@ export default async function DashboardPage({
       {!data.plantAvailable ? (
         <EmptyState
           title="No plant connected"
-          description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
+          description="Connect a power plant to see live operational data, energy flow, and inverter status."
         >
           <ConnectFusionSolarButton />
         </EmptyState>

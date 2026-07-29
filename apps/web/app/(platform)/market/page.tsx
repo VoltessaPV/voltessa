@@ -102,7 +102,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       <PageContainer className="space-y-3">
         <EmptyState
           title="No plant connected"
-          description="Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
+          description="Connect a power plant to see live operational data, energy flow, and inverter status."
         >
           <ConnectFusionSolarButton />
         </EmptyState>

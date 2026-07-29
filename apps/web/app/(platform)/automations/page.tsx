@@ -34,7 +34,7 @@ export default async function AutomationsPage() {
       <PageContainer className="space-y-3">
         <EmptyState
           title="No plant connected"
-          description="Market Price Optimization and Battery Optimization become available after connecting a plant."
+          description="Connect a power plant to see live operational data, energy flow, and inverter status."
         >
           <ConnectFusionSolarButton />
         </EmptyState>
