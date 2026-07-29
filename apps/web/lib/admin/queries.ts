@@ -224,7 +224,7 @@ export async function getAdminDashboardStats() {
   const [totalPlantOwners, totalEnergyTraders, unassignedPlantOwners, totalPlatformAdmins, recentAuditLog] =
     await Promise.all([
       prisma.organization.count(),
-      prisma.user.count({ where: { accountType: "ENERGY_TRADER" } }),
+      prisma.user.count({ where: { accountType: "ENERGY_TRADER", deletedAt: null } }),
       prisma.organization.count({ where: { traderAssignment: null } }),
       prisma.user.count({
         where: { isPlatformAdmin: true, deactivatedAt: null, deletedAt: null },

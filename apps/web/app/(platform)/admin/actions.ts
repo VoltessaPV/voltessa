@@ -362,10 +362,18 @@ export async function restoreUser(userId: string) {
  * The narrow, permanent-removal operation - only reachable from the
  * Deleted Users view, only for accounts already soft-deleted, only when
  * getUserPurgeEligibility() finds zero blockers. Re-checks eligibility
- * here unconditionally - never trusts what the UI last rendered. Writes
- * the audit event BEFORE deleting: AuditLog.targetUserId is `ON DELETE SET
- * NULL`, so it would otherwise auto-null the instant the row is gone -
- * `metadata` keeps a readable snapshot regardless.
+ * here unconditionally - never trusts what the UI last rendered.
+ *
+ * The audit write and the delete(s) run inside one interactive
+ * transaction - both commit or both roll back together, so a failed
+ * delete (e.g. a concurrent purge racing this one, or a genuine
+ * constraint surprise) can never leave a `user_purged` row on record for
+ * a user that still exists. The audit row is still written BEFORE the
+ * delete statements within that transaction: AuditLog.targetUserId is
+ * `ON DELETE SET NULL`, so inserting after the user is gone would violate
+ * the FK immediately, and inserting before lets that same cascade fire
+ * correctly, still inside the transaction, once the delete runs -
+ * `metadata` keeps a readable snapshot regardless of the eventual value.
  */
 export async function purgeUser(userId: string) {
   const admin = await requirePlatformAdmin();
@@ -395,22 +403,28 @@ export async function purgeUser(userId: string) {
   // just skips org cleanup).
   const organizationId = user.organizationId;
 
-  await createAuditLog({
-    actorUserId: admin.id,
-    targetUserId: userId,
-    action: "user_purged",
-    metadata: {
-      deletedUserEmail: user.email,
-      deletedUserId: userId,
-      organizationDeleted: organizationId !== null,
-      organizationId,
-    },
-  });
+  await prisma.$transaction(async (tx) => {
+    await createAuditLog(
+      {
+        actorUserId: admin.id,
+        targetUserId: userId,
+        action: "user_purged",
+        metadata: {
+          deletedUserEmail: user.email,
+          deletedUserId: userId,
+          organizationDeleted: organizationId !== null,
+          organizationId,
+        },
+      },
+      tx,
+    );
 
-  await prisma.$transaction([
-    prisma.user.delete({ where: { id: userId } }),
-    ...(organizationId ? [prisma.organization.delete({ where: { id: organizationId } })] : []),
-  ]);
+    await tx.user.delete({ where: { id: userId } });
+
+    if (organizationId) {
+      await tx.organization.delete({ where: { id: organizationId } });
+    }
+  });
 
   revalidateUserAndDeletedPaths(userId);
   if (organizationId) {
