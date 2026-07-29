@@ -1,12 +1,15 @@
+import { Suspense } from "react";
+
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
+import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
-import { LiveEnergyChart } from "@/components/dashboard/LiveEnergyChart";
+import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
@@ -94,15 +97,6 @@ export { pageHeading } from "./heading";
  * and must never wait on Huawei. `resolvePlantContext` (called inside
  * `getDashboardPageData` below) no longer has any synchronization
  * side effect of its own - see its doc comment.
- *
- * ## UI refinements (Event Log / Zero Export badge pass)
- *
- * `data.eventLog` now carries real `AutomationEvent` rows (see
- * `market-data.ts`'s `getMarketPageData` - Market and Dashboard read the
- * exact same query). InvertersCard additionally receives `zeroExportActive`
- * (AutomationSettings.automationEnabled && AutomationState.currentExportMode
- * === "Zero Export"), fetched here the same way Market's Configured Mode
- * card does.
  */
 
 /**
@@ -188,7 +182,7 @@ export default async function DashboardPage({
       {!data.plantAvailable ? (
         <EmptyState
           title="No plant connected"
-          description="Connect a power plant to see live operational data, energy flow, and inverter status."
+          description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
         >
           <ConnectFusionSolarButton />
         </EmptyState>
@@ -302,10 +296,12 @@ export default async function DashboardPage({
               </div>
 
               <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
-                <LiveEnergyChart
-                  data={data.chartSeries}
-                  nowAnnotation={data.nowAnnotation}
-                />
+                <Suspense fallback={<ChartSkeleton />}>
+                  <DynamicLiveEnergyChart
+                    data={data.chartSeries}
+                    nowAnnotation={data.nowAnnotation}
+                  />
+                </Suspense>
               </div>
             </div>
           </section>
