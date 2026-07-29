@@ -930,3 +930,76 @@ a bookkeeping fix, not a schema change — before deploying the new migration.
 - `UserRole.ADMIN` becomes vestigial once `accountType`/`isPlatformAdmin` are adopted by the
   authorization layer (M3) — dropping it from the enum is future cleanup, not urgent (zero real rows
   use it today).
+
+## ADR-015: Voltessa Authorization Architecture — M2: registration persona picker
+
+### Status
+
+Accepted — implemented. Schema unchanged (M1/ADR-014 is locked); this is pure application code.
+
+### Context
+
+M1 (ADR-014) added `User.accountType` (`PLANT_OWNER` | `ENERGY_TRADER`), defaulting every existing
+and newly-created row to `PLANT_OWNER`. Nothing yet asked a new user which persona applies — M2's
+job is exactly that question, without touching M1's schema or `Permissions.can*`/`role`.
+
+Two signup methods exist today (`app/create-account/actions.ts`): `continueWithGoogle()` (NextAuth
+`signIn("google", { redirectTo: "/dashboard" })`, `PrismaAdapter` auto-provisions the `User` row on
+first sign-in) and `registerWithPassword()` (creates a bare `User`, redirects to email verification,
+then login). Both, today, land at `/dashboard`, where `(platform)/layout.tsx`'s
+`requireOnboardedUser()` redirects anyone without a completed `Organization` to `/onboarding` —
+already a single convergence point for both signup methods, independent of this milestone.
+
+### Decision
+
+The persona question is asked at `/onboarding`, not at `/create-account`. Concretely:
+
+- `app/onboarding/page.tsx` now selects `accountType` alongside the existing organization fields.
+  If `accountType === "ENERGY_TRADER"`, redirect to `/onboarding/trader-pending` before the existing
+  `onboardingCompletedAt` check (a Trader never has an organization, so this check must come first).
+  Otherwise, render the existing organization-name form unchanged, plus a new, visually secondary
+  "Not a plant owner? I'm an Energy Trader" one-click option below a divider.
+- `app/onboarding/actions.ts` gains `chooseEnergyTraderPersona()` — mirrors `createOrganization`'s
+  existing direct-`auth()` pattern (the documented ADR-006 exception for pre-onboarding code), sets
+  `accountType: "ENERGY_TRADER"` via `prisma.user.update`, creates no `Organization`, redirects to
+  `/onboarding/trader-pending`. `createOrganization()` itself is **unchanged** — no explicit
+  `accountType: "PLANT_OWNER"` write was added, since the schema's own `@default(PLANT_OWNER)`
+  already guarantees that value for every row this action ever touches; writing it explicitly would
+  be redundant, not defensive.
+- `app/onboarding/trader-pending/page.tsx` (new) — a standalone page outside `(platform)`, with its
+  own lightweight `auth()` check mirroring `/onboarding/page.tsx`'s existing pattern (not
+  `requireOnboardedUser()`, which a Trader can never satisfy). Static placeholder copy only; redirects
+  back to `/onboarding` if visited by a non-Trader. No real Trader functionality yet — that's M6.
+
+**Rejected alternative:** asking the question on `/create-account` before the Google redirect, and
+carrying the choice across the OAuth round-trip via a short-lived cookie read in a NextAuth
+`events.createUser` callback. Rejected because it requires new plumbing in `lib/auth/config.ts` (a
+file both Sprint 1A and M1 deliberately left untouched), has a real failure mode (cookie missing or
+expired when the callback fires, silently defaulting the wrong persona), and duplicates "set
+accountType" logic across two entry points instead of one. Converging on `/onboarding` — a page that
+already runs identically after either signup method — needed no new auth-layer surface at all.
+
+**First Platform Admin bootstrap.** `isPlatformAdmin` is never reachable through this UI in either
+persona branch, matching ADR-014's "never a self-registration choice." The first platform admin is
+created by running, once, directly against production, after that person has already signed up
+normally through the Plant Owner path:
+
+```sql
+UPDATE "User" SET "isPlatformAdmin" = true WHERE email = '<admin-email>';
+```
+
+A manual, deliberate production data change — not a script, not a migration, not something to
+automate. Whoever runs it should have direct DB access and confirm the target row already exists
+first.
+
+### Consequences
+
+- Zero changes to `/create-account`, `RegisterForm.tsx`, `continueWithGoogle`, `registerWithPassword`,
+  or `lib/auth/config.ts` — the entire milestone lives in `app/onboarding/*`.
+- A Trader who navigates directly to `/dashboard` (or any `(platform)/*` route) still hits
+  `requireOnboardedUser()`'s existing gate (unchanged until M3), bounces to `/onboarding`, and is
+  redirected straight to `/onboarding/trader-pending` without the picker re-appearing — a terminating
+  redirect chain, not a loop, since M3 has not yet changed the layout gate to recognize Traders.
+- Choosing/defaulting to Plant Owner is byte-for-byte the pre-M2 behavior — `createOrganization`'s
+  logic, inputs, and outputs are untouched.
+- No Prisma schema or migration changes in this milestone.
