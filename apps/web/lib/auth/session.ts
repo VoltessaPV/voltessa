@@ -33,6 +33,16 @@ async function findCurrentUserByEmail(
   const user = await prisma.user.findUnique({
     where: {
       email,
+      // Platform Administration milestone. A deactivated or soft-deleted
+      // user must not authenticate - this is the one query behind
+      // getCurrentUser(), so every gate below (requireCurrentUser,
+      // requireOnboardedUser, requirePermission, requirePlatformAdmin)
+      // inherits this for free. This is what cuts off an ALREADY-active
+      // session the moment an admin deactivates/deletes someone - the
+      // sign-in-time checks in lib/auth/config.ts and app/login/actions.ts
+      // only stop a NEW login, they don't touch an existing Session row.
+      deletedAt: null,
+      deactivatedAt: null,
     },
     select: {
       id: true,

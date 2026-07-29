@@ -7,6 +7,7 @@ import { pageHeading as adminTraders } from "@/app/(platform)/admin/traders/head
 import { pageHeading as adminTraderDetails } from "@/app/(platform)/admin/traders/[id]/heading";
 import { pageHeading as adminUsers } from "@/app/(platform)/admin/users/heading";
 import { pageHeading as adminUserDetails } from "@/app/(platform)/admin/users/[id]/heading";
+import { pageHeading as adminDeletedUsers } from "@/app/(platform)/admin/users/deleted/heading";
 import { pageHeading as alerts } from "@/app/(platform)/alerts/heading";
 import { pageHeading as automations } from "@/app/(platform)/automations/heading";
 import { pageHeading as bess } from "@/app/(platform)/bess/heading";
@@ -39,6 +40,7 @@ const STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/plants/new": plantsNew,
   "/admin": adminDashboard,
   "/admin/users": adminUsers,
+  "/admin/users/deleted": adminDeletedUsers,
   "/admin/plant-owners": adminPlantOwners,
   "/admin/traders": adminTraders,
   "/admin/assignments": adminAssignments,

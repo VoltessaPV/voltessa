@@ -9,7 +9,13 @@ export default async function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <p className="text-white/60">All users across every organization.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-white/60">All users across every organization.</p>
+
+        <Link href="/admin/users/deleted" className="text-sm text-blue-400 hover:text-blue-300">
+          View Deleted Users →
+        </Link>
+      </div>
 
       <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
         <table className="w-full text-left text-sm">

@@ -1,7 +1,8 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
-import { toggleUserActive, updateUser } from "../../actions";
-import { getUserById } from "@/lib/admin/queries";
+import { softDeleteUser, toggleUserActive, updateUser } from "../../actions";
+import { getUserById, isLastActivePlatformAdmin } from "@/lib/admin/queries";
+import { requirePlatformAdmin } from "@/lib/auth/session";
 
 export { pageHeading } from "./heading";
 
@@ -19,6 +20,7 @@ type Props = {
 };
 
 export default async function AdminUserDetailPage({ params, searchParams }: Props) {
+  const admin = await requirePlatformAdmin();
   const { id } = await params;
   const { error } = await searchParams;
 
@@ -27,8 +29,22 @@ export default async function AdminUserDetailPage({ params, searchParams }: Prop
     notFound();
   }
 
+  // Rule 4: Restore/Purge only ever appear on the Deleted Users view.
+  if (user.deletedAt) {
+    redirect("/admin/users/deleted");
+  }
+
   const updateUserAction = updateUser.bind(null, user.id);
   const toggleActiveAction = toggleUserActive.bind(null, user.id);
+  const softDeleteAction = softDeleteUser.bind(null, user.id);
+
+  // An admin can never deactivate/delete their own account, or the last
+  // active Platform Admin - hide those actions rather than let a real
+  // admin hit the server-side rejection.
+  const isSelf = user.id === admin.id;
+  const isProtectedAdmin =
+    user.isPlatformAdmin && !isSelf && (await isLastActivePlatformAdmin(user.id));
+  const canDeactivateOrDelete = !isSelf && !isProtectedAdmin;
 
   return (
     <div className="max-w-3xl space-y-8">
@@ -41,19 +57,45 @@ export default async function AdminUserDetailPage({ params, searchParams }: Prop
           </p>
         </div>
 
-        <form action={toggleActiveAction}>
-          <button
-            type="submit"
-            className={
-              user.deactivatedAt
-                ? "rounded-xl bg-emerald-600 px-4 py-2 font-medium hover:bg-emerald-500"
-                : "rounded-xl bg-red-600 px-4 py-2 font-medium hover:bg-red-500"
-            }
-          >
-            {user.deactivatedAt ? "Activate" : "Deactivate"}
-          </button>
-        </form>
+        {(user.deactivatedAt || canDeactivateOrDelete) && (
+          <div className="flex flex-wrap gap-2">
+            <form action={toggleActiveAction}>
+              <button
+                type="submit"
+                className={
+                  user.deactivatedAt
+                    ? "rounded-xl bg-emerald-600 px-4 py-2 font-medium hover:bg-emerald-500"
+                    : "rounded-xl bg-red-600 px-4 py-2 font-medium hover:bg-red-500"
+                }
+              >
+                {user.deactivatedAt ? "Activate" : "Deactivate"}
+              </button>
+            </form>
+
+            {canDeactivateOrDelete && (
+              <form action={softDeleteAction}>
+                <button
+                  type="submit"
+                  className="rounded-xl border border-red-500/40 px-4 py-2 font-medium text-red-300 transition hover:bg-red-500/10"
+                >
+                  Delete
+                </button>
+              </form>
+            )}
+          </div>
+        )}
       </div>
+
+      {isSelf && (
+        <p className="text-xs text-white/40">
+          You cannot deactivate or delete your own account.
+        </p>
+      )}
+      {isProtectedAdmin && (
+        <p className="text-xs text-white/40">
+          This is the last active Platform Admin and cannot be deactivated or deleted.
+        </p>
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">
