@@ -14,6 +14,12 @@ enum UserRole {
   VIEWER
 }
 
+/// Commercial persona, not an authorization signal — see ADR-014 (docs/ARCHITECT_DECISIONS.md).
+enum AccountType {
+  PLANT_OWNER
+  ENERGY_TRADER
+}
+
 model User {
   id    String  @id @default(cuid())
   name  String?
@@ -31,11 +37,32 @@ model User {
 
   role UserRole @default(VIEWER)
 
+  /// Commercial persona only — never read by the authorization layer. See ADR-014.
+  accountType AccountType @default(PLANT_OWNER)
+
+  /// Authorization flag: internal Voltessa staff, cross-organization reach. See ADR-014.
+  isPlatformAdmin Boolean @default(false)
+
+  /// Temporary suspension, reversible. Distinct from `deletedAt` below. See ADR-014.
+  deactivatedAt DateTime?
+
+  /// Soft delete — recoverable, preserves historical references. See ADR-014.
+  deletedAt DateTime?
+
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id])
 
   accounts Account[]
   sessions Session[]
+
+  traderAssignments        TraderAssignment[] @relation("TraderAssignments")
+  traderAssignmentsGranted TraderAssignment[] @relation("TraderAssignmentsGranted")
+
+  impersonationsStarted  ImpersonationSession[] @relation("ImpersonationsStarted")
+  impersonationsReceived ImpersonationSession[] @relation("ImpersonationsReceived")
+
+  auditLogsActed    AuditLog[] @relation("AuditLogsActed")
+  auditLogsTargeted AuditLog[] @relation("AuditLogsTargeted")
 
   /// Settings > Profile. Kept separate from the pre-existing `name` (used by
   /// NextAuth's own Google profile sync and AppHeader's display) rather than
@@ -62,6 +89,66 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([accountType])
+  @@index([isPlatformAdmin])
+  @@index([deactivatedAt])
+  @@index([deletedAt])
+}
+
+/// Customer acquisition relationship ("which trader brought this org to Voltessa"), one trader
+/// per organization. See ADR-014.
+model TraderAssignment {
+  id             String   @id @default(cuid())
+  traderId       String
+  organizationId String
+  assignedById   String
+  createdAt      DateTime @default(now())
+
+  trader       User         @relation("TraderAssignments", fields: [traderId], references: [id])
+  organization Organization @relation(fields: [organizationId], references: [id])
+  assignedBy   User         @relation("TraderAssignmentsGranted", fields: [assignedById], references: [id])
+
+  @@unique([organizationId])
+  @@index([traderId])
+}
+
+/// No fixed expiry — ends via explicit stop, admin logout, or the admin's own session expiring.
+/// See ADR-014.
+model ImpersonationSession {
+  id                String    @id @default(cuid())
+  token             String    @unique
+  adminUserId       String
+  adminSessionToken String
+  targetUserId      String
+  adminIp           String?
+  adminUserAgent    String?
+  startedAt         DateTime  @default(now())
+  endedAt           DateTime?
+
+  admin  User @relation("ImpersonationsStarted", fields: [adminUserId], references: [id])
+  target User @relation("ImpersonationsReceived", fields: [targetUserId], references: [id])
+
+  @@index([adminUserId])
+  @@index([targetUserId])
+}
+
+/// `action` is a plain string, matching the `AutomationEvent.type` convention. See ADR-014.
+model AuditLog {
+  id             String   @id @default(cuid())
+  actorUserId    String
+  targetUserId   String?
+  organizationId String?
+  action         String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  actor  User  @relation("AuditLogsActed", fields: [actorUserId], references: [id])
+  target User? @relation("AuditLogsTargeted", fields: [targetUserId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([targetUserId])
 }
 
 /// Authentication System Refresh, Phase 2. Dedicated, single-purpose model
@@ -182,6 +269,7 @@ model Organization {
   users                  User[]
   plants                 Plant[]
   fusionSolarConnections FusionSolarConnection[]
+  traderAssignment       TraderAssignment?
 
   automationSettings AutomationSettings?
   automationState    AutomationState?

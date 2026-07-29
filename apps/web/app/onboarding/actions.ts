@@ -66,3 +66,35 @@ export async function createOrganization(formData: FormData) {
 
   redirect("/dashboard");
 }
+
+export async function chooseEnergyTraderPersona() {
+  const session = await auth();
+
+  if (!session?.user?.email) {
+    redirect("/login");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: {
+      email: session.user.email,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  await prisma.user.update({
+    where: {
+      id: user.id,
+    },
+    data: {
+      accountType: "ENERGY_TRADER",
+    },
+  });
+
+  redirect("/onboarding/trader-pending");
+}

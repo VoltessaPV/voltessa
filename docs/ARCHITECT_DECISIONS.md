@@ -833,3 +833,173 @@ invocation shares: the database.
   free.
 - `docs/infrastructure/scaleway-production.md` documents both new timers/env files/service files in
   the same structure as the existing two schedulers.
+
+## ADR-014: Voltessa Authorization Architecture — Platform Admin / Plant Owner / Energy Trader (M1: additive schema)
+
+### Status
+
+Accepted — M1 (additive schema only) implemented. M2 onward (registration persona picker,
+centralized authorization restructuring, Administration area, Trader access, impersonation, audit
+log UI) are separate, future milestones, each planned/approved independently before implementation.
+
+### Context
+
+Voltessa today has exactly one real persona: a Plant Owner, always created with `role: OWNER` by
+`app/onboarding/actions.ts` — the only place a role or `Organization` is ever assigned. Running
+Voltessa as a company (internal staff, external commercial partners) needs a Platform Administrator
+persona with cross-org reach, an Energy Trader persona with read-only cross-org visibility via
+assignment (not membership/ownership), and impersonation for support — none of which the existing
+`UserRole`/`Permissions.can*` model (single-organization, role-within-org only) can express. Sprint
+1A (ADR-006) explicitly rejected a `Membership` join table as a stated scope boundary; this decision
+does not introduce one either — every requirement is satisfiable as a pure addition on top of
+`User.organizationId` staying a single nullable FK.
+
+### Decision
+
+M1 adds, additively, with zero behavior change (existing `Permissions.can*` buckets, `role`, and
+all 11 existing `requirePermission` call sites are untouched):
+
+- **`User.accountType` (`AccountType`: `PLANT_OWNER` | `ENERGY_TRADER`)** — pure commercial persona,
+  deliberately *not* an authorization signal.
+- **`User.isPlatformAdmin` (`Boolean`)** — pure, orthogonal authorization flag: internal Voltessa
+  staff with cross-organization reach. Business identity and authorization are deliberately kept as
+  two separate fields rather than a single mixed enum (e.g. a `PLATFORM_ADMIN` account type) — a
+  staff member's `accountType` stays whatever it defaults to (`PLANT_OWNER`) and is simply ignored
+  by the authorization layer, the same way `role` already is for non-owner personas.
+- **`User.deactivatedAt`/`deletedAt`** — temporary suspension vs. soft delete (excludes from lists,
+  revokes sessions, preserves all historical references, recoverable by clearing the field),
+  following the existing `Organization.onboardingCompletedAt` nullable-timestamp convention.
+- **`TraderAssignment`** — represents customer *acquisition* ("which trader brought this customer to
+  Voltessa"), the future basis for commission/reporting; granting the trader read-only visibility
+  into the organization (a future milestone) is a consequence of this relationship, not its primary
+  purpose. Current business rule is one trader per organization, enforced with a plain
+  `@@unique([organizationId])` — deliberately not designed for historical reassignment scenarios,
+  since that isn't a real requirement yet. Indexed on `traderId` (a trader's own assignment list).
+  **No `revokedAt`/`revokedById`** — an earlier draft of this model included them, from a prior,
+  since-simplified design that had no DB-level uniqueness and enforced "at most one active
+  assignment" at the application layer instead (mirroring `AutomationState`'s per-organization
+  lock). Once simplified to `@@unique([organizationId])`, those two fields became actively
+  inconsistent with the constraint: a revoked-but-retained row would permanently occupy that
+  organization's unique slot, blocking ever creating a fresh assignment for it without a partial/
+  filtered unique index (Postgres supports one; this schema doesn't use one, and introducing it now
+  would be exactly the complexity the simplification was meant to avoid). Revocation/reassignment
+  semantics — and whatever indexing they need — belong in the milestone that actually implements
+  them, not M1.
+- **`ImpersonationSession`** — no fixed TTL; ends via explicit stop, admin logout, or the admin's own
+  real session expiring (a future milestone binds this to `adminSessionToken` on every request).
+  `adminIp`/`adminUserAgent` captured once at start. Indexed on both `adminUserId` (an admin's own
+  impersonation history) and `targetUserId` (Administration/audit screens answering "who has
+  impersonated this user").
+- **`AuditLog`** — plain-string `action`, matching the existing `AutomationEvent.type` convention
+  for a small, closed-but-growable vocabulary. Indexed on `targetUserId` in addition to the
+  organization/actor composite indexes, for "all actions taken against this user" lookups.
+- **`User.deletedAt`** is indexed alongside `accountType`/`isPlatformAdmin`/`deactivatedAt` — the
+  Administration user list's primary filter is "active users" (`deletedAt IS NULL`).
+
+Schema doc comments are intentionally short and point back here rather than restating this
+rationale inline — this ADR is the source of truth for *why*, the schema for *what*.
+
+Full design (permission-check shape, the `resolveEffectiveUser()`/`requirePlatformAdmin()` split
+that keeps Administration always executing as the real admin even during impersonation, the
+Administration area, registration wiring, and the milestone sequence) is recorded in the accompanying
+architecture proposal, not repeated here.
+
+**Tooling**: this is the first schema change made via tracked `prisma migrate` rather than `db push`
+(see `docs/CODING_STANDARDS.md`/CLAUDE.md's Prisma section — only one prior migration was committed,
+the rest of schema history is untracked `db push`). The migration
+(`prisma/migrations/20260729091449_voltessa_authorization_m1/`) was generated and verified against a
+disposable local Postgres instance seeded to match the pre-M1 schema (`prisma db push` from the
+pre-M1 `schema.prisma`, then `prisma migrate diff --from-url ... --to-schema-datamodel` against the
+M1 schema), confirmed to apply cleanly and leave zero remaining diff — not against production, since
+this environment has no `DATABASE_URL`/production credentials. Before running `prisma migrate deploy`
+against real production, run `prisma migrate status` there first: if `20260709140000_add_plant_telemetry_snapshot`
+isn't already recorded as applied (possible, since it may have only ever been reconciled via `db
+push`), run `prisma migrate resolve --applied 20260709140000_add_plant_telemetry_snapshot` first —
+a bookkeeping fix, not a schema change — before deploying the new migration.
+
+### Consequences
+
+- Zero regression for existing Plant Owner behavior — no existing call site, query, or permission
+  check changes in this milestone.
+- `accountType`/`isPlatformAdmin` are populated but functionally inert until M3 (centralized
+  authorization restructuring) reads them; `TraderAssignment`/`ImpersonationSession`/`AuditLog` have
+  no UI or Server Action yet — pure schema, per M1's own "zero behavior change" acceptance
+  criterion.
+- Every existing `User` row is unaffected by defaults (`accountType: PLANT_OWNER`,
+  `isPlatformAdmin: false`) — unambiguous, since every real user's `role` today is already `OWNER`.
+- `UserRole.ADMIN` becomes vestigial once `accountType`/`isPlatformAdmin` are adopted by the
+  authorization layer (M3) — dropping it from the enum is future cleanup, not urgent (zero real rows
+  use it today).
+
+## ADR-015: Voltessa Authorization Architecture — M2: registration persona picker
+
+### Status
+
+Accepted — implemented. Schema unchanged (M1/ADR-014 is locked); this is pure application code.
+
+### Context
+
+M1 (ADR-014) added `User.accountType` (`PLANT_OWNER` | `ENERGY_TRADER`), defaulting every existing
+and newly-created row to `PLANT_OWNER`. Nothing yet asked a new user which persona applies — M2's
+job is exactly that question, without touching M1's schema or `Permissions.can*`/`role`.
+
+Two signup methods exist today (`app/create-account/actions.ts`): `continueWithGoogle()` (NextAuth
+`signIn("google", { redirectTo: "/dashboard" })`, `PrismaAdapter` auto-provisions the `User` row on
+first sign-in) and `registerWithPassword()` (creates a bare `User`, redirects to email verification,
+then login). Both, today, land at `/dashboard`, where `(platform)/layout.tsx`'s
+`requireOnboardedUser()` redirects anyone without a completed `Organization` to `/onboarding` —
+already a single convergence point for both signup methods, independent of this milestone.
+
+### Decision
+
+The persona question is asked at `/onboarding`, not at `/create-account`. Concretely:
+
+- `app/onboarding/page.tsx` now selects `accountType` alongside the existing organization fields.
+  If `accountType === "ENERGY_TRADER"`, redirect to `/onboarding/trader-pending` before the existing
+  `onboardingCompletedAt` check (a Trader never has an organization, so this check must come first).
+  Otherwise, render the existing organization-name form unchanged, plus a new, visually secondary
+  "Not a plant owner? I'm an Energy Trader" one-click option below a divider.
+- `app/onboarding/actions.ts` gains `chooseEnergyTraderPersona()` — mirrors `createOrganization`'s
+  existing direct-`auth()` pattern (the documented ADR-006 exception for pre-onboarding code), sets
+  `accountType: "ENERGY_TRADER"` via `prisma.user.update`, creates no `Organization`, redirects to
+  `/onboarding/trader-pending`. `createOrganization()` itself is **unchanged** — no explicit
+  `accountType: "PLANT_OWNER"` write was added, since the schema's own `@default(PLANT_OWNER)`
+  already guarantees that value for every row this action ever touches; writing it explicitly would
+  be redundant, not defensive.
+- `app/onboarding/trader-pending/page.tsx` (new) — a standalone page outside `(platform)`, with its
+  own lightweight `auth()` check mirroring `/onboarding/page.tsx`'s existing pattern (not
+  `requireOnboardedUser()`, which a Trader can never satisfy). Static placeholder copy only; redirects
+  back to `/onboarding` if visited by a non-Trader. No real Trader functionality yet — that's M6.
+
+**Rejected alternative:** asking the question on `/create-account` before the Google redirect, and
+carrying the choice across the OAuth round-trip via a short-lived cookie read in a NextAuth
+`events.createUser` callback. Rejected because it requires new plumbing in `lib/auth/config.ts` (a
+file both Sprint 1A and M1 deliberately left untouched), has a real failure mode (cookie missing or
+expired when the callback fires, silently defaulting the wrong persona), and duplicates "set
+accountType" logic across two entry points instead of one. Converging on `/onboarding` — a page that
+already runs identically after either signup method — needed no new auth-layer surface at all.
+
+**First Platform Admin bootstrap.** `isPlatformAdmin` is never reachable through this UI in either
+persona branch, matching ADR-014's "never a self-registration choice." The first platform admin is
+created by running, once, directly against production, after that person has already signed up
+normally through the Plant Owner path:
+
+```sql
+UPDATE "User" SET "isPlatformAdmin" = true WHERE email = '<admin-email>';
+```
+
+A manual, deliberate production data change — not a script, not a migration, not something to
+automate. Whoever runs it should have direct DB access and confirm the target row already exists
+first.
+
+### Consequences
+
+- Zero changes to `/create-account`, `RegisterForm.tsx`, `continueWithGoogle`, `registerWithPassword`,
+  or `lib/auth/config.ts` — the entire milestone lives in `app/onboarding/*`.
+- A Trader who navigates directly to `/dashboard` (or any `(platform)/*` route) still hits
+  `requireOnboardedUser()`'s existing gate (unchanged until M3), bounces to `/onboarding`, and is
+  redirected straight to `/onboarding/trader-pending` without the picker re-appearing — a terminating
+  redirect chain, not a loop, since M3 has not yet changed the layout gate to recognize Traders.
+- Choosing/defaulting to Plant Owner is byte-for-byte the pre-M2 behavior — `createOrganization`'s
+  logic, inputs, and outputs are untouched.
+- No Prisma schema or migration changes in this milestone.

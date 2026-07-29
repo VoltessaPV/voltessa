@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
-import { createOrganization } from "./actions";
+import { chooseEnergyTraderPersona, createOrganization } from "./actions";
 
 export default async function OnboardingPage() {
   const session = await auth();
@@ -17,6 +17,7 @@ export default async function OnboardingPage() {
       email: session.user.email,
     },
     select: {
+      accountType: true,
       organization: {
         select: {
           name: true,
@@ -25,6 +26,10 @@ export default async function OnboardingPage() {
       },
     },
   });
+
+  if (user?.accountType === "ENERGY_TRADER") {
+    redirect("/onboarding/trader-pending");
+  }
 
   if (user?.organization?.onboardingCompletedAt) {
     redirect("/dashboard");
@@ -66,6 +71,19 @@ export default async function OnboardingPage() {
             Continue to dashboard
           </button>
         </form>
+
+        <div className="mt-6 border-t border-white/10 pt-6 text-center">
+          <p className="text-xs text-white/40">Not a plant owner?</p>
+
+          <form action={chooseEnergyTraderPersona} className="mt-2">
+            <button
+              type="submit"
+              className="text-sm font-medium text-white/60 underline-offset-4 transition hover:text-white hover:underline"
+            >
+              I&apos;m an Energy Trader
+            </button>
+          </form>
+        </div>
       </div>
     </main>
   );
