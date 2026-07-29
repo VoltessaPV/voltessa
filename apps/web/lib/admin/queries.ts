@@ -10,8 +10,10 @@ import { prisma } from "@/lib/prisma";
  * `requirePlatformAdmin()` — this file does not check authorization itself.
  */
 
+/** Excludes soft-deleted users — see listDeletedUsers() for those. */
 export async function listUsers() {
   return prisma.user.findMany({
+    where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -27,6 +29,11 @@ export async function listUsers() {
   });
 }
 
+/**
+ * Deliberately NOT filtered by deletedAt — the detail page itself checks
+ * `deletedAt` and redirects to the Deleted Users view rather than 404ing,
+ * so this needs to find the row either way.
+ */
 export async function getUserById(id: string) {
   return prisma.user.findUnique({
     where: { id },
@@ -41,7 +48,25 @@ export async function getUserById(id: string) {
       role: true,
       isPlatformAdmin: true,
       deactivatedAt: true,
+      deletedAt: true,
       createdAt: true,
+      organization: { select: { id: true, name: true } },
+    },
+  });
+}
+
+/** Soft-deleted users only — the Deleted Users view's own list. */
+export async function listDeletedUsers() {
+  return prisma.user.findMany({
+    where: { deletedAt: { not: null } },
+    orderBy: { deletedAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      accountType: true,
+      isPlatformAdmin: true,
+      deletedAt: true,
       organization: { select: { id: true, name: true } },
     },
   });
@@ -89,9 +114,10 @@ export async function getPlantOwnerOrganizationById(id: string) {
   });
 }
 
+/** Excludes soft-deleted traders — see listDeletedUsers() for those. */
 export async function listEnergyTraders() {
   return prisma.user.findMany({
-    where: { accountType: "ENERGY_TRADER" },
+    where: { accountType: "ENERGY_TRADER", deletedAt: null },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -108,6 +134,7 @@ export async function listEnergyTraders() {
   });
 }
 
+/** Deliberately NOT filtered by deletedAt — same reasoning as getUserById. */
 export async function getEnergyTraderById(id: string) {
   return prisma.user.findUnique({
     where: { id, accountType: "ENERGY_TRADER" },
@@ -118,7 +145,9 @@ export async function getEnergyTraderById(id: string) {
       lastName: true,
       email: true,
       phone: true,
+      isPlatformAdmin: true,
       deactivatedAt: true,
+      deletedAt: true,
       createdAt: true,
       traderProfile: {
         select: { companyName: true, distributionCompanyId: true },
@@ -132,10 +161,10 @@ export async function getEnergyTraderById(id: string) {
   });
 }
 
-/** Active (non-deactivated) traders only — the assignment dropdown's own source list. */
+/** Active, non-deleted traders only — the assignment dropdown's own source list. */
 export async function listAssignableTraders() {
   return prisma.user.findMany({
-    where: { accountType: "ENERGY_TRADER", deactivatedAt: null },
+    where: { accountType: "ENERGY_TRADER", deactivatedAt: null, deletedAt: null },
     orderBy: { name: "asc" },
     select: {
       id: true,
@@ -195,9 +224,11 @@ export async function getAdminDashboardStats() {
   const [totalPlantOwners, totalEnergyTraders, unassignedPlantOwners, totalPlatformAdmins, recentAuditLog] =
     await Promise.all([
       prisma.organization.count(),
-      prisma.user.count({ where: { accountType: "ENERGY_TRADER" } }),
+      prisma.user.count({ where: { accountType: "ENERGY_TRADER", deletedAt: null } }),
       prisma.organization.count({ where: { traderAssignment: null } }),
-      prisma.user.count({ where: { isPlatformAdmin: true } }),
+      prisma.user.count({
+        where: { isPlatformAdmin: true, deactivatedAt: null, deletedAt: null },
+      }),
       prisma.auditLog.findMany({
         orderBy: { createdAt: "desc" },
         take: 5,
@@ -218,4 +249,114 @@ export async function getAdminDashboardStats() {
     totalPlatformAdmins,
     recentAuditLog,
   };
+}
+
+/**
+ * Safety rule: the system must never end up with zero active Platform
+ * Admins. Returns true if `userId` is a Platform Admin AND no OTHER
+ * active (not deactivated, not deleted) Platform Admin exists — checked
+ * regardless of `userId`'s own current active state, so it stays a hard
+ * "never allow" invariant rather than something that only fires while the
+ * target is still active. Called before deactivate/soft-delete/purge in
+ * admin/actions.ts, in addition to (not instead of) the separate
+ * "can't act on your own account" guard - self-guard alone can't catch a
+ * race between two admins deactivating each other concurrently, this can.
+ */
+export async function isLastActivePlatformAdmin(userId: string): Promise<boolean> {
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isPlatformAdmin: true },
+  });
+
+  if (!target?.isPlatformAdmin) {
+    return false;
+  }
+
+  const otherActiveAdmins = await prisma.user.count({
+    where: {
+      isPlatformAdmin: true,
+      deactivatedAt: null,
+      deletedAt: null,
+      id: { not: userId },
+    },
+  });
+
+  return otherActiveAdmins === 0;
+}
+
+export type PurgeEligibility = {
+  eligible: boolean;
+  blockers: string[];
+};
+
+/**
+ * Purge's full eligibility algorithm (see ADR discussion) - re-run
+ * server-side unconditionally before every purge attempt, never trusted
+ * from what the UI last rendered. Blocks the ENTIRE purge if the user's
+ * own Organization exists but isn't itself empty - never leaves orphaned
+ * business data behind.
+ */
+export async function getUserPurgeEligibility(userId: string): Promise<PurgeEligibility> {
+  const blockers: string[] = [];
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { deletedAt: true, organizationId: true },
+  });
+
+  if (!user) {
+    return { eligible: false, blockers: ["User not found"] };
+  }
+
+  if (!user.deletedAt) {
+    blockers.push("User must be soft-deleted before it can be purged");
+  }
+
+  const [asTrader, asAssignedBy, asAuditActor, asImpersonationAdmin, asImpersonationTarget] =
+    await Promise.all([
+      prisma.traderAssignment.count({ where: { traderId: userId } }),
+      prisma.traderAssignment.count({ where: { assignedById: userId } }),
+      prisma.auditLog.count({ where: { actorUserId: userId } }),
+      prisma.impersonationSession.count({ where: { adminUserId: userId } }),
+      prisma.impersonationSession.count({ where: { targetUserId: userId } }),
+    ]);
+
+  if (asTrader > 0) {
+    blockers.push(`Currently assigned as trader to ${asTrader} organization(s)`);
+  }
+  if (asAssignedBy > 0) {
+    blockers.push(`Has granted ${asAssignedBy} trader assignment(s)`);
+  }
+  if (asAuditActor > 0) {
+    blockers.push(`Has ${asAuditActor} audit log entr(ies) as actor`);
+  }
+  if (asImpersonationAdmin > 0 || asImpersonationTarget > 0) {
+    blockers.push("Has impersonation session history");
+  }
+
+  if (user.organizationId) {
+    const [otherUsers, plants, connections, orgAssignments] = await Promise.all([
+      prisma.user.count({
+        where: { organizationId: user.organizationId, id: { not: userId } },
+      }),
+      prisma.plant.count({ where: { organizationId: user.organizationId } }),
+      prisma.fusionSolarConnection.count({ where: { organizationId: user.organizationId } }),
+      prisma.traderAssignment.count({ where: { organizationId: user.organizationId } }),
+    ]);
+
+    if (otherUsers > 0) {
+      blockers.push("Organization has other users");
+    }
+    if (plants > 0) {
+      blockers.push(`Organization has ${plants} plant(s)`);
+    }
+    if (connections > 0) {
+      blockers.push("Organization has a FusionSolar connection");
+    }
+    if (orgAssignments > 0) {
+      blockers.push("Organization has a trader assignment");
+    }
+  }
+
+  return { eligible: blockers.length === 0, blockers };
 }

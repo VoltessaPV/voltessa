@@ -43,7 +43,14 @@ export async function signInWithPassword(
 
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, email: true, passwordHash: true, emailVerified: true },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true,
+      emailVerified: true,
+      deletedAt: true,
+      deactivatedAt: true,
+    },
   });
 
   const passwordValid = user?.passwordHash
@@ -56,6 +63,14 @@ export async function signInWithPassword(
 
   if (!user.emailVerified) {
     redirect(`/verify-email?email=${encodeURIComponent(user.email!)}`);
+  }
+
+  // Platform Administration milestone - same rule as Google's
+  // callbacks.signIn in lib/auth/config.ts, checked after password/
+  // verification (never reveal account status before proving the
+  // password is even correct).
+  if (user.deletedAt || user.deactivatedAt) {
+    return { success: false, message: "This account is no longer active." };
   }
 
   await createDatabaseSession(user.id);

@@ -1,6 +1,9 @@
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
+
+/** Accepts either the module-level singleton or an interactive transaction's `tx` handle. */
+type PrismaClientOrTransaction = PrismaClient | Prisma.TransactionClient;
 
 /**
  * Platform Administration milestone's action vocabulary — a plain string in
@@ -15,6 +18,9 @@ export type AdminAuditActionType =
   | "user_activated"
   | "user_deactivated"
   | "user_updated"
+  | "user_deleted"
+  | "user_restored"
+  | "user_purged"
   | "trader_profile_updated"
   | "trader_assigned"
   | "trader_changed"
@@ -31,10 +37,17 @@ export type CreateAuditLogInput = {
 /**
  * Creates one Audit Log row — the Platform Administration module's first
  * real consumer of `AuditLog` (schema-only since ADR-014). Called after a
- * write has already succeeded, never speculatively before one.
+ * write has already succeeded, never speculatively before one - except
+ * inside an interactive transaction (see purgeUser), where passing `tx`
+ * here makes the audit row part of the same atomic unit as the write it
+ * describes, so a rollback undoes both together. Defaults to the module
+ * singleton for every other, non-transactional caller.
  */
-export async function createAuditLog(input: CreateAuditLogInput): Promise<void> {
-  await prisma.auditLog.create({
+export async function createAuditLog(
+  input: CreateAuditLogInput,
+  client: PrismaClientOrTransaction = prisma,
+): Promise<void> {
+  await client.auditLog.create({
     data: {
       actorUserId: input.actorUserId,
       targetUserId: input.targetUserId ?? null,

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { createAuditLog } from "@/lib/admin/audit-log";
+import { getUserPurgeEligibility, isLastActivePlatformAdmin } from "@/lib/admin/queries";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { prisma } from "@/lib/prisma";
@@ -17,6 +18,26 @@ function optionalString(formData: FormData, field: string): string | null {
 async function isEmailTakenByAnotherUser(email: string, excludingUserId: string): Promise<boolean> {
   const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   return existing !== null && existing.id !== excludingUserId;
+}
+
+/**
+ * Two safety rules shared by deactivate/soft-delete/purge: an admin can
+ * never act on their own account, and the system must never end up with
+ * zero active Platform Admins (checked in addition to, not instead of,
+ * self-targeting - it also catches a race between two different admins
+ * targeting each other concurrently). The UI hides these actions for the
+ * cases this covers, so a real admin should never hit this in practice -
+ * this is the actual safety boundary, not the UI convenience.
+ */
+async function isProtectedFromDeactivationOrRemoval(
+  adminId: string,
+  targetUserId: string,
+): Promise<boolean> {
+  if (targetUserId === adminId) {
+    return true;
+  }
+
+  return isLastActivePlatformAdmin(targetUserId);
 }
 
 /**
@@ -84,6 +105,10 @@ export async function toggleUserActive(userId: string) {
   }
 
   const activating = user.deactivatedAt !== null;
+
+  if (!activating && (await isProtectedFromDeactivationOrRemoval(admin.id, userId))) {
+    return;
+  }
 
   await prisma.user.update({
     where: { id: userId },
@@ -280,4 +305,130 @@ export async function removeTrader(organizationId: string) {
   });
 
   revalidateAssignmentPaths(organizationId);
+}
+
+function revalidateUserAndDeletedPaths(userId: string) {
+  revalidatePath(`/admin/users/${userId}`);
+  revalidatePath("/admin/users");
+  revalidatePath("/admin/users/deleted");
+  revalidatePath(`/admin/traders/${userId}`);
+  revalidatePath("/admin/traders");
+  revalidatePath("/admin");
+}
+
+/**
+ * The standard administrative delete operation (per the account-model
+ * business rules - no account conversion, no email mangling). Reversible:
+ * only sets `deletedAt`, touches nothing else. Combined with the
+ * lib/auth/session.ts / lib/auth/config.ts / app/login/actions.ts checks,
+ * this immediately blocks the user from authenticating.
+ */
+export async function softDeleteUser(userId: string) {
+  const admin = await requirePlatformAdmin();
+
+  if (await isProtectedFromDeactivationOrRemoval(admin.id, userId)) {
+    return;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { deletedAt: true } });
+  if (!user || user.deletedAt) {
+    return;
+  }
+
+  await prisma.user.update({ where: { id: userId }, data: { deletedAt: new Date() } });
+
+  await createAuditLog({ actorUserId: admin.id, targetUserId: userId, action: "user_deleted" });
+
+  revalidateUserAndDeletedPaths(userId);
+}
+
+/** Only reachable from the Deleted Users view (rule: Restore/Purge appear nowhere else). */
+export async function restoreUser(userId: string) {
+  const admin = await requirePlatformAdmin();
+
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { deletedAt: true } });
+  if (!user || !user.deletedAt) {
+    return;
+  }
+
+  await prisma.user.update({ where: { id: userId }, data: { deletedAt: null } });
+
+  await createAuditLog({ actorUserId: admin.id, targetUserId: userId, action: "user_restored" });
+
+  revalidateUserAndDeletedPaths(userId);
+}
+
+/**
+ * The narrow, permanent-removal operation - only reachable from the
+ * Deleted Users view, only for accounts already soft-deleted, only when
+ * getUserPurgeEligibility() finds zero blockers. Re-checks eligibility
+ * here unconditionally - never trusts what the UI last rendered.
+ *
+ * The audit write and the delete(s) run inside one interactive
+ * transaction - both commit or both roll back together, so a failed
+ * delete (e.g. a concurrent purge racing this one, or a genuine
+ * constraint surprise) can never leave a `user_purged` row on record for
+ * a user that still exists. The audit row is still written BEFORE the
+ * delete statements within that transaction: AuditLog.targetUserId is
+ * `ON DELETE SET NULL`, so inserting after the user is gone would violate
+ * the FK immediately, and inserting before lets that same cascade fire
+ * correctly, still inside the transaction, once the delete runs -
+ * `metadata` keeps a readable snapshot regardless of the eventual value.
+ */
+export async function purgeUser(userId: string) {
+  const admin = await requirePlatformAdmin();
+
+  if (await isProtectedFromDeactivationOrRemoval(admin.id, userId)) {
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true, organizationId: true },
+  });
+  if (!user) {
+    return;
+  }
+
+  const eligibility = await getUserPurgeEligibility(userId);
+  if (!eligibility.eligible) {
+    return;
+  }
+
+  // Recomputed from the same fields getUserPurgeEligibility already
+  // verified are safe (zero other users/plants/connections/assignments) -
+  // eligible with an organizationId means that organization is provably
+  // empty and safe to remove alongside the user, never leaving orphaned
+  // business data (rule: an ineligible org blocks the whole purge, never
+  // just skips org cleanup).
+  const organizationId = user.organizationId;
+
+  await prisma.$transaction(async (tx) => {
+    await createAuditLog(
+      {
+        actorUserId: admin.id,
+        targetUserId: userId,
+        action: "user_purged",
+        metadata: {
+          deletedUserEmail: user.email,
+          deletedUserId: userId,
+          organizationDeleted: organizationId !== null,
+          organizationId,
+        },
+      },
+      tx,
+    );
+
+    await tx.user.delete({ where: { id: userId } });
+
+    if (organizationId) {
+      await tx.organization.delete({ where: { id: organizationId } });
+    }
+  });
+
+  revalidateUserAndDeletedPaths(userId);
+  if (organizationId) {
+    revalidatePath(`/admin/plant-owners/${organizationId}`);
+    revalidatePath("/admin/plant-owners");
+  }
 }

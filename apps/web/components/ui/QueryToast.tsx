@@ -10,6 +10,10 @@ const TOAST_MESSAGES: Record<string, { message: string; variant: ToastVariant }>
     message: "Password reset. Please log in with your new password.",
     variant: "success",
   },
+  "account-disabled": {
+    message: "This account is no longer active. Contact your administrator.",
+    variant: "error",
+  },
 };
 
 /**

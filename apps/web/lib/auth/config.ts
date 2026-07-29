@@ -63,6 +63,34 @@ export const authConfig = {
     signIn: "/login",
   },
 
+  callbacks: {
+    /**
+     * Platform Administration milestone. Blocks a NEW Google sign-in for a
+     * deactivated/soft-deleted user BEFORE NextAuth ever creates a Session
+     * row - `lib/auth/session.ts`'s findCurrentUserByEmail fix only closes
+     * this for an already-active session, not a fresh OAuth handshake.
+     * Does its own fresh lookup (same defensive pattern triggerLoginSync
+     * already uses below) rather than trusting whatever shape NextAuth
+     * hands this callback for a custom Prisma field.
+     */
+    async signIn({ user }) {
+      if (!user.email) {
+        return true;
+      }
+
+      const record = await prisma.user.findUnique({
+        where: { email: user.email },
+        select: { deletedAt: true, deactivatedAt: true },
+      });
+
+      if (record?.deletedAt || record?.deactivatedAt) {
+        return "/login?toast=account-disabled";
+      }
+
+      return true;
+    },
+  },
+
   events: {
     async signIn({ user }) {
       if (!user.id) {
