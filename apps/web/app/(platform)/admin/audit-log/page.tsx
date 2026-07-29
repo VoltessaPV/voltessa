@@ -1,4 +1,4 @@
-import { listAuditLog } from "@/lib/admin/queries";
+import { listAuditLog, resolveUserDisplayName } from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
@@ -34,9 +34,11 @@ export default async function AdminAuditLogPage() {
             {entries.map((entry) => (
               <tr key={entry.id} className="border-b border-white/5 last:border-0">
                 <td className="px-4 py-3">{ACTION_LABELS[entry.action] ?? entry.action}</td>
-                <td className="px-4 py-3 text-white/70">{entry.actor.name ?? entry.actor.email}</td>
                 <td className="px-4 py-3 text-white/70">
-                  {entry.target ? (entry.target.name ?? entry.target.email) : "—"}
+                  {resolveUserDisplayName(entry.actor) ?? entry.actor.email}
+                </td>
+                <td className="px-4 py-3 text-white/70">
+                  {entry.target ? resolveUserDisplayName(entry.target) ?? entry.target.email : "—"}
                 </td>
                 <td className="px-4 py-3 text-white/70">{entry.createdAt.toLocaleString()}</td>
               </tr>

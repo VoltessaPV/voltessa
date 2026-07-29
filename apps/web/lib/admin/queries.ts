@@ -1,6 +1,28 @@
 import { prisma } from "@/lib/prisma";
 
 /**
+ * Single source of truth for a user's display name across Administration.
+ * `firstName`/`lastName` (written by Settings' own updateProfile and by
+ * this module's updateUser/updateTraderProfile) are preferred over the
+ * legacy `name` column, which NextAuth's Google flow populates on first
+ * sign-in but which stays permanently null for any account created via
+ * email/password registration or edited only through the admin panel
+ * (updateUser/updateTraderProfile deliberately never touch `name` - see
+ * that function's own doc comment) - `name` being null is not the same as
+ * the user having no name. Falls back to `name` for whatever legacy rows
+ * only ever had that field set; returns null (never a placeholder string)
+ * so callers decide their own fallback (email, "—", etc.).
+ */
+export function resolveUserDisplayName(user: {
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+}): string | null {
+  const fromParts = [user.firstName, user.lastName].filter(Boolean).join(" ").trim();
+  return fromParts || user.name || null;
+}
+
+/**
  * Platform Administration milestone. Every query in this file is
  * deliberately cross-organization — the one sanctioned exception to this
  * app's usual "every query scopes by organizationId" rule (see
@@ -18,6 +40,8 @@ export async function listUsers() {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       accountType: true,
       role: true,
@@ -63,6 +87,8 @@ export async function listDeletedUsers() {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       accountType: true,
       isPlatformAdmin: true,
@@ -82,7 +108,7 @@ export async function listPlantOwnerOrganizations() {
       plants: { select: { id: true } },
       traderAssignment: {
         select: {
-          trader: { select: { id: true, name: true, email: true } },
+          trader: { select: { id: true, name: true, firstName: true, lastName: true, email: true } },
         },
       },
     },
@@ -97,7 +123,14 @@ export async function getPlantOwnerOrganizationById(id: string) {
       name: true,
       createdAt: true,
       users: {
-        select: { id: true, name: true, email: true, deactivatedAt: true },
+        select: {
+          id: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          deactivatedAt: true,
+        },
       },
       plants: {
         select: { id: true, name: true, vendor: true, timezone: true, createdAt: true },
@@ -107,7 +140,7 @@ export async function getPlantOwnerOrganizationById(id: string) {
         select: {
           id: true,
           createdAt: true,
-          trader: { select: { id: true, name: true, email: true } },
+          trader: { select: { id: true, name: true, firstName: true, lastName: true, email: true } },
         },
       },
     },
@@ -122,6 +155,8 @@ export async function listEnergyTraders() {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       phone: true,
       deactivatedAt: true,
@@ -169,6 +204,8 @@ export async function listAssignableTraders() {
     select: {
       id: true,
       name: true,
+      firstName: true,
+      lastName: true,
       email: true,
       traderProfile: { select: { companyName: true } },
     },
@@ -195,11 +232,15 @@ export async function listTraderAssignments() {
         select: {
           id: true,
           name: true,
+          firstName: true,
+          lastName: true,
           email: true,
           traderProfile: { select: { companyName: true } },
         },
       },
-      assignedBy: { select: { id: true, name: true, email: true } },
+      assignedBy: {
+        select: { id: true, name: true, firstName: true, lastName: true, email: true },
+      },
     },
   });
 }
@@ -214,8 +255,8 @@ export async function listAuditLog(limit = 100) {
       metadata: true,
       createdAt: true,
       organizationId: true,
-      actor: { select: { id: true, name: true, email: true } },
-      target: { select: { id: true, name: true, email: true } },
+      actor: { select: { id: true, name: true, firstName: true, lastName: true, email: true } },
+      target: { select: { id: true, name: true, firstName: true, lastName: true, email: true } },
     },
   });
 }
@@ -236,8 +277,8 @@ export async function getAdminDashboardStats() {
           id: true,
           action: true,
           createdAt: true,
-          actor: { select: { name: true, email: true } },
-          target: { select: { name: true, email: true } },
+          actor: { select: { name: true, firstName: true, lastName: true, email: true } },
+          target: { select: { name: true, firstName: true, lastName: true, email: true } },
         },
       }),
     ]);

@@ -1,5 +1,5 @@
 import { restoreUser } from "../../actions";
-import { getUserPurgeEligibility, listDeletedUsers } from "@/lib/admin/queries";
+import { getUserPurgeEligibility, listDeletedUsers, resolveUserDisplayName } from "@/lib/admin/queries";
 import { PurgeUserButton } from "@/components/admin/PurgeUserButton";
 
 export { pageHeading } from "./heading";
@@ -41,7 +41,7 @@ export default async function AdminDeletedUsersPage() {
               return (
                 <tr key={user.id} className="border-b border-white/5 last:border-0">
                   <td className="px-4 py-3">
-                    {user.name ?? "—"}
+                    {resolveUserDisplayName(user) ?? "—"}
                     {user.isPlatformAdmin && (
                       <span className="ml-2 rounded-full border border-purple-400/30 bg-purple-400/10 px-2 py-0.5 text-xs text-purple-300">
                         Platform Admin
