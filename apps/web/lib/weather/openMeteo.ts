@@ -12,9 +12,15 @@
  * Solcast, Meteomatics, or PVGIS (or adding production-forecast/expected-
  * peak-irradiance fields) replace this file alone, without touching the UI.
  *
- * Only the four fields this app actually needs for PV-relevant weather are
- * requested — no humidity, pressure, precipitation, visibility, UV, dew
- * point, sunrise, or sunset, none of which anything here reads.
+ * Only the fields this app actually needs for PV-relevant weather are
+ * requested — no humidity, pressure, visibility, UV, dew point, sunrise, or
+ * sunset, none of which anything here reads. `weather_code` (Open-Meteo's
+ * WMO weather code) is the one exception to "no precipitation": it isn't
+ * used for anything PV-related, only to let the Solar Weather widget's icon
+ * show an actual storm/snow/rain/fog event when one is happening, instead
+ * of always deriving the icon from cloud cover alone — see
+ * `components/dashboard/WeatherIcons.tsx` and `WeatherCard.tsx`'s
+ * `solarCondition`.
  */
 
 const OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast";
@@ -23,6 +29,7 @@ const HOURLY_FIELDS = [
   "cloud_cover",
   "temperature_2m",
   "wind_speed_10m",
+  "weather_code",
 ] as const;
 /** Enough hourly points ahead to always cover the next 6-8 hours, even late in the day. */
 const FORECAST_DAYS = 2;
@@ -47,6 +54,8 @@ export type SolarWeatherPoint = {
   temperature: number;
   /** Meters per second. */
   windSpeed: number;
+  /** Open-Meteo's WMO weather code — icon-severity override only, see module doc comment. */
+  weatherCode: number;
 };
 
 /**
@@ -61,6 +70,7 @@ export type SolarWeather = {
     cloudCover: number;
     temperature: number;
     windSpeed: number;
+    weatherCode: number;
   };
   hourly: SolarWeatherPoint[];
 };
@@ -71,6 +81,7 @@ type OpenMeteoHourlyResponse = {
   cloud_cover: number[];
   temperature_2m: number[];
   wind_speed_10m: number[];
+  weather_code: number[];
 };
 
 function isOpenMeteoHourlyResponse(
@@ -158,7 +169,8 @@ export async function getSolarWeather(
     hourly.shortwave_radiation.length !== length ||
     hourly.cloud_cover.length !== length ||
     hourly.temperature_2m.length !== length ||
-    hourly.wind_speed_10m.length !== length
+    hourly.wind_speed_10m.length !== length ||
+    hourly.weather_code.length !== length
   ) {
     throw new OpenMeteoApiError(
       "Open-Meteo hourly arrays have inconsistent lengths",
@@ -170,12 +182,14 @@ export async function getSolarWeather(
     const cloudCover = hourly.cloud_cover[index];
     const temperature = hourly.temperature_2m[index];
     const windSpeed = hourly.wind_speed_10m[index];
+    const weatherCode = hourly.weather_code[index];
 
     if (
       irradiance === undefined ||
       cloudCover === undefined ||
       temperature === undefined ||
-      windSpeed === undefined
+      windSpeed === undefined ||
+      weatherCode === undefined
     ) {
       throw new OpenMeteoApiError(
         `Open-Meteo hourly response is missing a value at index ${index}`,
@@ -188,6 +202,7 @@ export async function getSolarWeather(
       cloudCover,
       temperature,
       windSpeed,
+      weatherCode,
     };
   });
 
@@ -203,6 +218,7 @@ export async function getSolarWeather(
       cloudCover: current.cloudCover,
       temperature: current.temperature,
       windSpeed: current.windSpeed,
+      weatherCode: current.weatherCode,
     },
     hourly: points,
   };

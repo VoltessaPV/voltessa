@@ -96,7 +96,11 @@ function buildSampleSolarWeather(): SolarWeather {
   const CURRENT_WIND_SPEED = 2.1;
 
   // A plausible midday irradiance/cloud-cover arc, not a live reading —
-  // the first entry matches the CURRENT_* constants above.
+  // the first entry matches the CURRENT_* constants above. weatherCode 1
+  // ("mainly clear") throughout - none of the icon-override code ranges
+  // (see WeatherCard.tsx's weatherCodeOverride), so this arc's icons come
+  // purely from cloudCover, same as the real WeatherCard's default path.
+  const SAMPLE_WEATHER_CODE = 1;
   const hourlyTemplate: Array<{ irradiance: number; cloudCover: number }> = [
     { irradiance: CURRENT_IRRADIANCE, cloudCover: CURRENT_CLOUD_COVER },
     { irradiance: 560, cloudCover: 28 },
@@ -114,6 +118,7 @@ function buildSampleSolarWeather(): SolarWeather {
     cloudCover: point.cloudCover,
     temperature: CURRENT_TEMPERATURE + index * 0.3,
     windSpeed: CURRENT_WIND_SPEED + index * 0.1,
+    weatherCode: SAMPLE_WEATHER_CODE,
   }));
 
   return {
@@ -122,6 +127,7 @@ function buildSampleSolarWeather(): SolarWeather {
       cloudCover: CURRENT_CLOUD_COVER,
       temperature: CURRENT_TEMPERATURE,
       windSpeed: CURRENT_WIND_SPEED,
+      weatherCode: SAMPLE_WEATHER_CODE,
     },
     hourly,
   };
