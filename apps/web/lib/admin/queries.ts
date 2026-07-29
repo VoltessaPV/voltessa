@@ -71,7 +71,6 @@ export async function getPlantOwnerOrganizationById(id: string) {
       id: true,
       name: true,
       createdAt: true,
-      onboardingCompletedAt: true,
       users: {
         select: { id: true, name: true, email: true, deactivatedAt: true },
       },

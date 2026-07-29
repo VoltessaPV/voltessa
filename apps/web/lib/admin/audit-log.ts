@@ -6,15 +6,15 @@ import { prisma } from "@/lib/prisma";
  * Platform Administration milestone's action vocabulary — a plain string in
  * the schema (see `AuditLog`'s doc comment), typed here so callers can't
  * pass an arbitrary value. Same "closed-but-growable kind vocabulary"
- * convention as `AutomationEventType`. `user_email_changed` is kept
- * distinct from `user_profile_updated` since it changes the account's
- * login identity, not just display information.
+ * convention as `AutomationEventType`. One event per admin save, not one
+ * per changed field — an email change within a `user_updated`/
+ * `trader_profile_updated` save is recorded in that same event's
+ * `metadata`, not as a second row.
  */
 export type AdminAuditActionType =
   | "user_activated"
   | "user_deactivated"
-  | "user_profile_updated"
-  | "user_email_changed"
+  | "user_updated"
   | "trader_profile_updated"
   | "trader_assigned"
   | "trader_changed"

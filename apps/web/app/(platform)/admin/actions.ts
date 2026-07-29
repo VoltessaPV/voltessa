@@ -45,6 +45,8 @@ export async function updateUser(userId: string, formData: FormData) {
     redirect(`/admin/users/${userId}?error=email_taken`);
   }
 
+  const emailChanged = email !== current.email;
+
   await prisma.user.update({
     where: { id: userId },
     data: {
@@ -58,20 +60,17 @@ export async function updateUser(userId: string, formData: FormData) {
   await createAuditLog({
     actorUserId: admin.id,
     targetUserId: userId,
-    action: "user_profile_updated",
+    action: "user_updated",
+    metadata: emailChanged ? { previousEmail: current.email, newEmail: email } : null,
   });
 
-  if (email !== current.email) {
-    await createAuditLog({
-      actorUserId: admin.id,
-      targetUserId: userId,
-      action: "user_email_changed",
-      metadata: { previousEmail: current.email, newEmail: email },
-    });
-  }
-
+  // The edited user may be an Energy Trader (this page isn't filtered by
+  // accountType) - keep both surfaces for the same underlying User row fresh.
   revalidatePath(`/admin/users/${userId}`);
   revalidatePath("/admin/users");
+  revalidatePath(`/admin/traders/${userId}`);
+  revalidatePath("/admin/traders");
+  revalidatePath("/admin");
   redirect(`/admin/users/${userId}`);
 }
 
@@ -101,6 +100,7 @@ export async function toggleUserActive(userId: string) {
   revalidatePath("/admin/users");
   revalidatePath(`/admin/traders/${userId}`);
   revalidatePath("/admin/traders");
+  revalidatePath("/admin");
 }
 
 /**
@@ -133,41 +133,42 @@ export async function updateTraderProfile(userId: string, formData: FormData) {
     redirect(`/admin/traders/${userId}?error=email_taken`);
   }
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      firstName: optionalString(formData, "firstName"),
-      lastName: optionalString(formData, "lastName"),
-      phone: optionalString(formData, "phone"),
-      email,
-    },
-  });
-
+  const emailChanged = email !== current.email;
   const companyName = optionalString(formData, "companyName");
 
-  await prisma.traderProfile.upsert({
-    where: { userId },
-    create: { userId, companyName, distributionCompanyId },
-    update: { companyName, distributionCompanyId },
-  });
+  // Both writes are one logical "save trader" action from the admin's point
+  // of view - a transaction keeps them from ever partially applying (e.g.
+  // identity saved but the profile upsert failing, or vice versa).
+  await prisma.$transaction([
+    prisma.user.update({
+      where: { id: userId },
+      data: {
+        firstName: optionalString(formData, "firstName"),
+        lastName: optionalString(formData, "lastName"),
+        phone: optionalString(formData, "phone"),
+        email,
+      },
+    }),
+    prisma.traderProfile.upsert({
+      where: { userId },
+      create: { userId, companyName, distributionCompanyId },
+      update: { companyName, distributionCompanyId },
+    }),
+  ]);
 
   await createAuditLog({
     actorUserId: admin.id,
     targetUserId: userId,
     action: "trader_profile_updated",
+    metadata: emailChanged ? { previousEmail: current.email, newEmail: email } : null,
   });
 
-  if (email !== current.email) {
-    await createAuditLog({
-      actorUserId: admin.id,
-      targetUserId: userId,
-      action: "user_email_changed",
-      metadata: { previousEmail: current.email, newEmail: email },
-    });
-  }
-
+  // Same underlying User row is also visible from Users - keep it fresh too.
   revalidatePath(`/admin/traders/${userId}`);
   revalidatePath("/admin/traders");
+  revalidatePath(`/admin/users/${userId}`);
+  revalidatePath("/admin/users");
+  revalidatePath("/admin");
   redirect(`/admin/traders/${userId}`);
 }
 
@@ -202,6 +203,7 @@ function revalidateAssignmentPaths(organizationId: string) {
   revalidatePath(`/admin/plant-owners/${organizationId}`);
   revalidatePath("/admin/plant-owners");
   revalidatePath("/admin/assignments");
+  revalidatePath("/admin");
 }
 
 /** Assign entry point #1 — from a Plant Owner's own detail page (organizationId fixed via `bind`). */
