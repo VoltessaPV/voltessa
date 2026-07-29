@@ -1,7 +1,11 @@
 import { notFound, redirect } from "next/navigation";
 
 import { softDeleteUser, toggleUserActive, updateTraderProfile } from "../../actions";
-import { getEnergyTraderById, isLastActivePlatformAdmin } from "@/lib/admin/queries";
+import {
+  getEnergyTraderById,
+  isLastActivePlatformAdmin,
+  resolveUserDisplayName,
+} from "@/lib/admin/queries";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 
@@ -9,8 +13,14 @@ export { pageHeading } from "./heading";
 
 const inputClassName =
   "mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition placeholder:text-white/30 focus:border-blue-500";
+// [color-scheme:dark] + optionStyle: same fix as
+// app/dev/huawei-api/HuaweiDiagnosticTestsCard.tsx's selectClassName -
+// native <option> popups don't inherit background-color from the
+// <select>, so without this they render on the browser's default opaque
+// white surface under our white option text.
 const selectClassName =
-  "mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500";
+  "mt-2 h-11 w-full rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500 [color-scheme:dark]";
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
 
 const ERROR_MESSAGES: Record<string, string> = {
   email_required: "Email is required.",
@@ -54,7 +64,7 @@ export default async function AdminTraderDetailPage({ params, searchParams }: Pr
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold text-white">
-            {trader.traderProfile?.companyName ?? trader.name ?? trader.email}
+            {trader.traderProfile?.companyName ?? resolveUserDisplayName(trader) ?? trader.email}
           </h2>
           <p className="mt-1 text-sm text-white/50">
             Assigned to {trader.traderAssignments.length} Plant Owner
@@ -142,9 +152,11 @@ export default async function AdminTraderDetailPage({ params, searchParams }: Pr
               defaultValue={trader.traderProfile?.distributionCompanyId ?? ""}
               className={selectClassName}
             >
-              <option value="">—</option>
+              <option value="" style={optionStyle}>
+                —
+              </option>
               {operators.map((operator) => (
-                <option key={operator.id} value={operator.id}>
+                <option key={operator.id} value={operator.id} style={optionStyle}>
                   {operator.officialBulgarianName}
                 </option>
               ))}

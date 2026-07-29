@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { listEnergyTraders } from "@/lib/admin/queries";
+import { listEnergyTraders, resolveUserDisplayName } from "@/lib/admin/queries";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 
 export { pageHeading } from "./heading";
@@ -36,7 +36,7 @@ export default async function AdminTradersPage() {
                     {trader.traderProfile?.companyName ?? "—"}
                   </Link>
                 </td>
-                <td className="px-4 py-3 text-white/70">{trader.name ?? "—"}</td>
+                <td className="px-4 py-3 text-white/70">{resolveUserDisplayName(trader) ?? "—"}</td>
                 <td className="px-4 py-3 text-white/70">{trader.email}</td>
                 <td className="px-4 py-3 text-white/70">
                   {operators.find((op) => op.id === trader.traderProfile?.distributionCompanyId)

@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { listPlantOwnerOrganizations } from "@/lib/admin/queries";
+import { listPlantOwnerOrganizations, resolveUserDisplayName } from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
@@ -34,7 +34,8 @@ export default async function AdminPlantOwnersPage() {
                 <td className="px-4 py-3 text-white/70">{org.plants.length}</td>
                 <td className="px-4 py-3 text-white/70">
                   {org.traderAssignment
-                    ? org.traderAssignment.trader.name ?? org.traderAssignment.trader.email
+                    ? resolveUserDisplayName(org.traderAssignment.trader) ??
+                      org.traderAssignment.trader.email
                     : "Unassigned"}
                 </td>
               </tr>

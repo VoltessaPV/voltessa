@@ -1,19 +1,45 @@
 import { notFound } from "next/navigation";
 
 import { assignTrader, changeTrader, removeTrader } from "../../actions";
-import { getPlantOwnerOrganizationById, listAssignableTraders } from "@/lib/admin/queries";
+import {
+  getPlantOwnerOrganizationById,
+  listAssignableTraders,
+  resolveUserDisplayName,
+} from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
+// [color-scheme:dark] + optionStyle: same fix as
+// app/dev/huawei-api/HuaweiDiagnosticTestsCard.tsx's selectClassName -
+// native <option> popups don't inherit background-color from the
+// <select>, so without this they render on the browser's default opaque
+// white surface under our white option text.
 const selectClassName =
-  "h-11 rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500";
+  "h-11 rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500 [color-scheme:dark]";
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
 
 type Props = {
   params: Promise<{ id: string }>;
 };
 
-function traderLabel(trader: { name: string | null; email: string | null }) {
-  return trader.name ?? trader.email ?? "Unknown";
+type TraderOption = {
+  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+};
+
+function traderLabel(trader: TraderOption) {
+  return resolveUserDisplayName(trader) ?? trader.email ?? "Unknown";
+}
+
+/** Name + email, so the Energy Trader select clearly represents a person, not their company (companyName is intentionally not shown here). */
+function traderOptionLabel(trader: TraderOption) {
+  const displayName = resolveUserDisplayName(trader);
+  if (!displayName) {
+    return trader.email ?? "Unknown";
+  }
+  return trader.email ? `${displayName} (${trader.email})` : displayName;
 }
 
 export default async function AdminPlantOwnerDetailPage({ params }: Props) {
@@ -49,7 +75,7 @@ export default async function AdminPlantOwnerDetailPage({ params }: Props) {
           <ul className="mt-4 space-y-2">
             {organization.users.map((user) => (
               <li key={user.id} className="text-sm text-white/70">
-                {user.name ?? user.email}
+                {resolveUserDisplayName(user) ?? user.email}
                 {user.deactivatedAt && <span className="ml-2 text-red-300">(deactivated)</span>}
               </li>
             ))}
@@ -82,17 +108,20 @@ export default async function AdminPlantOwnerDetailPage({ params }: Props) {
               <span className="text-white">{traderLabel(organization.traderAssignment.trader)}</span>
             </p>
 
-            <form action={changeAction} className="flex flex-wrap items-center gap-3">
-              <select name="traderId" required className={selectClassName} defaultValue="">
-                <option value="" disabled>
-                  Change to…
-                </option>
-                {assignableTraders.map((trader) => (
-                  <option key={trader.id} value={trader.id}>
-                    {trader.traderProfile?.companyName ?? traderLabel(trader)}
+            <form action={changeAction} className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm text-white/60">Energy Trader</span>
+                <select name="traderId" required className={selectClassName} defaultValue="">
+                  <option value="" disabled style={optionStyle}>
+                    Select an Energy Trader…
                   </option>
-                ))}
-              </select>
+                  {assignableTraders.map((trader) => (
+                    <option key={trader.id} value={trader.id} style={optionStyle}>
+                      {traderOptionLabel(trader)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="submit"
                 className="rounded-xl bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500"
@@ -117,17 +146,20 @@ export default async function AdminPlantOwnerDetailPage({ params }: Props) {
             {assignableTraders.length === 0 ? (
               <p className="text-sm text-white/50">No active Energy Traders available to assign.</p>
             ) : (
-              <form action={assignAction} className="flex flex-wrap items-center gap-3">
-                <select name="traderId" required className={selectClassName} defaultValue="">
-                  <option value="" disabled>
-                    Select a trader…
-                  </option>
-                  {assignableTraders.map((trader) => (
-                    <option key={trader.id} value={trader.id}>
-                      {trader.traderProfile?.companyName ?? traderLabel(trader)}
+              <form action={assignAction} className="flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-sm text-white/60">Energy Trader</span>
+                  <select name="traderId" required className={selectClassName} defaultValue="">
+                    <option value="" disabled style={optionStyle}>
+                      Select an Energy Trader…
                     </option>
-                  ))}
-                </select>
+                    {assignableTraders.map((trader) => (
+                      <option key={trader.id} value={trader.id} style={optionStyle}>
+                        {traderOptionLabel(trader)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="submit"
                   className="rounded-xl bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500"

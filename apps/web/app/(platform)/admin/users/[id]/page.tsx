@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 
 import { softDeleteUser, toggleUserActive, updateUser } from "../../actions";
-import { getUserById, isLastActivePlatformAdmin } from "@/lib/admin/queries";
+import { getUserById, isLastActivePlatformAdmin, resolveUserDisplayName } from "@/lib/admin/queries";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 
 export { pageHeading } from "./heading";
@@ -50,7 +50,9 @@ export default async function AdminUserDetailPage({ params, searchParams }: Prop
     <div className="max-w-3xl space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-white">{user.name ?? user.email}</h2>
+          <h2 className="text-2xl font-semibold text-white">
+            {resolveUserDisplayName(user) ?? user.email}
+          </h2>
           <p className="mt-1 text-sm text-white/50">
             {user.accountType === "ENERGY_TRADER" ? "Energy Trader" : "Plant Owner"}
             {user.organization ? ` — ${user.organization.name}` : ""}

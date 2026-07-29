@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { listUsers } from "@/lib/admin/queries";
+import { listUsers, resolveUserDisplayName } from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
@@ -33,7 +33,7 @@ export default async function AdminUsersPage() {
               <tr key={user.id} className="border-b border-white/5 last:border-0">
                 <td className="px-4 py-3">
                   <Link href={`/admin/users/${user.id}`} className="text-blue-400 hover:text-blue-300">
-                    {user.name ?? "—"}
+                    {resolveUserDisplayName(user) ?? "—"}
                   </Link>
                   {user.isPlatformAdmin && (
                     <span className="ml-2 rounded-full border border-purple-400/30 bg-purple-400/10 px-2 py-0.5 text-xs text-purple-300">

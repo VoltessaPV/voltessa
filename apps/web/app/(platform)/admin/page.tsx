@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getAdminDashboardStats } from "@/lib/admin/queries";
+import { getAdminDashboardStats, resolveUserDisplayName } from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
@@ -59,12 +59,17 @@ export default async function AdminDashboardPage() {
           <ul className="mt-4 space-y-3">
             {stats.recentAuditLog.map((entry) => (
               <li key={entry.id} className="text-sm text-white/70">
-                <span className="text-white">{entry.actor.name ?? entry.actor.email}</span>{" "}
+                <span className="text-white">
+                  {resolveUserDisplayName(entry.actor) ?? entry.actor.email}
+                </span>{" "}
                 {ACTION_LABELS[entry.action] ?? entry.action}
                 {entry.target && (
                   <>
                     {" "}
-                    for <span className="text-white">{entry.target.name ?? entry.target.email}</span>
+                    for{" "}
+                    <span className="text-white">
+                      {resolveUserDisplayName(entry.target) ?? entry.target.email}
+                    </span>
                   </>
                 )}
                 <span className="text-white/40"> — {entry.createdAt.toLocaleString()}</span>

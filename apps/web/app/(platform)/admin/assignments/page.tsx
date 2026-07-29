@@ -1,12 +1,37 @@
 import Link from "next/link";
 
 import { createAssignment } from "../actions";
-import { listAssignableTraders, listTraderAssignments, listUnassignedOrganizations } from "@/lib/admin/queries";
+import {
+  listAssignableTraders,
+  listTraderAssignments,
+  listUnassignedOrganizations,
+  resolveUserDisplayName,
+} from "@/lib/admin/queries";
 
 export { pageHeading } from "./heading";
 
+// [color-scheme:dark] + optionStyle: same fix as
+// app/dev/huawei-api/HuaweiDiagnosticTestsCard.tsx's selectClassName -
+// native <option> popups don't inherit background-color from the
+// <select>, so without this they render on the browser's default opaque
+// white surface under our white option text.
 const selectClassName =
-  "h-11 rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500";
+  "h-11 rounded-xl border border-white/10 bg-white/5 px-4 text-white outline-none transition focus:border-blue-500 [color-scheme:dark]";
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
+
+/** Name + email, so the Energy Trader select clearly represents a person, not their company. */
+function traderOptionLabel(trader: {
+  name: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+}) {
+  const displayName = resolveUserDisplayName(trader);
+  if (!displayName) {
+    return trader.email ?? "Unknown";
+  }
+  return trader.email ? `${displayName} (${trader.email})` : displayName;
+}
 
 export default async function AdminAssignmentsPage() {
   const [assignments, unassignedOrganizations, assignableTraders] = await Promise.all([
@@ -25,28 +50,34 @@ export default async function AdminAssignmentsPage() {
         ) : assignableTraders.length === 0 ? (
           <p className="mt-4 text-white/50">No active Energy Traders available to assign.</p>
         ) : (
-          <form action={createAssignment} className="mt-4 flex flex-wrap items-center gap-3">
-            <select name="organizationId" required className={selectClassName} defaultValue="">
-              <option value="" disabled>
-                Plant Owner…
-              </option>
-              {unassignedOrganizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
+          <form action={createAssignment} className="mt-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm text-white/60">Plant Owner</span>
+              <select name="organizationId" required className={selectClassName} defaultValue="">
+                <option value="" disabled style={optionStyle}>
+                  Select a Plant Owner…
                 </option>
-              ))}
-            </select>
+                {unassignedOrganizations.map((org) => (
+                  <option key={org.id} value={org.id} style={optionStyle}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-            <select name="traderId" required className={selectClassName} defaultValue="">
-              <option value="" disabled>
-                Trader…
-              </option>
-              {assignableTraders.map((trader) => (
-                <option key={trader.id} value={trader.id}>
-                  {trader.traderProfile?.companyName ?? trader.name ?? trader.email}
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm text-white/60">Energy Trader</span>
+              <select name="traderId" required className={selectClassName} defaultValue="">
+                <option value="" disabled style={optionStyle}>
+                  Select an Energy Trader…
                 </option>
-              ))}
-            </select>
+                {assignableTraders.map((trader) => (
+                  <option key={trader.id} value={trader.id} style={optionStyle}>
+                    {traderOptionLabel(trader)}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <button type="submit" className="rounded-xl bg-blue-600 px-4 py-2 font-medium hover:bg-blue-500">
               Assign
@@ -77,10 +108,12 @@ export default async function AdminAssignmentsPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-white/70">
-                  {assignment.trader.traderProfile?.companyName ?? assignment.trader.name ?? assignment.trader.email}
+                  {assignment.trader.traderProfile?.companyName ??
+                    resolveUserDisplayName(assignment.trader) ??
+                    assignment.trader.email}
                 </td>
                 <td className="px-4 py-3 text-white/70">
-                  {assignment.assignedBy.name ?? assignment.assignedBy.email}
+                  {resolveUserDisplayName(assignment.assignedBy) ?? assignment.assignedBy.email}
                 </td>
                 <td className="px-4 py-3 text-white/70">{assignment.createdAt.toLocaleDateString()}</td>
               </tr>
