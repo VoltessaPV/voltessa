@@ -1,3 +1,12 @@
+import { pageHeading as adminDashboard } from "@/app/(platform)/admin/heading";
+import { pageHeading as adminAssignments } from "@/app/(platform)/admin/assignments/heading";
+import { pageHeading as adminAuditLog } from "@/app/(platform)/admin/audit-log/heading";
+import { pageHeading as adminPlantOwners } from "@/app/(platform)/admin/plant-owners/heading";
+import { pageHeading as adminPlantOwnerDetails } from "@/app/(platform)/admin/plant-owners/[id]/heading";
+import { pageHeading as adminTraders } from "@/app/(platform)/admin/traders/heading";
+import { pageHeading as adminTraderDetails } from "@/app/(platform)/admin/traders/[id]/heading";
+import { pageHeading as adminUsers } from "@/app/(platform)/admin/users/heading";
+import { pageHeading as adminUserDetails } from "@/app/(platform)/admin/users/[id]/heading";
 import { pageHeading as alerts } from "@/app/(platform)/alerts/heading";
 import { pageHeading as automations } from "@/app/(platform)/automations/heading";
 import { pageHeading as bess } from "@/app/(platform)/bess/heading";
@@ -28,6 +37,12 @@ const STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/settings": settings,
   "/plants": plants,
   "/plants/new": plantsNew,
+  "/admin": adminDashboard,
+  "/admin/users": adminUsers,
+  "/admin/plant-owners": adminPlantOwners,
+  "/admin/traders": adminTraders,
+  "/admin/assignments": adminAssignments,
+  "/admin/audit-log": adminAuditLog,
 };
 
 export function resolvePageHeading(pathname: string): PageHeadingContent {
@@ -37,12 +52,23 @@ export function resolvePageHeading(pathname: string): PageHeadingContent {
   }
 
   // /plants/[id] and /plants/[id]/edit - the only dynamic-segment routes
-  // under (platform); everything else above is a static path.
+  // under (platform) until the Platform Administration milestone added
+  // its own three (/admin/users/[id], /admin/plant-owners/[id],
+  // /admin/traders/[id]) - everything else above is a static path.
   if (/^\/plants\/[^/]+\/edit$/.test(pathname)) {
     return plantEdit;
   }
   if (/^\/plants\/[^/]+$/.test(pathname)) {
     return plantDetails;
+  }
+  if (/^\/admin\/users\/[^/]+$/.test(pathname)) {
+    return adminUserDetails;
+  }
+  if (/^\/admin\/plant-owners\/[^/]+$/.test(pathname)) {
+    return adminPlantOwnerDetails;
+  }
+  if (/^\/admin\/traders\/[^/]+$/.test(pathname)) {
+    return adminTraderDetails;
   }
 
   return { eyebrow: "", title: "" };

@@ -9,13 +9,14 @@ type AppShellProps = {
     name: string | null;
     email: string | null;
     role: string;
+    isPlatformAdmin: boolean;
   };
 };
 
 export function AppShell({ children, user }: AppShellProps) {
   return (
     <div className="min-h-screen bg-[#050816] text-white">
-      <AppSidebar />
+      <AppSidebar isPlatformAdmin={user.isPlatformAdmin} />
 
       <div className="min-h-screen lg:pl-64">
         <AppHeader user={user} />
