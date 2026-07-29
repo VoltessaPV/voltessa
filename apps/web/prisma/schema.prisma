@@ -64,6 +64,8 @@ model User {
   auditLogsActed    AuditLog[] @relation("AuditLogsActed")
   auditLogsTargeted AuditLog[] @relation("AuditLogsTargeted")
 
+  traderProfile TraderProfile?
+
   /// Settings > Profile. Kept separate from the pre-existing `name` (used by
   /// NextAuth's own Google profile sync and AppHeader's display) rather than
   /// parsing/splitting it — `updateProfile` keeps `name` in sync from these
@@ -111,6 +113,32 @@ model TraderAssignment {
 
   @@unique([organizationId])
   @@index([traderId])
+}
+
+/// Platform Administration milestone. Trader-specific business/profile
+/// data, deliberately NOT added to `User` directly — same reasoning as
+/// `NotificationPreferences` (per-identity data, not organization-tenant
+/// data, so scoped by `userId` alone) and the same "dedicated model per
+/// concern" precedent `BillingInformation`/`EnergyMarketSettings` already
+/// set for organization-scoped business data. Every field nullable: a
+/// trader profile may not exist yet (no self-service UI exists as of this
+/// milestone - Platform Admin's own edit screen creates this row the first
+/// time) and an existing one may be partially filled in.
+model TraderProfile {
+  id String @id @default(cuid())
+
+  userId String @unique
+
+  companyName String?
+
+  /// References `lib/market/distribution/bg.ts`'s static DSO list by `id`,
+  /// same non-foreign-key convention as `EnergyMarketSettings.dsoId`.
+  distributionCompanyId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 /// No fixed expiry — ends via explicit stop, admin logout, or the admin's own session expiring.
@@ -568,7 +596,7 @@ model AutomationState {
   /// either mode.
   currentExportMode String?
 
-  isRunning Boolean @default(false)
+  isRunning Boolean   @default(false)
   lockedAt  DateTime?
 
   /// Notification Provider milestone's anti-spam state for daily
@@ -635,7 +663,7 @@ model AutomationEvent {
   previousMode String?
   newMode      String?
 
-  currentPrice     Decimal? @db.Decimal(10, 4)
+  currentPrice      Decimal? @db.Decimal(10, 4)
   nextIntervalPrice Decimal? @db.Decimal(10, 4)
 
   /// The AutomationSettings.minimumExportPrice in effect at decision time -
@@ -786,10 +814,10 @@ model PlantDailyKpi {
   localDate DateTime
 
   /// Huawei `day_power` — cumulative PV yield for the local day, kWh.
-  pvYieldKwh Decimal @db.Decimal(12, 3)
+  pvYieldKwh        Decimal  @db.Decimal(12, 3)
   /// Huawei `day_use_energy` — cumulative site consumption for the local
   /// day, kWh.
-  consumptionKwh Decimal @db.Decimal(12, 3)
+  consumptionKwh    Decimal  @db.Decimal(12, 3)
   /// Huawei `day_on_grid_energy` — cumulative export for the local day,
   /// kWh. Reference only; display continues to use the meter counter.
   exportedEnergyKwh Decimal? @db.Decimal(12, 3)
@@ -850,7 +878,7 @@ model DeviceTelemetry {
   huaweiDeviceId BigInt
   /// Huawei's device type (1 = inverter, 47 = meter, ...) — denormalized
   /// for the same reason.
-  devTypeId Int
+  devTypeId      Int
 
   timestamp  DateTime
   resolution TelemetryResolution
@@ -858,25 +886,25 @@ model DeviceTelemetry {
   ingestedAt DateTime @default(now())
   /// Always "HuaweiFusionSolar" today; stored explicitly (not assumed) so a
   /// future second vendor never has to backfill this column.
-  source String @default("HuaweiFusionSolar")
+  source     String   @default("HuaweiFusionSolar")
 
   /// Instantaneous inverter production, kW (Huawei dataItemMap.active_power
   /// on the inverter device type). Null for meter rows.
-  activePower Decimal? @db.Decimal(12, 3)
+  activePower   Decimal? @db.Decimal(12, 3)
   /// Inverter operating state (Huawei dataItemMap.inverter_state). Null for
   /// meter rows.
   inverterState Int?
   /// Inverter temperature, °C (Huawei dataItemMap.temperature). Null for
   /// meter rows.
-  temperature Decimal? @db.Decimal(6, 2)
+  temperature   Decimal? @db.Decimal(6, 2)
 
   /// Instantaneous grid exchange power, kW (Huawei dataItemMap.active_power
   /// on the meter device type — same Huawei field name as `activePower`
   /// above, but a different physical quantity, hence a separate column).
   /// Null for inverter rows.
-  meterActivePower Decimal? @db.Decimal(12, 3)
+  meterActivePower    Decimal? @db.Decimal(12, 3)
   /// Meter status (Huawei dataItemMap.meter_status). Null for inverter rows.
-  meterStatus Int?
+  meterStatus         Int?
   /// Cumulative EXPORT energy counter, kWh (Huawei dataItemMap.active_cap
   /// on the meter device type). Null for inverter rows — inverters report
   /// day/lifetime cumulative production under different, non-equivalent
@@ -896,7 +924,7 @@ model DeviceTelemetry {
   /// `lib/telemetry/energy-metrics.ts`'s module doc comment and
   /// `docs/research/telemetry-consumer-migration.md` §13 for the full
   /// investigation.
-  activeEnergy Decimal? @db.Decimal(14, 3)
+  activeEnergy        Decimal? @db.Decimal(14, 3)
   /// Cumulative IMPORT energy counter, kWh (Huawei
   /// dataItemMap.reverse_active_cap on the meter device type). Null for
   /// inverter rows.

@@ -18,6 +18,8 @@ export type CurrentUser = {
   role: Role;
   organizationId: string | null;
   organization: CurrentOrganization | null;
+  /** Cross-organization staff flag — see ADR-014. Never used by `Permissions.can*`/`role`. */
+  isPlatformAdmin: boolean;
 };
 
 export type CurrentUserWithOrganization = CurrentUser & {
@@ -37,6 +39,7 @@ async function findCurrentUserByEmail(
       name: true,
       email: true,
       role: true,
+      isPlatformAdmin: true,
       organizationId: true,
       organization: {
         select: {
@@ -57,6 +60,7 @@ async function findCurrentUserByEmail(
     name: user.name,
     email: user.email,
     role: user.role,
+    isPlatformAdmin: user.isPlatformAdmin,
     organizationId: user.organizationId,
     organization: user.organization,
   };
@@ -102,6 +106,27 @@ export async function requirePermission(
   const user = await requireOnboardedUser();
 
   if (!allowedRoles.includes(user.role)) {
+    forbidden();
+  }
+
+  return user;
+}
+
+/**
+ * Platform Administration milestone. Gates on `User.isPlatformAdmin`
+ * (ADR-014) — a separate, orthogonal check from `Permissions.can*`/`role`,
+ * never mixed with it. Built on `requireCurrentUser()` rather than
+ * `requireOnboardedUser()` deliberately: Platform Admin is a
+ * cross-organization concern and shouldn't require the caller to own an
+ * Organization, even though every real admin today happens to have one
+ * (see ADR-015's bootstrap SOP). Every Server Action under `admin/actions.ts`
+ * calls this itself — the `(platform)/admin` layout also calls it, but a
+ * layout render never protects a Server Action's own RPC.
+ */
+export async function requirePlatformAdmin(): Promise<CurrentUser> {
+  const user = await requireCurrentUser();
+
+  if (!user.isPlatformAdmin) {
     forbidden();
   }
 

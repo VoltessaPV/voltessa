@@ -16,6 +16,7 @@ export default async function PlatformLayout({ children }: Props) {
         name: user.name,
         email: user.email,
         role: user.role,
+        isPlatformAdmin: user.isPlatformAdmin,
       }}
     >
       {children}

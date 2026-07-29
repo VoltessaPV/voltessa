@@ -1003,3 +1003,59 @@ first.
 - Choosing/defaulting to Plant Owner is byte-for-byte the pre-M2 behavior — `createOrganization`'s
   logic, inputs, and outputs are untouched.
 - No Prisma schema or migration changes in this milestone.
+
+## ADR-016: Voltessa Authorization Architecture — M3: Platform Administration module (business rules)
+
+### Status
+
+Accepted — implemented.
+
+### Context
+
+M1 (ADR-014) added `User.isPlatformAdmin` and `TraderAssignment` as pure, additive schema with zero
+behavior change; nothing read `isPlatformAdmin` until now. This milestone builds the first UI/Server
+Action surface that actually acts on that flag — a Platform Administration area (Dashboard, Users,
+Plant Owners, Energy Traders, Assignments, Audit Log) — without introducing any new authorization
+concept, account type, or schema change beyond one new table. This entry exists specifically to
+write down the business rules that the code now enforces, since they were previously only implicit
+in `TraderAssignment`'s shape and this milestone's own review conversation, not recorded anywhere.
+
+### Decision
+
+- **A Plant Owner (`Organization`) can have only one active assigned Energy Trader at a time.**
+  Enforced at the database level by `TraderAssignment`'s pre-existing `@@unique([organizationId])`
+  (ADR-014) — not merely an application-level convention. "Change" is an update of that one row's
+  `traderId`; "remove" is a delete of it. There is no history of past assignments (see ADR-014's own
+  note on why `revokedAt`/`revokedById` were rejected from the schema).
+- **Energy Traders cannot assign themselves to Plant Owners.** No Server Action reachable by a
+  non-admin session can create, update, or delete a `TraderAssignment` row. The three mutating
+  actions (`assignTrader`/`createAssignment`, `changeTrader`, `removeTrader` in
+  `app/(platform)/admin/actions.ts`) each call `requirePlatformAdmin()` as their first line, before
+  touching anything — a Trader hitting these directly, with or without the Administration nav
+  visible, gets `forbidden()`. A future Trader self-service milestone (M6) may let a Trader manage
+  their own `TraderProfile`, but must never grant them write access to `TraderAssignment` itself
+  without a separate, explicit decision recorded here or in a superseding ADR.
+- **Only Platform Admin may create, change, or remove `TraderAssignment` rows.** Same mechanism as
+  above — `requirePlatformAdmin()`, not `Permissions.can*`/`role`. This is the one place in the
+  application, besides Users/Traders themselves, where `isPlatformAdmin` gates a write.
+- **`TraderProfile` contains trader business information only, intentionally separated from
+  `User`.** Holds exactly `companyName` and `distributionCompanyId` (validated against
+  `lib/market/distribution/bg.ts`'s static list, same non-FK convention `EnergyMarketSettings.dsoId`
+  already established) — never identity fields (`email`, `firstName`/`lastName`, `phone` stay on
+  `User`, shared with every other persona) and never authorization fields (those stay
+  `isPlatformAdmin`/`role`, per ADR-014's own separation of business identity from authorization).
+  Scoped by `userId` alone (one row per `User`, `@@unique`), mirroring `NotificationPreferences`'s
+  precedent for per-identity data that isn't organization-tenant data.
+
+### Consequences
+
+- No schema change beyond the additive `TraderProfile` table — `AccountType`, `Roles`,
+  `Permissions.can*`, and every M1 field are untouched.
+- Every mutating Administration action produces exactly one `AuditLog` row per save
+  (`user_updated`, `user_activated`, `user_deactivated`, `trader_profile_updated`,
+  `trader_assigned`, `trader_changed`, `trader_removed`) — `AuditLog`'s first real writer, schema-only
+  since ADR-014.
+- Trader self-service (a Trader editing their own `TraderProfile`, or requesting/proposing an
+  assignment) remains explicitly out of scope — M6, per ADR-015 — and this ADR's "Energy Traders
+  cannot assign themselves" rule must be revisited explicitly, not silently relaxed, whenever that
+  milestone is scoped.

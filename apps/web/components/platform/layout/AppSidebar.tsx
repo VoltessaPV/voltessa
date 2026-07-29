@@ -1,6 +1,21 @@
 "use client";
 
-import { Battery, Bell, Bot, LayoutDashboard, LineChart, LogOut, Menu, Settings, X } from "lucide-react";
+import {
+  Battery,
+  Bell,
+  Bot,
+  Building2,
+  ClipboardList,
+  FileClock,
+  LayoutDashboard,
+  LineChart,
+  LogOut,
+  Menu,
+  Settings,
+  ShieldCheck,
+  Users,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -39,8 +54,48 @@ const navigation = [
   },
 ];
 
+/** Platform Administration milestone — only ever rendered when `isPlatformAdmin`. See ADR-014. */
+const adminNavigation = [
+  {
+    label: "Dashboard",
+    href: "/admin",
+    icon: LayoutDashboard,
+  },
+  {
+    label: "Users",
+    href: "/admin/users",
+    icon: Users,
+  },
+  {
+    label: "Plant Owners",
+    href: "/admin/plant-owners",
+    icon: Building2,
+  },
+  {
+    label: "Energy Traders",
+    href: "/admin/traders",
+    icon: LineChart,
+  },
+  {
+    label: "Assignments",
+    href: "/admin/assignments",
+    icon: ClipboardList,
+  },
+  {
+    label: "Audit Log",
+    href: "/admin/audit-log",
+    icon: FileClock,
+  },
+];
+
 /** Shared nav-link list — identical markup for the fixed desktop sidebar and the mobile drawer, so a link's look never has to be maintained twice. */
-function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarNav({
+  onNavigate,
+  isPlatformAdmin,
+}: {
+  onNavigate?: () => void;
+  isPlatformAdmin: boolean;
+}) {
   return (
     <nav className="space-y-1 px-3 py-4">
       {navigation.map((item) => (
@@ -54,6 +109,27 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
           {item.label}
         </Link>
       ))}
+
+      {isPlatformAdmin && (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <div className="flex items-center gap-2 px-3 pb-2 text-xs font-medium uppercase tracking-wider text-white/40">
+            <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
+            Administration
+          </div>
+
+          {adminNavigation.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={onNavigate}
+              className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+            >
+              <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      )}
     </nav>
   );
 }
@@ -93,17 +169,17 @@ function SignOutNavItem() {
  * hamburger trigger + slide-in drawer, both scoped to this one component so
  * `AppShell`/`AppHeader` need no cross-component state to support it.
  */
-export function AppSidebar() {
+export function AppSidebar({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
     <>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-white/10 bg-[#070B18] lg:block">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 overflow-y-auto border-r border-white/10 bg-[#070B18] lg:block">
         <div className="flex h-16 items-center border-b border-white/10 px-6">
           <span className="text-lg font-semibold">Voltessa</span>
         </div>
 
-        <SidebarNav />
+        <SidebarNav isPlatformAdmin={isPlatformAdmin} />
 
         <SignOutNavItem />
       </aside>
@@ -139,7 +215,7 @@ export function AppSidebar() {
               </button>
             </div>
 
-            <SidebarNav onNavigate={() => setIsOpen(false)} />
+            <SidebarNav onNavigate={() => setIsOpen(false)} isPlatformAdmin={isPlatformAdmin} />
 
             <SignOutNavItem />
           </aside>

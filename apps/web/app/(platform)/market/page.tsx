@@ -1,3 +1,5 @@
+import { Suspense } from "react";
+
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
@@ -8,11 +10,12 @@ import {
 import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 
+import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { MarketDistribution } from "@/components/market/MarketDistribution";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketInfo } from "@/components/market/MarketInfo";
 import { MarketInsights } from "@/components/market/MarketInsights";
-import { MarketPriceChart } from "@/components/market/MarketPriceChart";
+import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
@@ -102,7 +105,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       <PageContainer className="space-y-3">
         <EmptyState
           title="No plant connected"
-          description="Connect a power plant to see live operational data, energy flow, and inverter status."
+          description="Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
         >
           <ConnectFusionSolarButton />
         </EmptyState>
@@ -315,19 +318,28 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             </div>
 
             <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
-              <MarketPriceChart
-                series={data.series}
-                thresholdPrice={data.threshold.minimumExportPrice}
-                nowAnnotation={nowAnnotation}
-                // production-data.ts computes this for whichever day is
-                // selected (the whole day if it's a past day, today-so-far
-                // if it's today) — historical days now render telemetry
-                // exactly like today, fixing the earlier "historical
-                // telemetry missing" bug (this used to be unconditionally
-                // suppressed for any non-today day).
-                settlementEnergySeries={production.settlementEnergySeries}
-                installedCapacityKw={production.installedCapacityKw}
-              />
+              <Suspense fallback={<ChartSkeleton />}>
+                <DynamicMarketPriceChart
+                  series={data.series}
+                  thresholdPrice={data.threshold.minimumExportPrice}
+                  nowAnnotation={nowAnnotation}
+                  // production-data.ts computes this for whichever day is
+                  // selected (the whole day if it's a past day, today-so-far
+                  // if it's today) — historical days now render telemetry
+                  // exactly like today, fixing the earlier "historical
+                  // telemetry missing" bug (this used to be unconditionally
+                  // suppressed for any non-today day).
+                  //
+                  // Narrowed to the two fields MarketPriceChart actually
+                  // reads — `importedKwh` is real data used elsewhere (KPI
+                  // totals), just never by this chart, so it's dropped here
+                  // rather than serialized into this prop for nothing.
+                  settlementEnergySeries={production.settlementEnergySeries.map(
+                    ({ intervalStart, exportedKwh }) => ({ intervalStart, exportedKwh }),
+                  )}
+                  installedCapacityKw={production.installedCapacityKw}
+                />
+              </Suspense>
             </div>
           </section>
 
