@@ -1,7 +1,7 @@
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
-import { requireOnboardedUser } from "@/lib/auth/session";
+import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
@@ -18,16 +18,21 @@ export { pageHeading } from "./heading";
  * show the "no battery configured" placeholder.
  */
 export default async function BessPage() {
-  const user = await requireOnboardedUser();
+  // Trader Self-Service Onboarding milestone: resolves either the owner's
+  // own organization or an assigned trader's selected organization.
+  // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
+  // real OAuth flow that would modify the organization, never shown to
+  // a read-only Trader.
+  const { organizationId, readOnly } = await resolveOrganizationViewAccess();
 
   // Transparent Freshness milestone: see settings/page.tsx's identical
   // comment - this page shows no telemetry, so it never blocks.
-  await ensureTelemetryFresh(user.organizationId, {
+  await ensureTelemetryFresh(organizationId, {
     mode: "background",
     onSettled: revalidateTelemetryPagesIfSynced,
   });
 
-  const plantContext = await resolvePlantContext(user.organizationId);
+  const plantContext = await resolvePlantContext(organizationId);
 
   if (!plantContext) {
     return (
@@ -36,7 +41,7 @@ export default async function BessPage() {
           title="No plant connected"
           description="Connect a power plant to see live operational data, energy flow, and inverter status."
         >
-          <ConnectFusionSolarButton />
+          {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       </PageContainer>
     );

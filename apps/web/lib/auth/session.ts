@@ -1,8 +1,11 @@
+import type { AccountType } from "@prisma/client";
+import { cookies } from "next/headers";
 import { forbidden, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
+import { resolveTraderOnboardingStage } from "./trader-onboarding";
 import type { Role } from "./roles";
 
 export type CurrentOrganization = {
@@ -20,6 +23,8 @@ export type CurrentUser = {
   organization: CurrentOrganization | null;
   /** Cross-organization staff flag — see ADR-014. Never used by `Permissions.can*`/`role`. */
   isPlatformAdmin: boolean;
+  /** Commercial persona only — see ADR-014. Used here solely to branch between the owner and Trader Self-Service org-resolution paths (session.ts), never as an authorization check. */
+  accountType: AccountType;
 };
 
 export type CurrentUserWithOrganization = CurrentUser & {
@@ -50,6 +55,7 @@ async function findCurrentUserByEmail(
       email: true,
       role: true,
       isPlatformAdmin: true,
+      accountType: true,
       organizationId: true,
       organization: {
         select: {
@@ -71,6 +77,7 @@ async function findCurrentUserByEmail(
     email: user.email,
     role: user.role,
     isPlatformAdmin: user.isPlatformAdmin,
+    accountType: user.accountType,
     organizationId: user.organizationId,
     organization: user.organization,
   };
@@ -141,4 +148,121 @@ export async function requirePlatformAdmin(): Promise<CurrentUser> {
   }
 
   return user;
+}
+
+/** Cookie holding the assigned Organization currently selected by a multi-assignment trader. Never trusted blindly - see selectTraderOrganization in app/(platform)/actions.ts, which re-validates the id against the trader's own TraderAssignment rows before writing this. */
+export const TRADER_SELECTED_ORGANIZATION_COOKIE = "voltessa-trader-org";
+
+export type CurrentTraderOrganization = {
+  id: string;
+  name: string;
+};
+
+export type CurrentTraderAccess = {
+  trader: CurrentUser;
+  organizationId: string;
+  organization: CurrentTraderOrganization;
+  /** Every organization this trader is assigned to — for the sidebar's org switcher (only rendered when this has more than one entry). */
+  assignedOrganizations: CurrentTraderOrganization[];
+};
+
+/**
+ * Trader Self-Service Onboarding milestone. The Energy Trader counterpart
+ * to `requireOnboardedUser()` — deliberately a SEPARATE function, not a
+ * branch inside it: `requireOnboardedUser()` stays exactly what it always
+ * was (ownership via `User.organizationId`), so every page that still
+ * calls it (Plants, Settings, Administration, and anything else not
+ * explicitly updated for this milestone) continues to reject a Trader
+ * automatically, with zero changes to that function or those pages. Only
+ * the five pages Traders may see (Dashboard/Market/Automations/Alerts/
+ * BESS) call this instead.
+ *
+ * Resolves onboarding stage first (see `resolveTraderOnboardingStage`) -
+ * redirects back into the onboarding flow if the trader's profile isn't
+ * complete yet or no assignment exists, exactly like `requireOnboardedUser`
+ * redirects an incomplete Plant Owner to `/onboarding`. The selected
+ * organization (for a trader assigned to more than one) comes from
+ * `TRADER_SELECTED_ORGANIZATION_COOKIE`, falling back to the most
+ * recently assigned organization if unset or no longer valid (e.g. an
+ * assignment was removed since the cookie was written).
+ */
+export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAccess> {
+  const trader = await requireCurrentUser();
+
+  if (trader.accountType !== "ENERGY_TRADER") {
+    redirect("/dashboard");
+  }
+
+  const stage = await resolveTraderOnboardingStage(trader.id);
+
+  if (stage === "profile") {
+    redirect("/onboarding/trader-profile");
+  }
+
+  if (stage === "pending") {
+    redirect("/onboarding/trader-pending");
+  }
+
+  const assignments = await prisma.traderAssignment.findMany({
+    where: { traderId: trader.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      organization: {
+        select: { id: true, name: true },
+      },
+    },
+  });
+
+  const assignedOrganizations = assignments.map((assignment) => assignment.organization);
+  const firstOrganization = assignedOrganizations[0];
+
+  if (!firstOrganization) {
+    // Re-checked here even though `stage` already confirmed at least one
+    // assignment exists - a defensive fallback, not an expected path.
+    redirect("/onboarding/trader-pending");
+  }
+
+  const cookieStore = await cookies();
+  const selectedId = cookieStore.get(TRADER_SELECTED_ORGANIZATION_COOKIE)?.value;
+  const selectedOrganization =
+    assignedOrganizations.find((organization) => organization.id === selectedId) ?? firstOrganization;
+
+  return {
+    trader,
+    organizationId: selectedOrganization.id,
+    organization: selectedOrganization,
+    assignedOrganizations,
+  };
+}
+
+export type OrganizationViewAccess = {
+  organizationId: string;
+  /** True for an assigned Energy Trader - callers must not render any write control (forms, CTAs like "Connect Plant") when this is true. */
+  readOnly: boolean;
+};
+
+/**
+ * Trader Self-Service Onboarding milestone. Shared by every page a Trader
+ * may view - Dashboard, Market, Alerts, BESS - to resolve both which
+ * organization to render and whether the caller must suppress write
+ * controls (e.g. `ConnectFusionSolarButton`'s empty-state CTA, which
+ * starts a real OAuth flow that would modify the organization).
+ *
+ * Deliberately NOT used by Automations: that page gates the *owner* path
+ * on `requirePermission(Permissions.canManagePlants)`, a stricter check
+ * than plain ownership - reusing this helper's `requireOnboardedUser()`
+ * fallback there would silently downgrade that check. Automations builds
+ * the same `{ organizationId, readOnly }` shape itself, from its own
+ * explicit branch, instead (see that page).
+ */
+export async function resolveOrganizationViewAccess(): Promise<OrganizationViewAccess> {
+  const identity = await requireCurrentUser();
+
+  if (identity.accountType === "ENERGY_TRADER") {
+    const access = await requireTraderOrganizationAccess();
+    return { organizationId: access.organizationId, readOnly: true };
+  }
+
+  const user = await requireOnboardedUser();
+  return { organizationId: user.organizationId, readOnly: false };
 }

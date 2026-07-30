@@ -1,9 +1,16 @@
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
+import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
 import { prisma } from "@/lib/prisma";
 
 import { chooseEnergyTraderPersona, createOrganization } from "./actions";
+
+const TRADER_STAGE_ROUTES = {
+  profile: "/onboarding/trader-profile",
+  pending: "/onboarding/trader-pending",
+  assigned: "/dashboard",
+} as const;
 
 export default async function OnboardingPage() {
   const session = await auth();
@@ -17,6 +24,7 @@ export default async function OnboardingPage() {
       email: session.user.email,
     },
     select: {
+      id: true,
       accountType: true,
       organization: {
         select: {
@@ -28,7 +36,8 @@ export default async function OnboardingPage() {
   });
 
   if (user?.accountType === "ENERGY_TRADER") {
-    redirect("/onboarding/trader-pending");
+    const stage = await resolveTraderOnboardingStage(user.id);
+    redirect(TRADER_STAGE_ROUTES[stage]);
   }
 
   if (user?.organization?.onboardingCompletedAt) {
