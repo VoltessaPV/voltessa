@@ -11,6 +11,7 @@ import { pageHeading as adminDeletedUsers } from "@/app/(platform)/admin/users/d
 import { pageHeading as alerts } from "@/app/(platform)/alerts/heading";
 import { pageHeading as automations } from "@/app/(platform)/automations/heading";
 import { pageHeading as bess } from "@/app/(platform)/bess/heading";
+import { pageHeading as clients } from "@/app/(platform)/clients/heading";
 import { pageHeading as dashboard } from "@/app/(platform)/dashboard/heading";
 import { pageHeading as market } from "@/app/(platform)/market/heading";
 import { pageHeading as plants } from "@/app/(platform)/plants/heading";
@@ -31,6 +32,7 @@ export type PageHeadingContent = { eyebrow: string; title: string };
  */
 const STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/dashboard": dashboard,
+  "/clients": clients,
   "/market": market,
   "/bess": bess,
   "/automations": automations,

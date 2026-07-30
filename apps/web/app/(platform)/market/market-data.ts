@@ -299,7 +299,8 @@ export function buildInsights(
 }
 
 export async function getMarketPageData(params: {
-  organizationId: string;
+  /** Null for a Trader Workspace with no client selected - the platform-wide price series is still computed, only the organization-scoped event log is skipped. */
+  organizationId: string | null;
   selectedDateParam: string | undefined;
   automationSettings: {
     minimumExportPrice: { toString(): string };
@@ -333,7 +334,7 @@ export async function getMarketPageData(params: {
     }),
     dbMarketPriceProvider.getLatestImportStatus(),
     isToday ? dbMarketPriceProvider.getCurrentPrice() : Promise.resolve(null),
-    getRecentAutomationEvents(params.organizationId),
+    params.organizationId ? getRecentAutomationEvents(params.organizationId) : Promise.resolve([]),
   ]);
 
   if (!dayAheadResult.available) {

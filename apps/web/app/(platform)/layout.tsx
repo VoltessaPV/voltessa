@@ -12,11 +12,11 @@ type Props = {
 };
 
 /**
- * Trader Self-Service Onboarding milestone. Branches by `accountType`
- * before deciding how to resolve organization access - deliberately NOT a
- * change to `requireOnboardedUser()` itself, which stays exactly what it
- * always was (ownership via `User.organizationId`). Every page that still
- * calls `requireOnboardedUser()`/`requirePermission()` directly (Plants,
+ * Trader Workspace milestone. Branches by `accountType` before deciding how
+ * to resolve organization access - deliberately NOT a change to
+ * `requireOnboardedUser()` itself, which stays exactly what it always was
+ * (ownership via `User.organizationId`). Every page that still calls
+ * `requireOnboardedUser()`/`requirePermission()` directly (Plants,
  * Settings, Administration, and anything else not explicitly updated for
  * this milestone) keeps rejecting a Trader automatically, with zero
  * changes to those pages - this layout only grants entry to the shared
@@ -37,8 +37,8 @@ export default async function PlatformLayout({ children }: Props) {
           isPlatformAdmin: access.trader.isPlatformAdmin,
         }}
         trader={{
-          organizations: access.assignedOrganizations,
-          selectedOrganizationId: access.organizationId,
+          currentClientName: access.organization?.name ?? null,
+          assignedClientCount: access.assignedOrganizations.length,
         }}
       >
         {children}

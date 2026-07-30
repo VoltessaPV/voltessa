@@ -1,17 +1,30 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
 import { prisma } from "@/lib/prisma";
 
-import { chooseEnergyTraderPersona, createOrganization } from "./actions";
+import { chooseEnergyTraderPersona } from "./actions";
 
 const TRADER_STAGE_ROUTES = {
   profile: "/onboarding/trader-profile",
-  pending: "/onboarding/trader-pending",
-  assigned: "/dashboard",
+  active: "/dashboard",
 } as const;
 
+/**
+ * Trader Workspace milestone. This page used to render the Plant Owner
+ * org-setup form directly, with the Energy Trader path squeezed into a
+ * "Not a plant owner?" footnote underneath it - easy to miss, and not a
+ * deliberate choice. This is now the persona-choice screen itself: two
+ * equally-sized cards, Plant Owner listed first and styled as the primary/
+ * filled option (still the common case), Energy Trader a full outlined
+ * card rather than disclaimer text. "Continue as Plant Owner" is a plain
+ * navigation to /onboarding/plant-owner (PLANT_OWNER is already every
+ * account's default - nothing to persist by clicking it); "Continue as
+ * Energy Trader" still calls the existing chooseEnergyTraderPersona action,
+ * which is the one that actually records the choice.
+ */
 export default async function OnboardingPage() {
   const session = await auth();
 
@@ -28,7 +41,6 @@ export default async function OnboardingPage() {
       accountType: true,
       organization: {
         select: {
-          name: true,
           onboardingCompletedAt: true,
         },
       },
@@ -45,53 +57,46 @@ export default async function OnboardingPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 text-white">
-      <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 p-8">
-        <h1 className="text-2xl font-semibold">
-          Set up your organization
-        </h1>
+    <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
+      <div className="w-full max-w-lg">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold">Welcome to Voltessa</h1>
+          <p className="mt-2 text-sm text-white/60">
+            How will you be using the platform?
+          </p>
+        </div>
 
-        <p className="mt-2 text-sm text-white/60">
-          Create your Voltessa workspace to start managing plants and energy
-          operations.
-        </p>
+        <div className="mt-8 space-y-4">
+          <div className="rounded-2xl border border-blue-500/40 bg-blue-500/10 p-6">
+            <h2 className="text-lg font-semibold">Plant Owner</h2>
+            <p className="mt-1 text-sm text-white/70">
+              Monitor and automate your own solar plants.
+            </p>
 
-        <form action={createOrganization} className="mt-8">
-          <label
-            htmlFor="name"
-            className="text-sm font-medium text-white/80"
-          >
-            Organization name
-          </label>
-
-          <input
-            id="name"
-            name="name"
-            type="text"
-            required
-            defaultValue={user?.organization?.name ?? ""}
-            className="mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 outline-none transition focus:border-blue-500"
-          />
-
-          <button
-            type="submit"
-            className="mt-6 w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold transition hover:bg-blue-500"
-          >
-            Continue to dashboard
-          </button>
-        </form>
-
-        <div className="mt-6 border-t border-white/10 pt-6 text-center">
-          <p className="text-xs text-white/40">Not a plant owner?</p>
-
-          <form action={chooseEnergyTraderPersona} className="mt-2">
-            <button
-              type="submit"
-              className="text-sm font-medium text-white/60 underline-offset-4 transition hover:text-white hover:underline"
+            <Link
+              href="/onboarding/plant-owner"
+              className="mt-5 block w-full rounded-xl bg-blue-600 px-4 py-3 text-center font-semibold transition hover:bg-blue-500"
             >
-              I&apos;m an Energy Trader
-            </button>
-          </form>
+              Continue as Plant Owner
+            </Link>
+          </div>
+
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-lg font-semibold">Energy Trader</h2>
+            <p className="mt-1 text-sm text-white/70">
+              Manage market operations for a portfolio of client
+              organizations.
+            </p>
+
+            <form action={chooseEnergyTraderPersona} className="mt-5">
+              <button
+                type="submit"
+                className="w-full rounded-xl border border-white/20 px-4 py-3 text-center font-semibold text-white transition hover:bg-white/10"
+              >
+                Continue as Energy Trader
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </main>

@@ -19,7 +19,6 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 
-import { selectTraderOrganization } from "@/app/(platform)/actions";
 import { signOutAction } from "@/lib/auth/actions";
 
 import type { TraderShellContext } from "./AppShell";
@@ -58,14 +57,23 @@ const navigation = [
 ];
 
 /**
- * Trader Self-Service Onboarding milestone. A trader's nav is a strict
- * subset of the owner nav above (same items, same hrefs, same icons -
- * intentionally not a separate copy of the underlying pages) with
- * Settings removed - Settings, Plants, and Administration stay Plant
- * Owner / Platform Admin only, per the read-only-trader architecture
- * decision. Order matches `navigation`'s own order minus Settings.
+ * Trader Workspace milestone. Its own explicit order (Dashboard, Clients,
+ * Market, Automations, Alerts, BESS, Settings) - not derived from
+ * `navigation` above, since it isn't a subset/reordering of the owner nav
+ * anymore (Clients has no owner-side equivalent, and BESS moves relative
+ * to Automations/Alerts). Settings is included - a Trader manages their
+ * own profile there, same page Plant Owners use for theirs. Plants and
+ * Administration stay Plant Owner / Platform Admin only.
  */
-const traderNavigation = navigation.filter((item) => item.href !== "/settings");
+const traderNavigation = [
+  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  { label: "Clients", href: "/clients", icon: Users },
+  { label: "Market", href: "/market", icon: LineChart },
+  { label: "Automations", href: "/automations", icon: Bot },
+  { label: "Alerts", href: "/alerts", icon: Bell },
+  { label: "BESS", href: "/bess", icon: Battery },
+  { label: "Settings", href: "/settings", icon: Settings },
+];
 
 /** Platform Administration milestone — only ever rendered when `isPlatformAdmin`. See ADR-014. */
 const adminNavigation = [
@@ -100,49 +108,6 @@ const adminNavigation = [
     icon: FileClock,
   },
 ];
-
-/**
- * Trader Self-Service Onboarding milestone. Only rendered when the trader
- * has more than one `TraderAssignment` - a single-assignment trader has
- * nothing to switch between, so no control is shown at all. A plain
- * `<select>` inside its own `<form>`, auto-submitting on change
- * (`requestSubmit()`) rather than needing a separate "Go" button -
- * `selectTraderOrganization` re-validates the choice server-side
- * regardless of what this renders.
- */
-function OrgSwitcher({ trader, onNavigate }: { trader: TraderShellContext; onNavigate?: () => void }) {
-  if (trader.organizations.length <= 1) {
-    return null;
-  }
-
-  return (
-    <form
-      action={selectTraderOrganization}
-      onChange={(event) => {
-        onNavigate?.();
-        event.currentTarget.requestSubmit();
-      }}
-      className="border-b border-white/10 px-3 py-4"
-    >
-      <label className="block">
-        <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-white/40">
-          Organization
-        </span>
-        <select
-          name="organizationId"
-          defaultValue={trader.selectedOrganizationId}
-          className="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-2 text-sm text-white outline-none transition focus:border-white/20 [color-scheme:dark]"
-        >
-          {trader.organizations.map((organization) => (
-            <option key={organization.id} value={organization.id} style={{ backgroundColor: "#0f172a", color: "#f8fafc" }}>
-              {organization.name}
-            </option>
-          ))}
-        </select>
-      </label>
-    </form>
-  );
-}
 
 /** Shared nav-link list — identical markup for the fixed desktop sidebar and the mobile drawer, so a link's look never has to be maintained twice. */
 function SidebarNav({
@@ -245,8 +210,6 @@ export function AppSidebar({
           <span className="text-lg font-semibold">Voltessa</span>
         </div>
 
-        {trader && <OrgSwitcher trader={trader} />}
-
         <SidebarNav isPlatformAdmin={isPlatformAdmin} trader={trader} />
 
         <SignOutNavItem />
@@ -282,8 +245,6 @@ export function AppSidebar({
                 <X className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
-
-            {trader && <OrgSwitcher trader={trader} onNavigate={() => setIsOpen(false)} />}
 
             <SidebarNav
               onNavigate={() => setIsOpen(false)}

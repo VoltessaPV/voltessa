@@ -1,3 +1,4 @@
+import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
@@ -5,11 +6,16 @@ import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-tel
 export { pageHeading } from "./heading";
 
 export default async function AlertsPage() {
-  // Trader Self-Service Onboarding milestone: resolves either the owner's
-  // own organization or an assigned trader's selected organization - see
-  // that function's own doc comment. This page renders no write controls
-  // at all, so `readOnly` needs no further handling here.
+  // Trader Workspace milestone: resolves either the owner's own
+  // organization or an assigned trader's selected organization - see that
+  // function's own doc comment. This page renders no write controls at
+  // all, so `readOnly` needs no further handling here. `organizationId` is
+  // null only for a Trader with zero assigned clients.
   const { organizationId } = await resolveOrganizationViewAccess();
+
+  if (organizationId === null) {
+    return <NoClientAssignedState />;
+  }
 
   // Transparent Freshness milestone: see settings/page.tsx's identical
   // comment - this page shows no telemetry, so it never blocks. (Also the

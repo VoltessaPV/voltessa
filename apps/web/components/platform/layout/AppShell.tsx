@@ -4,8 +4,9 @@ import { AppHeader } from "./AppHeader";
 import { AppSidebar } from "./AppSidebar";
 
 export type TraderShellContext = {
-  organizations: { id: string; name: string }[];
-  selectedOrganizationId: string;
+  /** Null when this trader has no client selected (zero assignments). */
+  currentClientName: string | null;
+  assignedClientCount: number;
 };
 
 type AppShellProps = {
@@ -16,7 +17,7 @@ type AppShellProps = {
     role: string;
     isPlatformAdmin: boolean;
   };
-  /** Trader Self-Service Onboarding milestone. Present only for an Energy Trader session - drives AppSidebar's trader-scoped nav and org switcher. */
+  /** Trader Workspace milestone. Present only for an Energy Trader session - drives AppSidebar's Administration gating and AppHeader's client-context indicator. */
   trader?: TraderShellContext;
 };
 
@@ -26,7 +27,7 @@ export function AppShell({ children, user, trader }: AppShellProps) {
       <AppSidebar isPlatformAdmin={user.isPlatformAdmin} trader={trader} />
 
       <div className="min-h-screen lg:pl-64">
-        <AppHeader user={user} />
+        <AppHeader user={user} trader={trader} />
 
         <main className="p-3 sm:p-4 lg:p-6">{children}</main>
       </div>

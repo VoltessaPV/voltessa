@@ -1,15 +1,21 @@
 import { Suspense } from "react";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
-import { resolveOrganizationViewAccess } from "@/lib/auth/session";
+import {
+  requireCurrentUser,
+  requireOnboardedUser,
+  requireTraderOrganizationAccess,
+} from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
+import { getTraderPortfolioSummary, listTraderClients } from "@/lib/trader/queries";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
+import { TraderPortfolioDashboard } from "@/components/dashboard/TraderPortfolioDashboard";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
@@ -133,12 +139,36 @@ type DashboardPageProps = {
 export default async function DashboardPage({
   searchParams,
 }: DashboardPageProps) {
-  // Trader Self-Service Onboarding milestone: resolves either the owner's
-  // own organization or an assigned trader's selected organization.
-  // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
-  // real OAuth flow that would modify the organization, never shown to
-  // a read-only Trader.
-  const { organizationId, readOnly } = await resolveOrganizationViewAccess();
+  // Trader Workspace milestone. Dashboard is portfolio-level for a
+  // Trader - always the whole-portfolio view, never a single selected
+  // client's operational data (that's what Market/Automations/Alerts/BESS
+  // already show once a client is selected). This is why Dashboard
+  // deliberately does NOT call `resolveOrganizationViewAccess()` - that
+  // helper resolves one "current" organization, which isn't a concept this
+  // page needs for a Trader at all. The owner path below is completely
+  // unchanged.
+  const identity = await requireCurrentUser();
+
+  if (identity.accountType === "ENERGY_TRADER") {
+    // requireTraderOrganizationAccess() is called here for its onboarding-
+    // stage gate alone (redirects to /onboarding/trader-profile if the
+    // trader hasn't completed it yet) - its single-organization resolution
+    // isn't otherwise used, since Dashboard is portfolio-level, never
+    // scoped to one selected client.
+    const access = await requireTraderOrganizationAccess();
+
+    const [summary, quickAccessClients] = await Promise.all([
+      getTraderPortfolioSummary(access.trader.id),
+      listTraderClients(access.trader.id),
+    ]);
+
+    return (
+      <TraderPortfolioDashboard summary={summary} quickAccessClients={quickAccessClients} />
+    );
+  }
+
+  const owner = await requireOnboardedUser();
+  const organizationId = owner.organizationId;
   const params = await searchParams;
 
   // Transparent Freshness milestone: Dashboard renders telemetry, so it
@@ -190,7 +220,7 @@ export default async function DashboardPage({
           title="No plant connected"
           description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
         >
-          {!readOnly && <ConnectFusionSolarButton />}
+          <ConnectFusionSolarButton />
         </EmptyState>
       ) : (
         <>

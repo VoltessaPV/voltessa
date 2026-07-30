@@ -1,5 +1,6 @@
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
 import { EmptyState } from "@/components/platform/EmptyState";
+import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
@@ -18,12 +19,21 @@ export { pageHeading } from "./heading";
  * show the "no battery configured" placeholder.
  */
 export default async function BessPage() {
-  // Trader Self-Service Onboarding milestone: resolves either the owner's
-  // own organization or an assigned trader's selected organization.
+  // Trader Workspace milestone: resolves either the owner's own
+  // organization or an assigned trader's selected organization.
   // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
   // real OAuth flow that would modify the organization, never shown to
-  // a read-only Trader.
+  // a read-only Trader. `organizationId` is null only for a Trader with
+  // zero assigned clients.
   const { organizationId, readOnly } = await resolveOrganizationViewAccess();
+
+  if (organizationId === null) {
+    return (
+      <PageContainer className="space-y-3">
+        <NoClientAssignedState />
+      </PageContainer>
+    );
+  }
 
   // Transparent Freshness milestone: see settings/page.tsx's identical
   // comment - this page shows no telemetry, so it never blocks.
