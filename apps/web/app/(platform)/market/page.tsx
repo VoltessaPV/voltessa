@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
-import { requireOnboardedUser } from "@/lib/auth/session";
+import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import {
   computeExportRevenue,
@@ -88,7 +88,12 @@ type MarketPageProps = {
 };
 
 export default async function MarketPage({ searchParams }: MarketPageProps) {
-  const user = await requireOnboardedUser();
+  // Trader Self-Service Onboarding milestone: resolves either the owner's
+  // own organization or an assigned trader's selected organization.
+  // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
+  // real OAuth flow that would modify the organization, never shown to
+  // a read-only Trader.
+  const { organizationId, readOnly } = await resolveOrganizationViewAccess();
   const params = await searchParams;
 
   // Checked before any other data fetching (ENTSO-E price import, revenue,
@@ -98,7 +103,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // a different, earlier gate than the existing `!data.dataAvailable`
   // check below, which stays as the empty state for "has a plant, but
   // ENTSO-E hasn't been imported for this day yet".
-  const plantContext = await resolvePlantContext(user.organizationId);
+  const plantContext = await resolvePlantContext(organizationId);
 
   if (!plantContext) {
     return (
@@ -107,7 +112,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           title="No plant connected"
           description="Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
         >
-          <ConnectFusionSolarButton />
+          {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       </PageContainer>
     );
@@ -120,10 +125,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // here: this route is fully dynamic (see dashboard/page.tsx's identical
   // comment for why), so getProductionPageData/getMarketPageData below
   // already read live database state regardless.
-  await ensureTelemetryFresh(user.organizationId, { mode: "blocking" });
+  await ensureTelemetryFresh(organizationId, { mode: "blocking" });
 
   const automationSettings = await prisma.automationSettings.findUnique({
-    where: { organizationId: user.organizationId },
+    where: { organizationId },
     select: { minimumExportPrice: true, currency: true, automationEnabled: true },
   });
 
@@ -131,12 +136,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // market-data.ts / production-data.ts module doc comments.
   const [data, production, currentExportMode] = await Promise.all([
     getMarketPageData({
-      organizationId: user.organizationId,
+      organizationId,
       selectedDateParam: params.date,
       automationSettings,
     }),
-    getProductionPageData(user.organizationId, params.date),
-    getStoredExportMode(user.organizationId),
+    getProductionPageData(organizationId, params.date),
+    getStoredExportMode(organizationId),
   ]);
 
   const configuredMode = configuredModeStatus(

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
-import { requireOnboardedUser } from "@/lib/auth/session";
+import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 
@@ -133,7 +133,12 @@ type DashboardPageProps = {
 export default async function DashboardPage({
   searchParams,
 }: DashboardPageProps) {
-  const user = await requireOnboardedUser();
+  // Trader Self-Service Onboarding milestone: resolves either the owner's
+  // own organization or an assigned trader's selected organization.
+  // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
+  // real OAuth flow that would modify the organization, never shown to
+  // a read-only Trader.
+  const { organizationId, readOnly } = await resolveOrganizationViewAccess();
   const params = await searchParams;
 
   // Transparent Freshness milestone: Dashboard renders telemetry, so it
@@ -141,21 +146,22 @@ export default async function DashboardPage({
   // - see ensureTelemetryFresh's own doc comment for why this, and only
   // this, decides whether/how a sync runs. No cache invalidation needed
   // here: this route is fully dynamic (uses cookies() via
-  // requireOnboardedUser, confirmed by the build output showing `ƒ`, not
-  // `○`), so it's never in the Full Route Cache, and the client Router
-  // Cache doesn't hold dynamic segments by default (no staleTimes override
-  // in next.config.js) - getDashboardPageData below already reads live
-  // database state regardless, with nothing cached anywhere to invalidate.
-  await ensureTelemetryFresh(user.organizationId, { mode: "blocking" });
+  // requireOnboardedUser/requireTraderOrganizationAccess, confirmed by the
+  // build output showing `ƒ`, not `○`), so it's never in the Full Route
+  // Cache, and the client Router Cache doesn't hold dynamic segments by
+  // default (no staleTimes override in next.config.js) -
+  // getDashboardPageData below already reads live database state
+  // regardless, with nothing cached anywhere to invalidate.
+  await ensureTelemetryFresh(organizationId, { mode: "blocking" });
 
   const automationSettings = await prisma.automationSettings.findUnique({
-    where: { organizationId: user.organizationId },
+    where: { organizationId },
     select: { minimumExportPrice: true, currency: true, automationEnabled: true },
   });
 
   const [data, currentExportMode] = await Promise.all([
-    getDashboardPageData(user.organizationId, automationSettings, params.date),
-    getStoredExportMode(user.organizationId),
+    getDashboardPageData(organizationId, automationSettings, params.date),
+    getStoredExportMode(organizationId),
   ]);
 
   // Inverters card's subtle Zero Export badge - see InvertersCard's own
@@ -184,7 +190,7 @@ export default async function DashboardPage({
           title="No plant connected"
           description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
         >
-          <ConnectFusionSolarButton />
+          {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       ) : (
         <>

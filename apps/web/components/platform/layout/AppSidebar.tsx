@@ -19,7 +19,10 @@ import {
 import Link from "next/link";
 import { useState } from "react";
 
+import { selectTraderOrganization } from "@/app/(platform)/actions";
 import { signOutAction } from "@/lib/auth/actions";
+
+import type { TraderShellContext } from "./AppShell";
 
 const navigation = [
   {
@@ -53,6 +56,16 @@ const navigation = [
     icon: Settings,
   },
 ];
+
+/**
+ * Trader Self-Service Onboarding milestone. A trader's nav is a strict
+ * subset of the owner nav above (same items, same hrefs, same icons -
+ * intentionally not a separate copy of the underlying pages) with
+ * Settings removed - Settings, Plants, and Administration stay Plant
+ * Owner / Platform Admin only, per the read-only-trader architecture
+ * decision. Order matches `navigation`'s own order minus Settings.
+ */
+const traderNavigation = navigation.filter((item) => item.href !== "/settings");
 
 /** Platform Administration milestone — only ever rendered when `isPlatformAdmin`. See ADR-014. */
 const adminNavigation = [
@@ -88,17 +101,64 @@ const adminNavigation = [
   },
 ];
 
+/**
+ * Trader Self-Service Onboarding milestone. Only rendered when the trader
+ * has more than one `TraderAssignment` - a single-assignment trader has
+ * nothing to switch between, so no control is shown at all. A plain
+ * `<select>` inside its own `<form>`, auto-submitting on change
+ * (`requestSubmit()`) rather than needing a separate "Go" button -
+ * `selectTraderOrganization` re-validates the choice server-side
+ * regardless of what this renders.
+ */
+function OrgSwitcher({ trader, onNavigate }: { trader: TraderShellContext; onNavigate?: () => void }) {
+  if (trader.organizations.length <= 1) {
+    return null;
+  }
+
+  return (
+    <form
+      action={selectTraderOrganization}
+      onChange={(event) => {
+        onNavigate?.();
+        event.currentTarget.requestSubmit();
+      }}
+      className="border-b border-white/10 px-3 py-4"
+    >
+      <label className="block">
+        <span className="mb-1.5 block text-xs font-medium uppercase tracking-wider text-white/40">
+          Organization
+        </span>
+        <select
+          name="organizationId"
+          defaultValue={trader.selectedOrganizationId}
+          className="h-9 w-full rounded-lg border border-white/10 bg-white/5 px-2 text-sm text-white outline-none transition focus:border-white/20 [color-scheme:dark]"
+        >
+          {trader.organizations.map((organization) => (
+            <option key={organization.id} value={organization.id} style={{ backgroundColor: "#0f172a", color: "#f8fafc" }}>
+              {organization.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </form>
+  );
+}
+
 /** Shared nav-link list — identical markup for the fixed desktop sidebar and the mobile drawer, so a link's look never has to be maintained twice. */
 function SidebarNav({
   onNavigate,
   isPlatformAdmin,
+  trader,
 }: {
   onNavigate?: () => void;
   isPlatformAdmin: boolean;
+  trader?: TraderShellContext;
 }) {
+  const items = trader ? traderNavigation : navigation;
+
   return (
     <nav className="space-y-1 px-3 py-4">
-      {navigation.map((item) => (
+      {items.map((item) => (
         <Link
           key={item.href}
           href={item.href}
@@ -110,7 +170,7 @@ function SidebarNav({
         </Link>
       ))}
 
-      {isPlatformAdmin && (
+      {!trader && isPlatformAdmin && (
         <div className="mt-4 border-t border-white/10 pt-4">
           <div className="flex items-center gap-2 px-3 pb-2 text-xs font-medium uppercase tracking-wider text-white/40">
             <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} />
@@ -169,7 +229,13 @@ function SignOutNavItem() {
  * hamburger trigger + slide-in drawer, both scoped to this one component so
  * `AppShell`/`AppHeader` need no cross-component state to support it.
  */
-export function AppSidebar({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
+export function AppSidebar({
+  isPlatformAdmin,
+  trader,
+}: {
+  isPlatformAdmin: boolean;
+  trader?: TraderShellContext;
+}) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
@@ -179,7 +245,9 @@ export function AppSidebar({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
           <span className="text-lg font-semibold">Voltessa</span>
         </div>
 
-        <SidebarNav isPlatformAdmin={isPlatformAdmin} />
+        {trader && <OrgSwitcher trader={trader} />}
+
+        <SidebarNav isPlatformAdmin={isPlatformAdmin} trader={trader} />
 
         <SignOutNavItem />
       </aside>
@@ -215,7 +283,13 @@ export function AppSidebar({ isPlatformAdmin }: { isPlatformAdmin: boolean }) {
               </button>
             </div>
 
-            <SidebarNav onNavigate={() => setIsOpen(false)} isPlatformAdmin={isPlatformAdmin} />
+            {trader && <OrgSwitcher trader={trader} onNavigate={() => setIsOpen(false)} />}
+
+            <SidebarNav
+              onNavigate={() => setIsOpen(false)}
+              isPlatformAdmin={isPlatformAdmin}
+              trader={trader}
+            />
 
             <SignOutNavItem />
           </aside>

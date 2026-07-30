@@ -135,6 +135,14 @@ model TraderProfile {
   /// same non-foreign-key convention as `EnergyMarketSettings.dsoId`.
   distributionCompanyId String?
 
+  /// Trader Self-Service Onboarding milestone. Same convention as
+  /// `Organization.onboardingCompletedAt` - set once, the moment the
+  /// trader submits their required profile fields (companyName,
+  /// distributionCompanyId, plus firstName/lastName/phone on User itself).
+  /// Distinct from Platform Admin editing this row (M3), which never sets
+  /// this field - only the trader's own onboarding submission does.
+  onboardingCompletedAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
