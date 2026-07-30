@@ -22,6 +22,35 @@
  * plain transliteration/known international branding — not itself an
  * official register field, since the Bulgarian Commercial Register doesn't
  * maintain a separate Latin-script name for most of these companies.
+ *
+ * Data-quality pass (2026-07): cross-checked against ESO's (Elektroenergien
+ * Sistemen Operator, the Bulgarian TSO) public register of standard
+ * balancing-group coordinators and the Ministry of Energy's own published
+ * list of electricity traders (Art. 36e Energy Act obligated parties) —
+ * both independent of, and corroborating, the КЕВР license registry above.
+ * "КЕР Токи Пауър" ЕАД was found missing: it holds license № Л-525 (issued
+ * 25.09.2020) and is confirmed Active in ESO's coordinator register (EIC
+ * 32X001100101677Y), but the company was originally registered under the
+ * name "Токи Пауър" and only renamed to "КЕР Токи Пауър" on 28.04.2022 —
+ * whichever registry snapshot this list was originally compiled from was
+ * evidently taken either before that rename or simply missed this entity,
+ * and was never revisited since. Energo-Pro Energy Services' legal form is
+ * corrected from ЕООД to ЕАД for the same reason: ESO's register shows the
+ * old ЕООД registration (EIC 32X0011001003109) as Withdrawn and a separate
+ * ЕАД registration (EIC 32X001100100373M) as the current Active one — a
+ * legal-form conversion, not a rename to a different company.
+ *
+ * A handful of other existing entries (e.g. Овергаз Инк., Пи Си Си
+ * Енергия, Е.ОН Сейлс енд Трейдинг България, Енерджи Трейдинг, АЛБУС-РБ)
+ * could not be found in either of the two additional sources checked here,
+ * which is a signal worth investigating but not, on its own, proof of an
+ * obsolete license — КЕВР's own license portal and its supplier-switching
+ * platform (platforma.dker.bg/traders) are both JS-rendered/TLS-gated in a
+ * way that couldn't be reliably fetched for this pass, and a trader can
+ * validly hold a license without being its own balancing-group coordinator
+ * or appearing on the Art. 36e list. These were deliberately left
+ * unchanged rather than removed on incomplete evidence - flagged for a
+ * follow-up pass with direct access to the КЕВР portal.
  */
 export type ElectricitySupplier = {
   id: string;
@@ -38,7 +67,7 @@ const BULGARIAN_ELECTRICITY_SUPPLIERS: readonly ElectricitySupplier[] = [
   { id: "energy-market", officialLatinName: "Energy Market AD", officialBulgarianName: "Енерджи Маркет АД" },
   { id: "energy-trading", officialLatinName: "Energy Trading AD", officialBulgarianName: "Енерджи Трейдинг АД" },
   { id: "pcc-energy", officialLatinName: "PCC Energy EOOD", officialBulgarianName: "Пи Си Си Енергия ЕООД" },
-  { id: "energo-pro-energy-services", officialLatinName: "Energo-Pro Energy Services EOOD", officialBulgarianName: "Енерго-Про Енергийни Услуги ЕООД" },
+  { id: "energo-pro-energy-services", officialLatinName: "Energo-Pro Energy Services EAD", officialBulgarianName: "Енерго-Про Енергийни Услуги ЕАД" },
   { id: "eon-sales-and-trading-bulgaria", officialLatinName: "E.ON Sales and Trading Bulgaria EOOD", officialBulgarianName: "Е.ОН Сейлс енд Трейдинг България ЕООД" },
   { id: "enemona-utilities", officialLatinName: "Enemona Utilities AD", officialBulgarianName: "Енемона Ютилитис АД" },
   { id: "elfor-bulgaria", officialLatinName: "Elfor Bulgaria EAD", officialBulgarianName: "Елфор България ЕАД" },
@@ -52,6 +81,7 @@ const BULGARIAN_ELECTRICITY_SUPPLIERS: readonly ElectricitySupplier[] = [
   { id: "cez-elektro-bulgaria", officialLatinName: "CEZ Elektro Bulgaria AD", officialBulgarianName: "ЧЕЗ Електро България АД" },
   { id: "national-electric-company", officialLatinName: "National Electric Company EAD", officialBulgarianName: "Национална електрическа компания ЕАД" },
   { id: "business-energy", officialLatinName: "Business Energy AD", officialBulgarianName: "Бизнес Енерджи АД" },
+  { id: "ker-toki-power", officialLatinName: "KER Toki Power EAD", officialBulgarianName: "КЕР Токи Пауър ЕАД" },
   { id: "kimpex-energy", officialLatinName: "Kimpex Energy AD", officialBulgarianName: "Кимпекс Енерджи АД" },
   { id: "elcontrol", officialLatinName: "Elcontrol OOD", officialBulgarianName: "Елконтрол ООД" },
   { id: "energy-eco-trade", officialLatinName: "Energy Eco Trade AD", officialBulgarianName: "Енерджи Еко Трейд АД" },
