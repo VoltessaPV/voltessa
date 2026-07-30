@@ -29,12 +29,17 @@ function readOptionalString(formData: FormData, key: string): string | null {
  * Keeps `User.name` (used by `AppHeader`/`CurrentUser.name` today) in sync
  * from `firstName`/`lastName` so nothing else needs to change to keep
  * showing a sensible display name.
+ *
+ * `requireCurrentUser` (not `requireOnboardedUser`) — same reasoning as
+ * `deleteAccount` below: this only ever touches `user.id`, never
+ * `organizationId`, so it must work for an Energy Trader too (who never
+ * owns an Organization at all, not just one mid-onboarding).
  */
 export async function updateProfile(
   _prevState: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const user = await requireOnboardedUser();
+  const user = await requireCurrentUser();
 
   const firstName = readOptionalString(formData, "firstName");
   const lastName = readOptionalString(formData, "lastName");
@@ -51,12 +56,17 @@ export async function updateProfile(
   return { success: true, message: "Profile updated" };
 }
 
-/** Settings > Security — only succeeds while the account has no local password yet (re-checked here, never trusted from the client). */
+/**
+ * Settings > Security — only succeeds while the account has no local
+ * password yet (re-checked here, never trusted from the client).
+ * `requireCurrentUser` - only touches `user.id`, same reasoning as
+ * `updateProfile` above.
+ */
 export async function createPassword(
   _prevState: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const user = await requireOnboardedUser();
+  const user = await requireCurrentUser();
 
   const existing = await prisma.user.findUnique({
     where: { id: user.id },
@@ -97,12 +107,16 @@ export async function createPassword(
   return { success: true, message: "Password created" };
 }
 
-/** Settings > Security — requires the correct current password before setting a new one. */
+/**
+ * Settings > Security — requires the correct current password before
+ * setting a new one. `requireCurrentUser` - same reasoning as
+ * `updateProfile` above.
+ */
 export async function changePassword(
   _prevState: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const user = await requireOnboardedUser();
+  const user = await requireCurrentUser();
 
   const existing = await prisma.user.findUnique({
     where: { id: user.id },
@@ -224,12 +238,17 @@ export async function updateEnergyMarket(
   return { success: true, message: "Energy market settings saved" };
 }
 
-/** Settings > Notifications — one row per user. Storage only; not yet read by the notification-dispatch pipeline (see `NotificationPreferences`'s schema doc comment). */
+/**
+ * Settings > Notifications — one row per user. Storage only; not yet read
+ * by the notification-dispatch pipeline (see `NotificationPreferences`'s
+ * schema doc comment). `requireCurrentUser` - keyed by `userId` alone,
+ * same reasoning as `updateProfile` above.
+ */
 export async function updateNotificationPreferences(
   _prevState: ActionResult,
   formData: FormData,
 ): Promise<ActionResult> {
-  const user = await requireOnboardedUser();
+  const user = await requireCurrentUser();
 
   const data = {
     automationChanges: formData.has("automationChanges"),

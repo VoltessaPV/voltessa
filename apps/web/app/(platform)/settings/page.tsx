@@ -8,7 +8,7 @@ import { SecurityCard } from "@/components/settings/SecurityCard";
 import { SettingsCard } from "@/components/settings/SettingsCard";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
-import { requireOnboardedUser } from "@/lib/auth/session";
+import { requireCurrentUser, requireOnboardedUser } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
@@ -22,9 +22,72 @@ type SettingsPageProps = {
   }>;
 };
 
+/**
+ * Trader Workspace milestone bugfix. An Energy Trader never owns an
+ * Organization (`User.organizationId` is always null - they only get
+ * access via `TraderAssignment`), so `requireOnboardedUser()` below
+ * redirected them to `/onboarding` on every visit, which then bounced a
+ * fully-onboarded trader straight to `/dashboard` - the reported bug.
+ * Billing/Energy Market/Plants are genuinely organization-scoped and stay
+ * Plant Owner only; Profile/Security/Notifications are per-user data with
+ * no organization dependency at all, so a trader gets exactly those three,
+ * matching "Settings should always remain available for the trader's own
+ * account" from the redesign.
+ */
+async function renderTraderSettings(userId: string, email: string) {
+  const [account, fullUser, notificationPreferences] = await Promise.all([
+    prisma.account.findFirst({
+      where: { userId, provider: "google" },
+      select: { provider: true },
+    }),
+    prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { firstName: true, lastName: true, phone: true, passwordHash: true },
+    }),
+    prisma.notificationPreferences.findUnique({
+      where: { userId },
+    }),
+  ]);
+
+  return (
+    <PageContainer className="space-y-5">
+      <div>
+        <p className="text-sm text-slate-500">Manage your account and notification preferences.</p>
+      </div>
+
+      <ProfileCard
+        firstName={fullUser.firstName}
+        lastName={fullUser.lastName}
+        email={email}
+        phone={fullUser.phone}
+        isGoogleConnected={Boolean(account)}
+      />
+
+      <SecurityCard
+        isGoogleConnected={Boolean(account)}
+        hasPassword={Boolean(fullUser.passwordHash)}
+      />
+
+      <NotificationsCard
+        automationChanges={notificationPreferences?.automationChanges ?? true}
+        exportFailures={notificationPreferences?.exportFailures ?? true}
+        priceAlerts={notificationPreferences?.priceAlerts ?? false}
+        dailySummary={notificationPreferences?.dailySummary ?? false}
+        weeklySummary={notificationPreferences?.weeklySummary ?? false}
+      />
+    </PageContainer>
+  );
+}
+
 export default async function SettingsPage({
   searchParams,
 }: SettingsPageProps) {
+  const identity = await requireCurrentUser();
+
+  if (identity.accountType === "ENERGY_TRADER") {
+    return renderTraderSettings(identity.id, identity.email);
+  }
+
   const user = await requireOnboardedUser();
 
   // Transparent Freshness milestone: Settings renders no telemetry, so it
