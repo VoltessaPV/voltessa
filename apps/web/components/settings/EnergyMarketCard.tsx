@@ -16,8 +16,14 @@ type EnergyMarketCardProps = {
   dsoId: string | null;
 };
 
+// [color-scheme:dark] + optionStyle: same fix as
+// app/dev/huawei-api/HuaweiDiagnosticTestsCard.tsx's selectClassName -
+// native <option> popups don't inherit background-color from the
+// <select>, so without this they render on the browser's default opaque
+// white surface under our white option text.
 const selectClassName =
-  "h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none transition focus:border-white/20";
+  "h-9 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none transition focus:border-white/20 [color-scheme:dark]";
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
 
 /**
  * The supplier list lives in `lib/market/suppliers/bg.ts` and the DSO list
@@ -51,7 +57,7 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
             Country
           </span>
           <select name="country" defaultValue={country} className={selectClassName}>
-            <option value="Bulgaria">Bulgaria</option>
+            <option value="Bulgaria" style={optionStyle}>Bulgaria</option>
           </select>
         </label>
 
@@ -64,20 +70,20 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
             defaultValue={supplierId ?? ""}
             className={selectClassName}
           >
-            <option value="">Not selected</option>
+            <option value="" style={optionStyle}>Not selected</option>
 
             {regularSuppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
+              <option key={supplier.id} value={supplier.id} style={optionStyle}>
                 {supplier.officialBulgarianName}
               </option>
             ))}
 
             {specialSuppliers.length > 0 && (
-              <option disabled>──────────</option>
+              <option disabled style={optionStyle}>──────────</option>
             )}
 
             {specialSuppliers.map((supplier) => (
-              <option key={supplier.id} value={supplier.id}>
+              <option key={supplier.id} value={supplier.id} style={optionStyle}>
                 {supplier.officialBulgarianName}
               </option>
             ))}
@@ -93,10 +99,10 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
             defaultValue={dsoId ?? ""}
             className={selectClassName}
           >
-            <option value="">Not selected</option>
+            <option value="" style={optionStyle}>Not selected</option>
 
             {operators.map((operator) => (
-              <option key={operator.id} value={operator.id}>
+              <option key={operator.id} value={operator.id} style={optionStyle}>
                 {operator.officialBulgarianName}
               </option>
             ))}
