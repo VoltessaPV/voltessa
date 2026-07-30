@@ -88,13 +88,79 @@ type MarketPageProps = {
 };
 
 export default async function MarketPage({ searchParams }: MarketPageProps) {
-  // Trader Self-Service Onboarding milestone: resolves either the owner's
-  // own organization or an assigned trader's selected organization.
+  // Trader Workspace milestone: resolves either the owner's own
+  // organization or an assigned trader's selected organization.
   // `readOnly` suppresses the "Connect Plant" CTA below - it starts a
   // real OAuth flow that would modify the organization, never shown to
-  // a read-only Trader.
+  // a read-only Trader. `organizationId` is null only for a Trader with
+  // zero assigned clients.
   const { organizationId, readOnly } = await resolveOrganizationViewAccess();
   const params = await searchParams;
+
+  // Trader Workspace milestone: market data is global (`MarketPrice` has no
+  // `organizationId` at all - see prisma/schema.prisma), so a Trader with
+  // no client selected still gets something real here, unlike
+  // Automations/Alerts/BESS's plain empty state. Everything
+  // plant-dependent (revenue, current export, configured mode, event log,
+  // last-telemetry timestamp) is simply omitted - never fabricated -
+  // rather than rendering the full page with those fields permanently
+  // "unavailable".
+  if (organizationId === null) {
+    const data = await getMarketPageData({
+      organizationId: null,
+      selectedDateParam: params.date,
+      automationSettings: null,
+    });
+
+    return (
+      <PageContainer className="space-y-3">
+        <MarketToolbar
+          selectedDate={data.selectedDate}
+          prevDateParam={data.prevDateParam}
+          nextDateParam={data.nextDateParam}
+          isToday={data.isToday}
+        />
+
+        {!data.dataAvailable ? (
+          <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
+            <p className="text-sm font-medium text-white">
+              No market data available for {data.selectedDate}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Nothing has been imported from ENTSO-E for this day yet. Use the
+              date picker above to choose a different day.
+            </p>
+          </section>
+        ) : (
+          <>
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Price &amp; Export</h2>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Platform-wide day-ahead electricity price - select a client to see their
+                  export revenue and automation status alongside it.
+                </p>
+              </div>
+
+              <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
+                <Suspense fallback={<ChartSkeleton />}>
+                  <DynamicMarketPriceChart
+                    series={data.series}
+                    thresholdPrice={data.threshold.minimumExportPrice}
+                  />
+                </Suspense>
+              </div>
+            </section>
+
+            <section className="grid gap-2.5 md:grid-cols-2">
+              <MarketInsights insights={data.insights} />
+              <MarketDistribution buckets={data.distribution} />
+            </section>
+          </>
+        )}
+      </PageContainer>
+    );
+  }
 
   // Checked before any other data fetching (ENTSO-E price import, revenue,
   // production telemetry) - none of that is plant-specific, so without a

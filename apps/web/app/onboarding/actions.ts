@@ -169,5 +169,5 @@ export async function completeTraderOnboarding(formData: FormData) {
     }),
   ]);
 
-  redirect("/onboarding/trader-pending");
+  redirect("/dashboard");
 }

@@ -60,10 +60,7 @@ export default async function TraderProfileOnboardingPage({ searchParams }: Prop
   // one-time onboarding step, not a general profile editor (that's
   // Settings > Profile, for the fields it already covers).
   const stage = await resolveTraderOnboardingStage(user.id);
-  if (stage === "pending") {
-    redirect("/onboarding/trader-pending");
-  }
-  if (stage === "assigned") {
+  if (stage === "active") {
     redirect("/dashboard");
   }
 

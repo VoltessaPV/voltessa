@@ -3,6 +3,7 @@ import { MarketPriceOptimizationCard } from "@/components/automations/MarketPric
 import { MarketPriceOptimizationSummaryCard } from "@/components/automations/MarketPriceOptimizationSummaryCard";
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
 import { EmptyState } from "@/components/platform/EmptyState";
+import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
 import {
@@ -28,7 +29,19 @@ export { pageHeading } from "./heading";
  * untouched, not folded into a shared helper, so this milestone can never
  * accidentally weaken that check.
  */
-async function renderAutomations(organizationId: string, readOnly: boolean) {
+async function renderAutomations(organizationId: string | null, readOnly: boolean) {
+  // Trader Workspace milestone: null only for a Trader with zero assigned
+  // clients (never an owner - `requireOnboardedUser()` guarantees a real
+  // organization). A plain empty state, not a redirect - the rest of the
+  // workspace stays reachable.
+  if (organizationId === null) {
+    return (
+      <PageContainer className="space-y-3">
+        <NoClientAssignedState />
+      </PageContainer>
+    );
+  }
+
   // Transparent Freshness milestone: see settings/page.tsx's identical
   // comment - Automations renders no telemetry, so this never blocks.
   await ensureTelemetryFresh(organizationId, {

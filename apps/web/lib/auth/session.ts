@@ -160,31 +160,35 @@ export type CurrentTraderOrganization = {
 
 export type CurrentTraderAccess = {
   trader: CurrentUser;
-  organizationId: string;
-  organization: CurrentTraderOrganization;
-  /** Every organization this trader is assigned to — for the sidebar's org switcher (only rendered when this has more than one entry). */
+  /** Null when this trader has zero `TraderAssignment` rows - a normal, permanent Trader Workspace state, not an error. */
+  organizationId: string | null;
+  organization: CurrentTraderOrganization | null;
+  /** Every organization this trader is assigned to - drives the header's client-context indicator and the Clients portfolio page. */
   assignedOrganizations: CurrentTraderOrganization[];
 };
 
 /**
- * Trader Self-Service Onboarding milestone. The Energy Trader counterpart
- * to `requireOnboardedUser()` — deliberately a SEPARATE function, not a
+ * Trader Workspace milestone. The Energy Trader counterpart to
+ * `requireOnboardedUser()` — deliberately a SEPARATE function, not a
  * branch inside it: `requireOnboardedUser()` stays exactly what it always
  * was (ownership via `User.organizationId`), so every page that still
  * calls it (Plants, Settings, Administration, and anything else not
  * explicitly updated for this milestone) continues to reject a Trader
  * automatically, with zero changes to that function or those pages. Only
- * the five pages Traders may see (Dashboard/Market/Automations/Alerts/
+ * the pages Traders may see (Dashboard/Clients/Market/Automations/Alerts/
  * BESS) call this instead.
  *
  * Resolves onboarding stage first (see `resolveTraderOnboardingStage`) -
  * redirects back into the onboarding flow if the trader's profile isn't
- * complete yet or no assignment exists, exactly like `requireOnboardedUser`
- * redirects an incomplete Plant Owner to `/onboarding`. The selected
- * organization (for a trader assigned to more than one) comes from
- * `TRADER_SELECTED_ORGANIZATION_COOKIE`, falling back to the most
- * recently assigned organization if unset or no longer valid (e.g. an
- * assignment was removed since the cookie was written).
+ * complete yet, exactly like `requireOnboardedUser` redirects an
+ * incomplete Plant Owner to `/onboarding`. Once the profile is complete,
+ * the trader always enters the workspace — zero assignments is never a
+ * redirect, it's returned as `organizationId: null` for the caller to
+ * render its own empty state. The selected organization (for a trader
+ * assigned to more than one) comes from `TRADER_SELECTED_ORGANIZATION_COOKIE`,
+ * falling back to the most recently assigned organization if unset or no
+ * longer valid (e.g. an assignment was removed since the cookie was
+ * written).
  */
 export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAccess> {
   const trader = await requireCurrentUser();
@@ -197,10 +201,6 @@ export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAc
 
   if (stage === "profile") {
     redirect("/onboarding/trader-profile");
-  }
-
-  if (stage === "pending") {
-    redirect("/onboarding/trader-pending");
   }
 
   const assignments = await prisma.traderAssignment.findMany({
@@ -217,9 +217,12 @@ export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAc
   const firstOrganization = assignedOrganizations[0];
 
   if (!firstOrganization) {
-    // Re-checked here even though `stage` already confirmed at least one
-    // assignment exists - a defensive fallback, not an expected path.
-    redirect("/onboarding/trader-pending");
+    return {
+      trader,
+      organizationId: null,
+      organization: null,
+      assignedOrganizations: [],
+    };
   }
 
   const cookieStore = await cookies();
@@ -236,24 +239,29 @@ export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAc
 }
 
 export type OrganizationViewAccess = {
-  organizationId: string;
+  /** Null for an Energy Trader with zero assigned clients. */
+  organizationId: string | null;
   /** True for an assigned Energy Trader - callers must not render any write control (forms, CTAs like "Connect Plant") when this is true. */
   readOnly: boolean;
 };
 
 /**
- * Trader Self-Service Onboarding milestone. Shared by every page a Trader
- * may view - Dashboard, Market, Alerts, BESS - to resolve both which
- * organization to render and whether the caller must suppress write
- * controls (e.g. `ConnectFusionSolarButton`'s empty-state CTA, which
- * starts a real OAuth flow that would modify the organization).
+ * Trader Workspace milestone. Shared by every page a Trader may view -
+ * Market, Alerts, BESS - to resolve both which organization to render and
+ * whether the caller must suppress write controls (e.g.
+ * `ConnectFusionSolarButton`'s empty-state CTA, which starts a real OAuth
+ * flow that would modify the organization). `organizationId` is null when
+ * the trader has no assigned clients - callers render their own empty
+ * state rather than treating this as an error.
  *
  * Deliberately NOT used by Automations: that page gates the *owner* path
  * on `requirePermission(Permissions.canManagePlants)`, a stricter check
  * than plain ownership - reusing this helper's `requireOnboardedUser()`
  * fallback there would silently downgrade that check. Automations builds
  * the same `{ organizationId, readOnly }` shape itself, from its own
- * explicit branch, instead (see that page).
+ * explicit branch, instead (see that page). Also deliberately NOT used by
+ * Dashboard, which is portfolio-level for a trader and never resolves a
+ * single "current" organization to render.
  */
 export async function resolveOrganizationViewAccess(): Promise<OrganizationViewAccess> {
   const identity = await requireCurrentUser();
@@ -265,4 +273,21 @@ export async function resolveOrganizationViewAccess(): Promise<OrganizationViewA
 
   const user = await requireOnboardedUser();
   return { organizationId: user.organizationId, readOnly: false };
+}
+
+/** Fixed set of routes a Trader select-client form may redirect back to — never trust a raw `redirectTo` form value without checking it against this list (open-redirect prevention). */
+const TRADER_REDIRECT_ALLOWLIST = [
+  "/dashboard",
+  "/clients",
+  "/market",
+  "/automations",
+  "/alerts",
+  "/bess",
+] as const;
+
+export function resolveTraderRedirectTarget(candidate: FormDataEntryValue | null): string {
+  const value = candidate?.toString();
+  return (TRADER_REDIRECT_ALLOWLIST as readonly string[]).includes(value ?? "")
+    ? value!
+    : "/dashboard";
 }
