@@ -5,17 +5,46 @@
  * inline, so this list can be extended, corrected, or localized without
  * touching any component.
  *
- * Names are sourced from the Energy and Water Regulatory Commission's
- * (КЕВР/EWRC) own public electricity-trading license registry
- * (portal.dker.bg/registri/litsenzii) — every entry below is a real
- * licensed company, not a fabricated one. Entities from that registry that
- * are clearly not retail-facing free-market suppliers (mines, power
- * plants, the nuclear plant operator, pure wholesale/financial commodities
- * arms of foreign banks) are intentionally excluded, since this list's
- * purpose is "which supplier can an end customer choose", not "every
- * holder of an electricity-trading license". Where the registry recorded a
- * company under an old name superseded by a later rename (e.g. ЧЕЗ Трейд
- * България → Електрохолд Трейд), only the current name is kept.
+ * This is regulatory data, not product data — it goes stale the moment the
+ * real-world register changes underneath it, silently and without a build
+ * failure to catch it. The three sections below exist so a future
+ * maintainer never has to rediscover where this came from or how to check
+ * it again from scratch.
+ *
+ * ## Authoritative source(s)
+ *
+ * Primary: the Energy and Water Regulatory Commission's (КЕВР/EWRC) own
+ * public electricity-trading license registry, at
+ * portal.dker.bg/registri/litsenzii — the single legal source of truth for
+ * "who is licensed to trade electricity in Bulgaria". КЕВР also publishes a
+ * consumer-facing supplier-switching platform at
+ * platforma.dker.bg/traders, which is closer in spirit to this list's own
+ * purpose ("which supplier can an end customer choose") than the raw
+ * license registry is. Both of those КЕВР sites are JS-rendered/TLS-gated
+ * in a way that has repeatedly failed automated fetching (see "Update
+ * process" below) — treat them as the ground truth to check *manually*,
+ * not as something an agent can reliably scrape unattended.
+ *
+ * Secondary, used to cross-check the primary source without needing to
+ * scrape it directly: ESO's (Elektroenergien Sistemen Operator, the
+ * Bulgarian TSO) public register of standard balancing-group coordinators,
+ * and the Ministry of Energy's own published list of electricity traders
+ * (Art. 36e Energy Act obligated parties, me.government.bg). Both are
+ * independent of the КЕВР registry and of each other, which is what makes
+ * them useful for corroboration — but neither is a full substitute for it:
+ * a trader can hold a valid КЕВР license without being its own
+ * balancing-group coordinator, or without appearing on the Art. 36e list,
+ * so absence from either secondary source is a signal to investigate, not
+ * proof of an obsolete license on its own.
+ *
+ * Entities from these registries that are clearly not retail-facing
+ * free-market suppliers (mines, power plants, the nuclear plant operator,
+ * pure wholesale/financial commodities arms of foreign banks) are
+ * intentionally excluded, since this list's purpose is "which supplier can
+ * an end customer choose", not "every holder of an electricity-trading
+ * license". Where the registry recorded a company under an old name
+ * superseded by a later rename (e.g. ЧЕЗ Трейд България → Електрохолд
+ * Трейд), only the current name is kept.
  *
  * `officialBulgarianName` is each company's own registered Bulgarian legal
  * name (Cyrillic, with its legal-form suffix). `officialLatinName` is a
@@ -23,34 +52,64 @@
  * official register field, since the Bulgarian Commercial Register doesn't
  * maintain a separate Latin-script name for most of these companies.
  *
- * Data-quality pass (2026-07): cross-checked against ESO's (Elektroenergien
- * Sistemen Operator, the Bulgarian TSO) public register of standard
- * balancing-group coordinators and the Ministry of Energy's own published
- * list of electricity traders (Art. 36e Energy Act obligated parties) —
- * both independent of, and corroborating, the КЕВР license registry above.
- * "КЕР Токи Пауър" ЕАД was found missing: it holds license № Л-525 (issued
- * 25.09.2020) and is confirmed Active in ESO's coordinator register (EIC
- * 32X001100101677Y), but the company was originally registered under the
- * name "Токи Пауър" and only renamed to "КЕР Токи Пауър" on 28.04.2022 —
- * whichever registry snapshot this list was originally compiled from was
- * evidently taken either before that rename or simply missed this entity,
- * and was never revisited since. Energo-Pro Energy Services' legal form is
- * corrected from ЕООД to ЕАД for the same reason: ESO's register shows the
- * old ЕООД registration (EIC 32X0011001003109) as Withdrawn and a separate
- * ЕАД registration (EIC 32X001100100373M) as the current Active one — a
- * legal-form conversion, not a rename to a different company.
+ * ## Last full verification
  *
- * A handful of other existing entries (e.g. Овергаз Инк., Пи Си Си
- * Енергия, Е.ОН Сейлс енд Трейдинг България, Енерджи Трейдинг, АЛБУС-РБ)
- * could not be found in either of the two additional sources checked here,
- * which is a signal worth investigating but not, on its own, proof of an
- * obsolete license — КЕВР's own license portal and its supplier-switching
- * platform (platforma.dker.bg/traders) are both JS-rendered/TLS-gated in a
- * way that couldn't be reliably fetched for this pass, and a trader can
- * validly hold a license without being its own balancing-group coordinator
- * or appearing on the Art. 36e list. These were deliberately left
- * unchanged rather than removed on incomplete evidence - flagged for a
- * follow-up pass with direct access to the КЕВР portal.
+ * 2026-07-30 — cross-checked every entry below against the two secondary
+ * sources above (ESO's coordinator register, fetched in full; the Ministry
+ * of Energy's Art. 36e list, fetched in full). Two changes came out of that
+ * pass: "КЕР Токи Пауър" ЕАД was added (holds license № Л-525, issued
+ * 25.09.2020, confirmed Active in ESO's register under EIC
+ * 32X001100101677Y; the company was originally registered as "Токи Пауър"
+ * and only renamed to "КЕР Токи Пауър" on 28.04.2022 — whichever registry
+ * snapshot this list was originally compiled from evidently predated that
+ * rename, or simply missed the entity, and was never revisited afterward).
+ * Energo-Pro Energy Services' legal form was corrected from ЕООД to ЕАД:
+ * ESO shows the old ЕООД registration (EIC 32X0011001003109) as Withdrawn
+ * and a separate ЕАД registration (EIC 32X001100100373M) as the current
+ * Active one — a legal-form conversion, not a rename to a different
+ * company.
+ *
+ * That same pass could NOT confirm current status for a handful of other
+ * existing entries (Овергаз Инк., Пи Си Си Енергия, Е.ОН Сейлс енд
+ * Трейдинг България, Енерджи Трейдинг, АЛБУС-РБ) — absent from both
+ * secondary sources, but per the caveat above that's not conclusive, and
+ * the primary КЕВР sources couldn't be automatically fetched during this
+ * pass. Left unchanged rather than removed on incomplete evidence. Anyone
+ * doing the next full verification should check these five specifically
+ * against the primary source first.
+ *
+ * ## Update process
+ *
+ * When the official register changes (a new report like this one, a
+ * routine periodic check, or a specific reported gap):
+ *
+ * 1. Open portal.dker.bg/registri/litsenzii and/or
+ *    platforma.dker.bg/traders directly in a browser — both have
+ *    repeatedly returned incomplete or blocked results to automated
+ *    fetching (JS rendering, TLS certificate issues), so budget for a
+ *    manual pass rather than assuming a script/agent can do this
+ *    unattended.
+ * 2. Cross-check any addition/removal/rename against at least one
+ *    secondary source (ESO's balancing-group-coordinator register, or the
+ *    Ministry of Energy's Art. 36e list) before changing this file — the
+ *    2026-07-30 pass above is the worked example: a single-source claim
+ *    ("this company isn't in the dropdown") isn't enough justification on
+ *    its own to add or remove an entry; get independent corroboration
+ *    first, exactly like `КЕР Токи Пауър`'s license number, ESO status,
+ *    and rename history were all confirmed before adding it.
+ * 3. Prefer correcting a name/legal-form over deleting-and-re-adding when
+ *    a company has simply been renamed or converted legal form (see the
+ *    ЧЕЗ Трейд България → Електрохолд Трейд and Energo-Pro ЕООД → ЕАД
+ *    entries above) — this keeps `id` stable for anything that might
+ *    reference it.
+ * 4. Never remove an entry solely because it's absent from a *secondary*
+ *    source — confirm against the primary КЕВР registry first (a trader
+ *    can be validly licensed without being its own balancing-group
+ *    coordinator or appearing on the Art. 36e list).
+ * 5. Update this "Last full verification" date and summarize what changed
+ *    and why, following the same shape as the entry above — the point is
+ *    that the *next* maintainer should never have to re-derive "where did
+ *    this data come from" from git blame alone.
  */
 export type ElectricitySupplier = {
   id: string;
