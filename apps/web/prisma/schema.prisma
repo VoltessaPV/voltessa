@@ -89,6 +89,13 @@ model User {
 
   notificationPreferences NotificationPreferences?
 
+  /// GDPR + Cookie Consent Platform milestone. Nullable and `onDelete: SetNull`
+  /// deliberately: most consent decisions happen before signup (no User row
+  /// yet), and when an account is later deleted (`deleteAccount()`), the
+  /// consent history survives (per the agreed retention policy) but loses
+  /// its identifying link - see `ConsentLog` below.
+  consentLogs ConsentLog[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -959,4 +966,95 @@ model DeviceTelemetry {
   @@unique([deviceId, timestamp, resolution])
   @@index([organizationId, plantId, timestamp])
   @@index([plantId, timestamp])
+}
+
+/// GDPR + Cookie Consent Platform milestone. Append-only proof-of-consent
+/// record - the accountability-principle answer to "can we demonstrate this
+/// person actually consented, and to what, at what time". Deliberately NOT
+/// organization-scoped (no `organizationId`): consent is a per-person/per-
+/// browser concept, not a tenant-business concept, and most rows are written
+/// before any Organization exists (a marketing-site visitor pre-signup) -
+/// same kind of documented multi-tenancy exception `MarketPrice` already
+/// sets a precedent for in this schema, for the analogous reason.
+///
+/// A new row is written on every consent decision (first-visit
+/// Accept All/Reject All/Customize, and any later change via Cookie
+/// Settings) - never updated in place and never superseded/deleted when a
+/// newer decision exists, per the agreed retention policy
+/// (docs/legal/data-retention.md): the full history is the point, not just
+/// the current state. `userId` is nullable with `onDelete: SetNull` since
+/// most rows precede signup, and because deleting an account must not carry
+/// the deleted person's identity forward via this table either - the
+/// consent history for that browser survives (proof it was properly
+/// requested/obtained) but the direct link to the now-deleted account does
+/// not.
+model ConsentLog {
+  id String @id @default(cuid())
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Matches the `CONSENT_VERSION` constant in effect when this decision was
+  /// recorded (`lib/consent/constants.ts`) - lets a later policy/category
+  /// change be told apart from an earlier decision made under different
+  /// terms.
+  version Int
+
+  necessary  Boolean @default(true)
+  functional Boolean @default(false)
+  analytics  Boolean @default(false)
+  marketing  Boolean @default(false)
+
+  /// "accept_all" | "reject_all" | "customize" - which control the person
+  /// actually used, not just the resulting category booleans, since two
+  /// different actions can produce the same booleans (e.g. Reject All vs.
+  /// manually unchecking everything in Customize).
+  action String
+
+  userAgent String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// GDPR + Cookie Consent Platform milestone. The ONLY record `deleteAccount()`
+/// (app/(platform)/settings/actions.ts) writes when a user deletes their own
+/// account - deliberately NOT the general-purpose `AuditLog` model above,
+/// whose `metadata Json?` field and User relations (even with
+/// `onDelete: SetNull`) invite exactly the kind of reconstructable/
+/// identifying record this trail must never be. This model has no foreign
+/// key to `User` at all, not even a nullable one: the account is genuinely
+/// gone, and this row proves only that a self-service deletion happened,
+/// never who it was. Retained indefinitely (see docs/legal/data-retention.md)
+/// specifically BECAUSE it contains no personal data - the normal 24-month
+/// log-retention window that applies to AuditLog/AutomationEvent/
+/// ImpersonationSession/ConsentLog doesn't apply here for that same reason.
+///
+/// No hash of the deleted user's id was added, deliberately: Prisma `cuid()`
+/// values are never reused, and this model exists for exactly one real
+/// deletion event per account (there is no realistic "duplicate deletion"
+/// scenario to detect once the row is gone) - adding a field "just in case"
+/// would be exactly the kind of speculative field this milestone's own
+/// minimal-data requirement argues against.
+model AccountDeletionRecord {
+  id String @id @default(cuid())
+
+  /// Always "self_service" today - the admin-initiated purge path
+  /// (`app/(platform)/admin/actions.ts`'s `purgeUser`) already has its own
+  /// `AuditLog` trail and is out of scope for this model.
+  actorType String @default("self_service")
+
+  /// Fixed, closed vocabulary - "account_deleted" is the only value today.
+  actionType String @default("account_deleted")
+
+  /// `crypto.randomUUID()`, generated at deletion time - lets this row be
+  /// correlated with the deletion Server Action's own server-side log line
+  /// for support/debugging, without storing anything about the account
+  /// itself.
+  correlationId String @unique
+
+  schemaVersion Int @default(1)
+
+  createdAt DateTime @default(now())
 }

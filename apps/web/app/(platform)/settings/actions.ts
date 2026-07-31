@@ -279,11 +279,23 @@ export async function updateNotificationPreferences(
  * far outside what "delete my account" means. `requireCurrentUser` (not
  * `requireOnboardedUser`) — account deletion must work even for a user who
  * never finished onboarding.
+ *
+ * GDPR + Cookie Consent Platform milestone: also writes an
+ * `AccountDeletionRecord` — deliberately NOT the general-purpose `AuditLog`
+ * (see that model's own schema comment for why) — in the same transaction
+ * as the delete, so the audit trail and the deletion always succeed or fail
+ * together. The record is created with a fixed, no-PII shape; nothing about
+ * `user` (id/email/name) is ever passed into it.
  */
 export async function deleteAccount(): Promise<void> {
   const user = await requireCurrentUser();
 
-  await prisma.user.delete({ where: { id: user.id } });
+  await prisma.$transaction([
+    prisma.accountDeletionRecord.create({
+      data: { correlationId: crypto.randomUUID() },
+    }),
+    prisma.user.delete({ where: { id: user.id } }),
+  ]);
 
   await signOut({ redirectTo: "/" });
 }
