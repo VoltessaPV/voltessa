@@ -4,10 +4,13 @@ const BASE_URL = "https://voltessa.ai";
 
 /**
  * `alternates.languages` for a given un-prefixed pathname (e.g. `""` for
- * home, `"/privacy"`) — one entry per currently active locale plus
- * `x-default` pointing at English. Adding a language later (Phase 2) means
- * adding its code to `routing.ts`'s `LOCALES` array; this picks it up with
- * no further change, since it iterates that array rather than a fixed list.
+ * home, `"/privacy"`) — one entry per currently *enabled* locale
+ * (`routing.locales`, not the full `LOCALES` archive — see routing.ts's
+ * rollout-gate doc comment, e.g. Bulgarian while it's disabled pending QA)
+ * plus `x-default` pointing at English. Enabling a disabled language, or
+ * adding a new one, means updating `routing.ts`'s `ENABLED_LOCALES`; this
+ * picks it up with no further change, since it iterates that array rather
+ * than a fixed list.
  */
 export function buildLanguageAlternates(pathname: string): Record<string, string> {
   const languages: Record<string, string> = {};

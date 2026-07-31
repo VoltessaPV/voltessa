@@ -1,7 +1,7 @@
 import createMiddleware from "next-intl/middleware";
 
 import { auth } from "@/auth";
-import { routing } from "@/lib/i18n/routing";
+import { DISABLED_LOCALES, routing } from "@/lib/i18n/routing";
 
 /**
  * Full Internationalization milestone. Composes next-intl's locale
@@ -53,8 +53,40 @@ function isAuthPagePath(pathname: string): boolean {
   return AUTH_PAGE_PATHS.some((path) => stripped === path || stripped.startsWith(`${path}/`));
 }
 
+/**
+ * Bulgarian rollout gate: `DISABLED_LOCALES` is `LOCALES` minus
+ * `routing.locales` (see routing.ts's doc comments) - currently just
+ * `["bg"]`, but this never hardcodes that so re-enabling a locale (moving
+ * it from `LOCALES` into `ENABLED_LOCALES`) automatically empties this
+ * regex and turns the redirect below into a no-op, with nothing here to
+ * revisit. `null` when nothing is disabled, so the check below is skipped
+ * entirely rather than matching against an empty alternation.
+ */
+const DISABLED_LOCALE_PREFIX_RE =
+  DISABLED_LOCALES.length > 0 ? new RegExp(`^/(${DISABLED_LOCALES.join("|")})(?=/|$)`) : null;
+
 export default auth((req) => {
   const host = req.headers.get("host");
+
+  // A disabled locale's URL (e.g. /bg/dashboard while Bulgarian is
+  // disabled pending QA - see routing.ts) redirects permanently to its
+  // English equivalent rather than 404ing - chosen over the other
+  // documented option (letting the locale fall out of the configured list
+  // and 404) so an old bookmark or shared link still lands somewhere real.
+  // Runs before everything else below: unconditional regardless of host/
+  // auth state, and the resulting /en/... URL then goes through the exact
+  // same logic on the next request.
+  if (DISABLED_LOCALE_PREFIX_RE) {
+    const match = req.nextUrl.pathname.match(DISABLED_LOCALE_PREFIX_RE);
+    if (match) {
+      const rest = req.nextUrl.pathname.slice(match[0].length) || "/";
+      const target = new URL(
+        `/${routing.defaultLocale}${rest}${req.nextUrl.search}`,
+        req.url
+      );
+      return Response.redirect(target, 308);
+    }
+  }
 
   if (
     isAuthPagePath(req.nextUrl.pathname) &&

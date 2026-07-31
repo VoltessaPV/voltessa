@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
+import { SHOW_LANGUAGE_SWITCHER } from "@/lib/i18n/routing";
 
 type AuthCardProps = {
   title: string;
@@ -20,9 +21,11 @@ export function AuthCard({ title, subtitle, children }: AuthCardProps) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
       <div className="w-full max-w-md">
-        <div className="mb-4 flex justify-end">
-          <LanguageSwitcher />
-        </div>
+        {SHOW_LANGUAGE_SWITCHER && (
+          <div className="mb-4 flex justify-end">
+            <LanguageSwitcher />
+          </div>
+        )}
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-8">
           <h1 className="text-2xl font-semibold">{title}</h1>

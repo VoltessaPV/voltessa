@@ -4,6 +4,7 @@ import { getTranslations } from "next-intl/server";
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { auth } from "@/auth";
 import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
+import { SHOW_LANGUAGE_SWITCHER } from "@/lib/i18n/routing";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { prisma } from "@/lib/prisma";
 
@@ -80,9 +81,11 @@ export default async function TraderProfileOnboardingPage({ searchParams }: Prop
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
       <div className="w-full max-w-lg">
-        <div className="mb-4 flex justify-end">
-          <LanguageSwitcher />
-        </div>
+        {SHOW_LANGUAGE_SWITCHER && (
+          <div className="mb-4 flex justify-end">
+            <LanguageSwitcher />
+          </div>
+        )}
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-8">
           <h1 className="text-2xl font-semibold">{t("title")}</h1>

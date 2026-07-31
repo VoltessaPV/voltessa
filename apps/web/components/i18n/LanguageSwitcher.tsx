@@ -5,7 +5,7 @@ import { useTransition } from "react";
 
 import { setLocale } from "@/lib/i18n/actions";
 import { usePathname, useRouter } from "@/lib/i18n/navigation";
-import { routing, type AppLocale } from "@/lib/i18n/routing";
+import { routing, SHOW_LANGUAGE_SWITCHER, type AppLocale } from "@/lib/i18n/routing";
 
 /**
  * Each language's name is shown in itself (English, Български), not
@@ -34,6 +34,15 @@ export function LanguageSwitcher({ className }: { className?: string }) {
   const pathname = usePathname();
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+
+  // Rollout gate (see routing.ts's SHOW_LANGUAGE_SWITCHER doc comment):
+  // nothing to switch between while only one locale is enabled. Every
+  // mount site keeps rendering this component unconditionally - hiding
+  // itself here is the one place re-enabling a second locale needs to
+  // change nothing else to bring the control back everywhere at once.
+  if (!SHOW_LANGUAGE_SWITCHER) {
+    return null;
+  }
 
   function handleSelect(next: AppLocale) {
     if (next === currentLocale || isPending) {

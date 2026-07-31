@@ -9,10 +9,14 @@ const BASE_URL = "https://voltessa.ai";
 const PUBLIC_PATHS = ["", "/privacy", "/terms", "/cookie-policy", "/company"];
 
 /**
- * One entry per (locale × public path), each carrying its own `alternates`
+ * One entry per (enabled locale × public path) — `routing.locales`, not
+ * the full `LOCALES` archive, so a disabled locale (Bulgarian, pending QA -
+ * see routing.ts's rollout-gate doc comment) is never advertised to search
+ * engines while it's unreachable. Each entry carries its own `alternates`
  * so search engines see the full `hreflang` set for every URL, not just the
- * page-level `<link>` tags. Adding a language later (Phase 2) only needs
- * `routing.ts`'s `LOCALES` array updated — this picks it up automatically.
+ * page-level `<link>` tags. Enabling a disabled language, or adding a new
+ * one, only needs `routing.ts`'s `ENABLED_LOCALES` updated — this picks it
+ * up automatically.
  */
 export default function sitemap(): MetadataRoute.Sitemap {
   const entries: MetadataRoute.Sitemap = [];

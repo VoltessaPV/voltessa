@@ -5,6 +5,7 @@ import { Link } from "@/lib/i18n/navigation";
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { auth } from "@/auth";
 import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
+import { SHOW_LANGUAGE_SWITCHER } from "@/lib/i18n/routing";
 import { prisma } from "@/lib/prisma";
 
 import { chooseEnergyTraderPersona } from "./actions";
@@ -71,9 +72,11 @@ export default async function OnboardingPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
       <div className="w-full max-w-lg">
-        <div className="mb-4 flex justify-end">
-          <LanguageSwitcher />
-        </div>
+        {SHOW_LANGUAGE_SWITCHER && (
+          <div className="mb-4 flex justify-end">
+            <LanguageSwitcher />
+          </div>
+        )}
 
         <div className="text-center">
           <h1 className="text-2xl font-semibold">{t("title")}</h1>

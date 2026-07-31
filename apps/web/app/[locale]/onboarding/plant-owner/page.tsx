@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { auth } from "@/auth";
+import { SHOW_LANGUAGE_SWITCHER } from "@/lib/i18n/routing";
 import { prisma } from "@/lib/prisma";
 
 import { createOrganization } from "../actions";
@@ -53,9 +54,11 @@ export default async function PlantOwnerOnboardingPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 text-white">
       <div className="w-full max-w-md">
-        <div className="mb-4 flex justify-end">
-          <LanguageSwitcher />
-        </div>
+        {SHOW_LANGUAGE_SWITCHER && (
+          <div className="mb-4 flex justify-end">
+            <LanguageSwitcher />
+          </div>
+        )}
 
         <div className="rounded-2xl border border-white/10 bg-white/5 p-8">
           <h1 className="text-2xl font-semibold">{t("title")}</h1>
