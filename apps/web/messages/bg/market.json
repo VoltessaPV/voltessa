@@ -31,7 +31,11 @@
     "livePriceOnlyToday": "Цена на живо е налична само за днес",
     "fusionSolarMeterUnavailable": "Данните от измервателния уред на FusionSolar не са налични",
     "exportedToday": "Изнесено днес",
-    "averageSellingPrice": "Средна продажна цена"
+    "exported": "Изнесено",
+    "averageSellingPrice": "Средна продажна цена",
+    "vsLastWeek": "спрямо миналата седмица",
+    "vsLastMonth": "спрямо миналия месец",
+    "vsLastYear": "спрямо миналата година"
   },
   "toolbar": {
     "live": "На живо",
@@ -65,12 +69,13 @@
   },
   "insights": {
     "title": "Пазарни прозрения",
-    "highestPriceToday": "Най-висока цена днес: {price} EUR/MWh в {time}",
-    "lowestPriceToday": "Най-ниска цена днес: {price} EUR/MWh в {time}",
+    "highestPrice": "Най-висока цена: {price} EUR/MWh в {time}",
+    "lowestPrice": "Най-ниска цена: {price} EUR/MWh в {time}",
     "priceSpread": "Ценови диапазон: {spread} EUR/MWh",
     "averagePrice": "Средна цена: {price} EUR/MWh",
     "hoursAboveThreshold": "Часове над прага: {hours} ч",
-    "hoursBelowThreshold": "Часове под прага: {hours} ч"
+    "hoursBelowThreshold": "Часове под прага: {hours} ч",
+    "negativePriceHours": "Часове с отрицателна цена: {hours} ч"
   },
   "eventLog": {
     "title": "Дневник на събитията (последните 10)",

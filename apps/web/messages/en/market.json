@@ -31,7 +31,11 @@
     "livePriceOnlyToday": "Live price only available for today",
     "fusionSolarMeterUnavailable": "FusionSolar meter data unavailable",
     "exportedToday": "Exported today",
-    "averageSellingPrice": "Average selling price"
+    "exported": "Exported",
+    "averageSellingPrice": "Average selling price",
+    "vsLastWeek": "vs last week",
+    "vsLastMonth": "vs last month",
+    "vsLastYear": "vs last year"
   },
   "toolbar": {
     "live": "Live",
@@ -65,12 +69,13 @@
   },
   "insights": {
     "title": "Market Insights",
-    "highestPriceToday": "Highest price today: {price} EUR/MWh at {time}",
-    "lowestPriceToday": "Lowest price today: {price} EUR/MWh at {time}",
+    "highestPrice": "Highest price: {price} EUR/MWh at {time}",
+    "lowestPrice": "Lowest price: {price} EUR/MWh at {time}",
     "priceSpread": "Price spread: {spread} EUR/MWh",
     "averagePrice": "Average price: {price} EUR/MWh",
     "hoursAboveThreshold": "Hours above threshold: {hours} h",
-    "hoursBelowThreshold": "Hours below threshold: {hours} h"
+    "hoursBelowThreshold": "Hours below threshold: {hours} h",
+    "negativePriceHours": "Negative price hours: {hours} h"
   },
   "eventLog": {
     "title": "Event Log (Last 10)",

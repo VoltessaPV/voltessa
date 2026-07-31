@@ -96,6 +96,21 @@ export type MarketPriceProvider = {
      */
     timeZone?: string;
   }) => Promise<MarketPriceSeriesResult>;
+  /**
+   * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The
+   * same real, persisted rows `getDayAheadPrices` reads, just over an
+   * arbitrary `[start, end)` instead of always exactly one calendar day —
+   * this is what lets the Market page aggregate a full calendar week/
+   * month/year without a second query per day. `start`/`end` are already
+   * real UTC instants (computed by the caller via `periodBoundsUtc`), so
+   * this method does no timezone/day-boundary math of its own, unlike
+   * `getDayAheadPrices`.
+   */
+  getPricesInRange: (options: {
+    start: Date;
+    end: Date;
+    biddingZone?: string;
+  }) => Promise<MarketPriceSeriesResult>;
   /** Placeholder — see module doc comment. Always returns `available: false`. */
   getIntradayPrices: (options?: {
     biddingZone?: string;
@@ -200,6 +215,27 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
       return {
         available: false,
         reason: "no_persisted_price_data_for_requested_day",
+      };
+    }
+
+    return { available: true, prices: rows.map(toMarketPrice) };
+  },
+
+  async getPricesInRange(options): Promise<MarketPriceSeriesResult> {
+    const biddingZone = options.biddingZone ?? DEFAULT_BIDDING_ZONE;
+
+    const rows = await prisma.marketPrice.findMany({
+      where: {
+        biddingZone,
+        timestamp: { gte: options.start, lt: options.end },
+      },
+      orderBy: { timestamp: "asc" },
+    });
+
+    if (rows.length === 0) {
+      return {
+        available: false,
+        reason: "no_persisted_price_data_for_requested_range",
       };
     }
 

@@ -8,6 +8,7 @@ import {
   requireTraderOrganizationAccess,
 } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
+import type { CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { getTraderPortfolioSummary, listTraderClients } from "@/lib/trader/queries";
 
@@ -133,8 +134,45 @@ function unavailableNote(
   return isToday ? todayNote : historicalNote;
 }
 
+function parsePeriod(value: string | undefined): CalendarPeriod {
+  return value === "week" || value === "month" || value === "year" ? value : "today";
+}
+
+type Trend = "up" | "down" | "flat";
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). ▲/▼ +
+ * absolute + percentage difference versus the previous calendar period —
+ * reuses `MarketSummaryCard`'s existing `trend` prop, same computation
+ * `market/page.tsx`'s own `periodComparisonTrend` uses (duplicated, not
+ * imported — matching this codebase's established precedent for small,
+ * page-local presentation helpers, see `dashboard-data.ts`'s own doc
+ * comment on why date-handling helpers are duplicated rather than shared).
+ */
+function periodComparisonTrend(
+  current: number | null,
+  previous: number | null,
+  unit: string,
+  suffix: string,
+): { direction: Trend; label: string } | undefined {
+  if (current === null || previous === null) {
+    return undefined;
+  }
+
+  const absoluteDelta = Math.round((current - previous) * 100) / 100;
+  const direction: Trend = absoluteDelta > 0 ? "up" : absoluteDelta < 0 ? "down" : "flat";
+  const sign = absoluteDelta > 0 ? "+" : absoluteDelta < 0 ? "-" : "±";
+  const percentDelta = previous !== 0 ? (absoluteDelta / Math.abs(previous)) * 100 : null;
+  const percentPart = percentDelta !== null ? ` (${sign}${Math.abs(percentDelta).toFixed(1)}%)` : "";
+
+  return {
+    direction,
+    label: `${sign}${Math.abs(absoluteDelta).toFixed(2)} ${unit}${percentPart} ${suffix}`,
+  };
+}
+
 type DashboardPageProps = {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; period?: string }>;
 };
 
 export default async function DashboardPage({
@@ -171,6 +209,7 @@ export default async function DashboardPage({
   const owner = await requireOnboardedUser();
   const organizationId = owner.organizationId;
   const params = await searchParams;
+  const period = parsePeriod(params.period);
 
   // Transparent Freshness milestone: Dashboard renders telemetry, so it
   // blocks on synchronization instead of showing a possibly-stale snapshot
@@ -191,7 +230,7 @@ export default async function DashboardPage({
   });
 
   const [data, currentExportMode, t] = await Promise.all([
-    getDashboardPageData(organizationId, automationSettings, params.date),
+    getDashboardPageData(organizationId, automationSettings, params.date, period),
     getStoredExportMode(organizationId),
     getTranslations("dashboard"),
   ]);
@@ -203,16 +242,74 @@ export default async function DashboardPage({
     (automationSettings?.automationEnabled ?? false) &&
     currentExportMode === "Zero Export";
 
+  // Dashboard & Market Analytics milestone: ▲/▼ comparisons vs. the
+  // previous calendar week/month/year — only present (non-undefined) when
+  // `data.plantAvailable && period !== "today"`, per `getDashboardPageData`'s
+  // own doc comment.
+  const previousKpis = data.plantAvailable ? data.previousPeriodKpis : undefined;
+  const vsPreviousPeriodLabel: Record<"week" | "month" | "year", string> =
+    period !== "today"
+      ? {
+          week: t("comparison.vsLastWeek"),
+          month: t("comparison.vsLastMonth"),
+          year: t("comparison.vsLastYear"),
+        }
+      : { week: "", month: "", year: "" };
+  const comparisonSuffix = period !== "today" ? vsPreviousPeriodLabel[period] : "";
+
+  const producedTrend = previousKpis
+    ? periodComparisonTrend(
+        data.plantAvailable ? data.kpis.producedTodayKwh : null,
+        previousKpis.producedKwh,
+        "kWh",
+        comparisonSuffix,
+      )
+    : undefined;
+  const consumedTrend = previousKpis
+    ? periodComparisonTrend(
+        data.plantAvailable ? data.kpis.consumedTodayKwh : null,
+        previousKpis.consumedKwh,
+        "kWh",
+        comparisonSuffix,
+      )
+    : undefined;
+  const consumedFromPvTrend = previousKpis
+    ? periodComparisonTrend(
+        data.plantAvailable ? data.kpis.consumedFromPvKwh : null,
+        previousKpis.consumedFromPvKwh,
+        "kWh",
+        comparisonSuffix,
+      )
+    : undefined;
+  const exportedTrend = previousKpis
+    ? periodComparisonTrend(
+        data.plantAvailable ? data.kpis.exportedTodayKwh : null,
+        previousKpis.exportedKwh,
+        "kWh",
+        comparisonSuffix,
+      )
+    : undefined;
+  const importedTrend = previousKpis
+    ? periodComparisonTrend(
+        data.plantAvailable ? data.kpis.importedTodayKwh : null,
+        previousKpis.importedKwh,
+        "kWh",
+        comparisonSuffix,
+      )
+    : undefined;
+
   return (
     <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <MarketToolbar
             basePath="/dashboard"
+            period={data.period}
             selectedDate={data.selectedDate}
             prevDateParam={data.prevDateParam}
             nextDateParam={data.nextDateParam}
             isToday={data.isToday}
+            periodRangeLabel={data.periodRangeLabel}
           />
         </div>
       </div>
@@ -225,7 +322,7 @@ export default async function DashboardPage({
         <>
           <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
             <MarketSummaryCard
-              eyebrow={t("kpis.yieldToday")}
+              eyebrow={period === "today" ? t("kpis.yieldToday") : t("kpis.yield")}
               value={energyValueLabel(data.kpis.producedTodayKwh)}
               valueUnit={
                 data.kpis.producedTodayKwh !== null ? "kWh" : undefined
@@ -235,6 +332,7 @@ export default async function DashboardPage({
                 t("kpis.waitingForTelemetry"),
                 t("kpis.noHistoricalProductionData"),
               )}
+              trend={producedTrend}
             />
 
             <MarketSummaryCard
@@ -249,7 +347,7 @@ export default async function DashboardPage({
             />
 
             <MarketSummaryCard
-              eyebrow={t("kpis.consumptionToday")}
+              eyebrow={period === "today" ? t("kpis.consumptionToday") : t("kpis.consumption")}
               value={energyValueLabel(data.kpis.consumedTodayKwh)}
               valueUnit={
                 data.kpis.consumedTodayKwh !== null ? "kWh" : undefined
@@ -259,6 +357,7 @@ export default async function DashboardPage({
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
               )}
+              trend={consumedTrend}
             />
 
             <MarketSummaryCard
@@ -272,6 +371,7 @@ export default async function DashboardPage({
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
               )}
+              trend={consumedFromPvTrend}
             />
 
             <MarketSummaryCard
@@ -285,11 +385,13 @@ export default async function DashboardPage({
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
               )}
+              trend={exportedTrend}
             />
 
             <MarketSummaryCard
               eyebrow={t("kpis.fromGrid")}
               value={energyValueLabel(data.kpis.importedTodayKwh)}
+              trend={importedTrend}
               valueUnit={
                 data.kpis.importedTodayKwh !== null ? "kWh" : undefined
               }
@@ -335,6 +437,8 @@ export default async function DashboardPage({
                   <DynamicLiveEnergyChart
                     data={data.chartSeries}
                     nowAnnotation={data.nowAnnotation}
+                    unit={data.chartUnit}
+                    xAxisUnit={period === "today" ? "time" : period === "year" ? "month" : "day"}
                   />
                 </Suspense>
               </div>

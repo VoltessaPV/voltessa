@@ -78,7 +78,9 @@ import {
 } from "@/lib/fusionsolar/get-export-control-status";
 import {
   formatDateInZone,
-  localDayBoundsUtc,
+  periodBoundsUtc,
+  previousPeriodBoundsUtc,
+  type CalendarPeriod,
 } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import {
@@ -123,6 +125,16 @@ export type ProductionPageData = {
    * organization.
    */
   settlementEnergySeries: SettlementEnergyPoint[];
+  /**
+   * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The
+   * same shape as `settlementEnergySeries`, but for the previous calendar
+   * period (previous week/month/year) — fetched only when `period !==
+   * "today"`, since that's the only case anything needs a period-over-
+   * period comparison. `page.tsx` feeds this into the same
+   * `computeExportRevenue` the current period already uses, rather than a
+   * second revenue calculation.
+   */
+  previousPeriodSettlementEnergySeries?: SettlementEnergyPoint[];
   /**
    * The plant's configured installed capacity (`Plant.capacityKw`), read
    * directly from the database — never hardcoded, never derived from
@@ -220,6 +232,7 @@ export type ProductionPagePreload = {
 export async function getProductionPageData(
   organizationId: string,
   selectedDateParam: string | undefined,
+  period: CalendarPeriod = "today",
   preloaded?: ProductionPagePreload,
 ): Promise<ProductionPageData> {
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
@@ -227,16 +240,27 @@ export async function getProductionPageData(
     selectedDateParam && isValidDateString(selectedDateParam)
       ? selectedDateParam
       : todayDateStr;
-  const isToday = selectedDate === todayDateStr;
   const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
 
-  const { start: dayStart, end: dayEnd } = localDayBoundsUtc(
+  // Category A ("current" readings — inverter/meter power right now) only
+  // ever describes the literal "today" period, never "this week/month/
+  // year" even when that period happens to contain today — "current state"
+  // isn't a period-aggregate concept. Matches this module's existing
+  // single-day convention exactly (a browsed historical day already never
+  // showed Category A either).
+  const isToday = period === "today" && selectedDate === todayDateStr;
+
+  const { start: periodStart, end: periodEnd } = periodBoundsUtc(
+    period,
     referenceInstant,
     BULGARIA_TIMEZONE,
   );
-  // Never show future data for "today" (the day is still in progress); a
-  // past day already fully happened, so its whole day is real data.
-  const seriesEnd = isToday ? new Date() : dayEnd;
+  const now = new Date();
+  // Never show future data for an in-progress period; a period that's
+  // already fully elapsed uses its whole span; a period entirely in the
+  // future (browsing ahead) collapses to an empty window rather than a
+  // negative one.
+  const seriesEnd = now < periodStart ? periodStart : now < periodEnd ? now : periodEnd;
 
   const context = preloaded
     ? preloaded.context
@@ -268,32 +292,48 @@ export async function getProductionPageData(
   // results — both were previously fetched as two separate sequential
   // `Promise.all` groups; merged into one, gated the same way each
   // branch already was (Category A only for `isToday`, unchanged).
-  const [series, latestTimestamp, inverterRows, meterRow] = await Promise.all([
-    getPlantSettlementEnergySeries(context.plant.id, dayStart, seriesEnd),
-    getLatestTelemetryTimestamp(context.plant.id),
-    isToday
-      ? preloaded
-        ? Promise.resolve(preloaded.inverterTelemetry)
-        : (async () => {
-            const inverterDevices = await prisma.device.findMany({
-              where: { plantId: context.plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
-              select: { id: true },
-            });
-            return getLatestInverterTelemetryForDevices(
-              inverterDevices.map((device) => device.id),
+  const [series, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
+    await Promise.all([
+      getPlantSettlementEnergySeries(context.plant.id, periodStart, seriesEnd),
+      getLatestTelemetryTimestamp(context.plant.id),
+      isToday
+        ? preloaded
+          ? Promise.resolve(preloaded.inverterTelemetry)
+          : (async () => {
+              const inverterDevices = await prisma.device.findMany({
+                where: { plantId: context.plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
+                select: { id: true },
+              });
+              return getLatestInverterTelemetryForDevices(
+                inverterDevices.map((device) => device.id),
+              );
+            })()
+        : Promise.resolve([]),
+      isToday ? getLatestMeterTelemetry(context.plant.id) : Promise.resolve(null),
+      // Dashboard & Market Analytics milestone: only the previous calendar
+      // period's settlement series is ever needed for a period-over-period
+      // Revenue comparison — "today" has no such comparison in this
+      // module's existing single-day design, so this is skipped entirely
+      // for it (matching "today"'s existing zero-extra-query behavior).
+      period === "today"
+        ? Promise.resolve(undefined)
+        : (() => {
+            const { start: previousStart, end: previousEnd } = previousPeriodBoundsUtc(
+              period,
+              periodStart,
+              BULGARIA_TIMEZONE,
             );
-          })()
-      : Promise.resolve([]),
-    isToday ? getLatestMeterTelemetry(context.plant.id) : Promise.resolve(null),
-  ]);
+            return getPlantSettlementEnergySeries(context.plant.id, previousStart, previousEnd);
+          })(),
+    ]);
 
   const settlementEnergySeries = series;
   const latestTelemetryAt = latestTimestamp;
 
   // Category A — "current" state, database-only (Database-First Telemetry
   // Architecture milestone). Only ever computed for `isToday` — "current
-  // production" has no meaning while browsing a historical day,
-  // independent of where the value comes from.
+  // production" has no meaning while browsing a historical day or any
+  // non-"today" period, independent of where the value comes from.
   if (!isToday) {
     return {
       currentProduction: UNAVAILABLE_NO_TELEMETRY,
@@ -304,6 +344,7 @@ export async function getProductionPageData(
         UNAVAILABLE_NO_CONNECTION_MODE,
       ),
       settlementEnergySeries,
+      previousPeriodSettlementEnergySeries: previousPeriodSeries,
       installedCapacityKw,
       latestTelemetryAt,
     };
