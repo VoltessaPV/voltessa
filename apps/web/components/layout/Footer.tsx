@@ -1,3 +1,4 @@
+import { CookieSettingsLink } from "@/components/consent/CookieSettingsLink";
 import { SUPPORT_EMAIL } from "@/lib/constants";
 import { routes } from "@/lib/routes";
 
@@ -10,7 +11,7 @@ export default function Footer() {
           © {new Date().getFullYear()} Voltessa. All rights reserved.
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2">
 
           <a
             href={routes.privacy}
@@ -20,11 +21,29 @@ export default function Footer() {
           </a>
 
           <a
+            href={routes.cookiePolicy}
+            className="transition hover:text-white"
+          >
+            Cookie Policy
+          </a>
+
+          <a
             href={routes.terms}
             className="transition hover:text-white"
           >
             Terms
           </a>
+
+          <a
+            href={routes.company}
+            className="transition hover:text-white"
+          >
+            Company Information
+          </a>
+
+          <CookieSettingsLink className="transition hover:text-white">
+            Cookie Settings
+          </CookieSettingsLink>
 
           <a
             href={`mailto:${SUPPORT_EMAIL}`}

@@ -16,4 +16,8 @@ export const routes = {
   privacy: "/privacy",
 
   terms: "/terms",
+
+  cookiePolicy: "/cookie-policy",
+
+  company: "/company",
 } as const;

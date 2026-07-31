@@ -3,6 +3,7 @@ import Link from "next/link";
 import { BillingCard } from "@/components/settings/BillingCard";
 import { EnergyMarketCard } from "@/components/settings/EnergyMarketCard";
 import { NotificationsCard } from "@/components/settings/NotificationsCard";
+import { PrivacyCookiesCard } from "@/components/settings/PrivacyCookiesCard";
 import { ProfileCard } from "@/components/settings/ProfileCard";
 import { SecurityCard } from "@/components/settings/SecurityCard";
 import { SettingsCard } from "@/components/settings/SettingsCard";
@@ -75,6 +76,8 @@ async function renderTraderSettings(userId: string, email: string) {
         dailySummary={notificationPreferences?.dailySummary ?? false}
         weeklySummary={notificationPreferences?.weeklySummary ?? false}
       />
+
+      <PrivacyCookiesCard />
     </PageContainer>
   );
 }
@@ -209,6 +212,8 @@ export default async function SettingsPage({
         dailySummary={notificationPreferences?.dailySummary ?? false}
         weeklySummary={notificationPreferences?.weeklySummary ?? false}
       />
+
+      <PrivacyCookiesCard />
 
       {canViewPlants && (
         <SettingsCard

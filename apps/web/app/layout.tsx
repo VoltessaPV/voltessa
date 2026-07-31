@@ -3,6 +3,12 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
+import { CookieBanner } from "@/components/consent/CookieBanner";
+import { CookiePreferencesModal } from "@/components/consent/CookiePreferencesModal";
+import { ConsentProvider } from "@/components/consent/ConsentProvider";
+import { getConsent } from "@/lib/consent/session";
+import { getLocale } from "@/lib/i18n/locale";
+
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
   variable: "--font-geist-sans",
@@ -62,15 +68,21 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const [consent, locale] = await Promise.all([getConsent(), getLocale()]);
+
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-        {children}
+        <ConsentProvider initialConsent={consent} locale={locale}>
+          {children}
+          <CookieBanner />
+          <CookiePreferencesModal />
+        </ConsentProvider>
       </body>
     </html>
   );
