@@ -98,3 +98,6 @@ rather than skipping silently.
       story per commit where practical.
 - [ ] No leftover `debug(...)`-only commits without a following cleanup commit if you added
       temporary diagnostic logging while building the feature.
+
+From here, follow `docs/PRODUCTION_VALIDATION_CHECKLIST.md` for PR/CI/merge through production
+verification — this document stops at commit, that one picks up from there.
