@@ -20,7 +20,8 @@
   "RESEND_API_KEY",
   "EMAIL_FROM",
   "NODE_ENV",
-  "VERCEL_REGION"
+  "VERCEL_REGION",
+  "CI"
 ],
   
   "tasks": {

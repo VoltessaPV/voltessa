@@ -23,6 +23,7 @@
     "tailwindcss": "^4.3.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@repo/eslint-config": "workspace:*",
     "@repo/typescript-config": "workspace:*",
     "@types/node": "^22.15.3",
@@ -46,7 +47,8 @@
     "i18n:validate": "node scripts/i18n/validate.mjs",
     "i18n:check-missing": "node scripts/i18n/check-missing.mjs",
     "i18n:check-terminology": "node scripts/i18n/check-terminology.mjs",
-    "i18n:check-unused": "node scripts/i18n/check-unused.mjs"
+    "i18n:check-unused": "node scripts/i18n/check-unused.mjs",
+    "test:e2e": "playwright test"
   },
   "type": "module",
   "version": "0.1.0"
