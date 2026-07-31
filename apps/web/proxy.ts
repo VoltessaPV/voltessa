@@ -1,7 +1,7 @@
 import createMiddleware from "next-intl/middleware";
 
 import { auth } from "@/auth";
-import { DISABLED_LOCALES, routing } from "@/lib/i18n/routing";
+import { DISABLED_LOCALES, LOCALES, routing } from "@/lib/i18n/routing";
 
 /**
  * Full Internationalization milestone. Composes next-intl's locale
@@ -65,8 +65,40 @@ function isAuthPagePath(pathname: string): boolean {
 const DISABLED_LOCALE_PREFIX_RE =
   DISABLED_LOCALES.length > 0 ? new RegExp(`^/(${DISABLED_LOCALES.join("|")})(?=/|$)`) : null;
 
+/**
+ * Architectural regression fix: Platform Admin (`/admin`) must never live
+ * under a locale prefix, in either direction - it has its own English-only
+ * root layout (`app/admin/layout.tsx`), physically outside the
+ * `app/[locale]/` tree, so there is no `app/[locale]/admin` route for
+ * `/en/admin` or `/bg/admin` to ever resolve to (hence the 404 this fixes).
+ * The matcher below excludes literal `/admin` from ever reaching this
+ * middleware, but a *locale-prefixed* admin path (`/en/admin`, `/bg/admin`,
+ * ...) has a different first segment ("en"/"bg", not "admin") and so isn't
+ * excluded by that pattern - it reaches here, and is redirected straight
+ * back to the unprefixed `/admin...` it should have been all along. Built
+ * from the full `LOCALES` archive (not just `routing.locales`), so this
+ * catches every locale this app has ever had translations for, enabled or
+ * not - a stray `/bg/admin` link must never partially work either.
+ *
+ * This is the middleware-level backstop; the actual root cause (a shared
+ * nav component's admin links using next-intl's locale-aware `Link`
+ * instead of a plain one) is fixed in `AppSidebar.tsx` - see its own doc
+ * comment. Both matter: the component fix stops new bad links from being
+ * generated, this stops any that still exist (an old bookmark, a cached
+ * page, a hand-typed URL) from doing anything but redirecting to the
+ * correct place.
+ */
+const LOCALIZED_ADMIN_PREFIX_RE = new RegExp(`^/(${LOCALES.join("|")})/admin(?=/|$)`);
+
 export default auth((req) => {
   const host = req.headers.get("host");
+
+  const localizedAdminMatch = req.nextUrl.pathname.match(LOCALIZED_ADMIN_PREFIX_RE);
+  if (localizedAdminMatch) {
+    const rest = req.nextUrl.pathname.slice(localizedAdminMatch[0].length);
+    const target = new URL(`/admin${rest}${req.nextUrl.search}`, req.url);
+    return Response.redirect(target, 308);
+  }
 
   // A disabled locale's URL (e.g. /bg/dashboard while Bulgarian is
   // disabled pending QA - see routing.ts) redirects permanently to its
