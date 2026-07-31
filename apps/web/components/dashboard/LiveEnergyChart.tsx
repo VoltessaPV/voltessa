@@ -5,16 +5,37 @@ import { Line, ReferenceLine } from "recharts";
 
 import type { EnergyFlowPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
-import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaTime } from "@/components/charts/chart-style";
+import {
+  CHART_TOOLTIP_CLASSNAME,
+  computeFixedChartTicks,
+  formatSofiaDate,
+  formatSofiaMonth,
+  formatSofiaTime,
+} from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";
 
 type LiveEnergyChartProps = {
   data: EnergyFlowPoint[];
   /** Same live reading `energyFlow` uses — never a second real-time read, see `dashboard-data.ts`. */
   nowAnnotation?: string;
+  /**
+   * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly).
+   * `"kW"` (the default, unchanged Today behavior) for instantaneous power
+   * readings; `"kWh"` for Week/Month/Year, where each point is a per-day or
+   * per-month ENERGY total instead (`dashboard-data.ts`'s
+   * `buildPeriodChartSeries`) — same field names, same `Line`s, only the
+   * unit label/tooltip text changes.
+   */
+  unit?: "kW" | "kWh";
+  /** Same meaning as `MarketPriceChart`'s own `xAxisUnit` — see that component's doc comment. */
+  xAxisUnit?: "time" | "day" | "month";
 };
 
-const Y_AXES: ChartFrameYAxis[] = [{ yAxisId: "power", unitLabel: "kW" }];
+const X_AXIS_TICK_FORMATTERS: Record<"time" | "day" | "month", (time: number) => string> = {
+  time: formatSofiaTime,
+  day: formatSofiaDate,
+  month: formatSofiaMonth,
+};
 
 /**
  * Today's PV production / consumption / grid import / grid export power
@@ -61,10 +82,14 @@ function ChartTooltip({
   active,
   payload,
   label,
+  unit = "kW",
+  labelFormatter = formatSofiaTime,
 }: {
   active?: boolean;
   payload?: Array<{ value: number | null; dataKey: string; color: string }>;
   label?: number;
+  unit?: "kW" | "kWh";
+  labelFormatter?: (time: number) => string;
 }) {
   const t = useTranslations("dashboard.liveEnergy");
 
@@ -86,7 +111,7 @@ function ChartTooltip({
 
   return (
     <div className={CHART_TOOLTIP_CLASSNAME}>
-      <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
+      <p className="font-medium text-slate-300">{labelFormatter(label)}</p>
 
       {rows.map(({ key, textKey }) => {
         const entry = payload.find((p) => p.dataKey === key);
@@ -98,7 +123,7 @@ function ChartTooltip({
         return (
           <p key={key} className="mt-1 flex items-center gap-1.5" style={{ color: entry.color }}>
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: entry.color }} />
-            {Math.abs(entry.value).toFixed(2)} kW {t(textKey as never)}
+            {Math.abs(entry.value).toFixed(2)} {unit} {t(textKey as never)}
           </p>
         );
       })}
@@ -108,17 +133,33 @@ function ChartTooltip({
   );
 }
 
-export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
+const Y_AXES: Record<"kW" | "kWh", ChartFrameYAxis[]> = {
+  kW: [{ yAxisId: "power", unitLabel: "kW" }],
+  kWh: [{ yAxisId: "power", unitLabel: "kWh" }],
+};
+
+export function LiveEnergyChart({
+  data,
+  nowAnnotation,
+  unit = "kW",
+  xAxisUnit = "time",
+}: LiveEnergyChartProps) {
   const t = useTranslations("dashboard.liveEnergy");
   const now = Date.now();
   const domainStart = data[0]?.time;
   const domainEnd = data[data.length - 1]?.time;
   const nowInRange =
     domainStart !== undefined && domainEnd !== undefined && now >= domainStart && now <= domainEnd;
-  // Fixed 90-minute ticks (01:30, 03:00, ...), matching Market's own price
-  // chart — `data[0].time` is always the selected day's local midnight
-  // (`dashboard-data.ts`'s `buildFullDayChartSeries`).
-  const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
+  // Fixed 90-minute ticks (01:30, 03:00, ...) only apply to a single
+  // calendar day ("time" - Today), matching Market's own price chart —
+  // `data[0].time` is always that day's local midnight
+  // (`dashboard-data.ts`'s `buildFullDayChartSeries`). Week/Month/Year
+  // charts fall back to recharts' own automatic tick placement instead.
+  const xTicks =
+    xAxisUnit === "time" && domainStart !== undefined
+      ? computeFixedChartTicks(domainStart)
+      : undefined;
+  const xAxisTickFormatter = X_AXIS_TICK_FORMATTERS[xAxisUnit];
 
   // Presentation-only transform: `data` itself (from `dashboard-data.ts`)
   // keeps `gridImportKw` as the real positive magnitude — only this
@@ -154,10 +195,11 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
       <div className="mt-2 min-h-0 flex-1">
         <ChartFrame
           data={chartData}
-          yAxes={Y_AXES}
-          tooltipContent={<ChartTooltip />}
+          yAxes={Y_AXES[unit]}
+          tooltipContent={<ChartTooltip unit={unit} labelFormatter={xAxisTickFormatter} />}
           hasAnnotationMargin={Boolean(nowAnnotation)}
           xTicks={xTicks}
+          tickFormatter={xAxisTickFormatter}
         >
           {nowInRange && (
             <ReferenceLine

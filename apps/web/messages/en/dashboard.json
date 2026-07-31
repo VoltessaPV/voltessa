@@ -5,8 +5,10 @@
   },
   "kpis": {
     "yieldToday": "Yield Today",
+    "yield": "Yield",
     "totalYield": "Total Yield",
     "consumptionToday": "Consumption Today",
+    "consumption": "Consumption",
     "consumedFromPv": "Consumed from PV",
     "fedToGrid": "Fed to Grid",
     "fromGrid": "From Grid",
@@ -14,6 +16,11 @@
     "notAvailable": "Not available",
     "noHistoricalProductionData": "No historical production data available",
     "historicalDataNotAvailable": "Historical data not available"
+  },
+  "comparison": {
+    "vsLastWeek": "vs last week",
+    "vsLastMonth": "vs last month",
+    "vsLastYear": "vs last year"
   },
   "systemOverview": {
     "title": "System Overview",

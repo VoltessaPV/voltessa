@@ -5,7 +5,13 @@ import { Bar, Line, ReferenceLine } from "recharts";
 
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
-import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaTime } from "@/components/charts/chart-style";
+import {
+  CHART_TOOLTIP_CLASSNAME,
+  computeFixedChartTicks,
+  formatSofiaDate,
+  formatSofiaMonth,
+  formatSofiaTime,
+} from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
@@ -51,17 +57,29 @@ type MarketPriceChartProps = {
    * rather than guessing a scale.
    */
   installedCapacityKw?: number | null;
+  /**
+   * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). What
+   * each `series`/`settlementEnergySeries` point represents — a real
+   * 15-minute interval ("time", the default, unchanged Today behavior), a
+   * whole calendar day ("day", Week/Month), or a whole calendar month
+   * ("year"). Only changes X-axis tick labels/spacing and the export-energy
+   * axis's per-point capacity scale — never the data itself.
+   */
+  xAxisUnit?: "time" | "day" | "month";
 };
 
-/**
- * Matches `energy-metrics.ts`'s `SETTLEMENT_INTERVAL_MINUTES` — duplicated
- * as a literal (not imported) because that module pulls in server-only
- * Prisma code; this file only ever imports its *types*. Both this file and
- * `production-data.ts` inherit the same "15 minutes = this bidding zone's
- * real resolution" fact already established since the original ENTSO-E
- * integration milestone, so the two are extremely unlikely to drift.
- */
-const SETTLEMENT_INTERVAL_MINUTES = 15;
+const X_AXIS_TICK_FORMATTERS: Record<"time" | "day" | "month", (time: number) => string> = {
+  time: formatSofiaTime,
+  day: formatSofiaDate,
+  month: formatSofiaMonth,
+};
+
+/** Hours represented by one data point, per `xAxisUnit` — the export-energy axis scale is "installed capacity x this many hours", so a Week/Month/Year chart's bars stay physically meaningful instead of using Today's fixed 15-minute scale. Average month length for "year", since points don't fall on the same day count. */
+const HOURS_PER_POINT: Record<"time" | "day" | "month", number> = {
+  time: 15 / 60,
+  day: 24,
+  month: (365 / 12) * 24,
+};
 
 /** One row per real price timestamp, carrying that same interval's exported energy (if any) — see `settlementEnergySeries`'s prop doc comment for why no resampling is needed. */
 type UnifiedDatum = {
@@ -116,10 +134,12 @@ function ChartTooltip({
   active,
   payload,
   label,
+  labelFormatter = formatSofiaTime,
 }: {
   active?: boolean;
   payload?: Array<{ value: number | null; dataKey: string }>;
   label?: number;
+  labelFormatter?: (time: number) => string;
 }) {
   const t = useTranslations("market.priceChart");
 
@@ -138,7 +158,7 @@ function ChartTooltip({
 
   return (
     <div className={CHART_TOOLTIP_CLASSNAME}>
-      <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
+      <p className="font-medium text-slate-300">{labelFormatter(label)}</p>
 
       {price !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-blue-400">
@@ -213,6 +233,7 @@ export function MarketPriceChart({
   nowAnnotation,
   settlementEnergySeries,
   installedCapacityKw,
+  xAxisUnit = "time",
 }: MarketPriceChartProps) {
   const t = useTranslations("market.priceChart");
   const hasEnergyData = Boolean(
@@ -230,15 +251,14 @@ export function MarketPriceChart({
       }));
 
   // Engineering scale for exported energy: the plant's real installed
-  // capacity applied for one whole settlement interval — the physical
-  // maximum a plant this size could export in 15 minutes. Never
-  // auto-scaled from the visible bars, never negative (a genuine exported-
-  // energy value is always >= 0, since it's a counter difference — see
-  // energy-metrics.ts).
+  // capacity applied for one whole bucket's duration (a 15-minute
+  // settlement interval for "time"/Today, a full day for Week/Month, an
+  // average month for Year — see `HOURS_PER_POINT`) — the physical maximum
+  // a plant this size could export in that span. Never auto-scaled from
+  // the visible bars, never negative (a genuine exported-energy value is
+  // always >= 0, since it's a counter difference — see energy-metrics.ts).
   const maxExportedKwhPerInterval = hasEnergyAxis
-    ? Math.round(
-        (installedCapacityKw as number) * (SETTLEMENT_INTERVAL_MINUTES / 60) * 100,
-      ) / 100
+    ? Math.round((installedCapacityKw as number) * HOURS_PER_POINT[xAxisUnit] * 100) / 100
     : 0;
 
   // Left price axis: adapts to the selected day's own real ENTSO-E prices.
@@ -282,9 +302,16 @@ export function MarketPriceChart({
     domainEnd !== undefined &&
     now >= domainStart &&
     now <= domainEnd;
-  // Fixed 90-minute ticks (01:30, 03:00, ...) — `data[0].time` is always
-  // the selected day's local midnight (`market-data.ts`'s `buildSeries`).
-  const xTicks = domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
+  // Fixed 90-minute ticks (01:30, 03:00, ...) only apply to a single
+  // calendar day ("time" - Today), where `data[0].time` is always that
+  // day's local midnight (`market-data.ts`'s `buildSeries`). Week/Month/
+  // Year charts span many days/months, so their ticks fall back to
+  // recharts' own automatic placement instead.
+  const xTicks =
+    xAxisUnit === "time" && domainStart !== undefined
+      ? computeFixedChartTicks(domainStart)
+      : undefined;
+  const xAxisTickFormatter = X_AXIS_TICK_FORMATTERS[xAxisUnit];
 
   const yAxes: ChartFrameYAxis[] = [
     {
@@ -339,9 +366,10 @@ export function MarketPriceChart({
         <ChartFrame
           data={data}
           yAxes={yAxes}
-          tooltipContent={<ChartTooltip />}
+          tooltipContent={<ChartTooltip labelFormatter={xAxisTickFormatter} />}
           hasAnnotationMargin={Boolean(nowAnnotation)}
           xTicks={xTicks}
+          tickFormatter={xAxisTickFormatter}
         >
           <ReferenceLine
             yAxisId="price"

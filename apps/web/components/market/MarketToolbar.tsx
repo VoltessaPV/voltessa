@@ -1,21 +1,26 @@
 import { getTranslations } from "next-intl/server";
 
 import { SUPPORTED_BIDDING_ZONES } from "@/lib/market-price/constants";
+import type { CalendarPeriod } from "@/lib/market-price/timezone";
 
 type MarketToolbarProps = {
+  period: CalendarPeriod;
   selectedDate: string;
   prevDateParam: string;
   nextDateParam: string;
   isToday: boolean;
+  periodRangeLabel: string;
   /** Route this toolbar navigates within — defaults to `/market`. Dashboard passes `/dashboard` to reuse this exact component (Dashboard visual polish milestone) rather than a second copy. */
   basePath?: string;
 };
 
 export async function MarketToolbar({
+  period,
   selectedDate,
   prevDateParam,
   nextDateParam,
   isToday,
+  periodRangeLabel,
   basePath = "/market",
 }: MarketToolbarProps) {
   const [t, tInfo] = await Promise.all([
@@ -24,17 +29,17 @@ export async function MarketToolbar({
   ]);
 
   /**
-   * Only "today" is wired to real data this milestone. The others are
-   * rendered disabled rather than omitted so activating one later is
-   * flipping `enabled: true` and giving it a real `getMarketPageData`
-   * range, not redesigning this toolbar.
+   * Dashboard & Market Analytics milestone: all four periods are real now —
+   * `?period=<key>&date=<selectedDate>` keeps whichever day/period-anchor
+   * date is currently selected when switching periods, so switching from
+   * "Today" to "Week" shows the week containing that same date.
    */
   const timeRangeOptions = [
-    { key: "today", label: t("todayRange"), enabled: true },
-    { key: "week", label: t("weekRange"), enabled: false },
-    { key: "month", label: t("monthRange"), enabled: false },
-    { key: "year", label: t("yearRange"), enabled: false },
-  ] as const;
+    { key: "today" as const, label: t("todayRange") },
+    { key: "week" as const, label: t("weekRange") },
+    { key: "month" as const, label: t("monthRange") },
+    { key: "year" as const, label: t("yearRange") },
+  ];
 
   const resolutionOptions = [{ value: "15", label: t("resolution15min") }] as const;
 
@@ -52,8 +57,10 @@ export async function MarketToolbar({
           </span>
         </div>
 
+        <span className="text-xs text-slate-400">{periodRangeLabel}</span>
+
         <a
-          href={`${basePath}?date=${prevDateParam}`}
+          href={`${basePath}?period=${period}&date=${prevDateParam}`}
           aria-label={t("previousDay")}
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:border-white/20 hover:text-white"
         >
@@ -61,6 +68,7 @@ export async function MarketToolbar({
         </a>
 
         <form action={basePath} method="get" className="flex items-center gap-1.5">
+          <input type="hidden" name="period" value={period} />
           <input
             type="date"
             name="date"
@@ -76,7 +84,7 @@ export async function MarketToolbar({
         </form>
 
         <a
-          href={`${basePath}?date=${nextDateParam}`}
+          href={`${basePath}?period=${period}&date=${nextDateParam}`}
           aria-label={t("nextDay")}
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400 transition hover:border-white/20 hover:text-white"
         >
@@ -84,7 +92,7 @@ export async function MarketToolbar({
         </a>
 
         <a
-          href={basePath}
+          href={`${basePath}?period=today`}
           aria-disabled={isToday}
           className={
             isToday
@@ -98,26 +106,24 @@ export async function MarketToolbar({
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-0.5">
-          {timeRangeOptions.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              disabled={!option.enabled}
-              title={option.enabled ? undefined : t("comingSoon")}
-              className={
-                option.enabled
-                  ? "rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white"
-                  : "cursor-not-allowed rounded-md px-2.5 py-1 text-xs font-medium text-slate-600"
-              }
-            >
-              {option.label}
-              {!option.enabled && (
-                <span className="ml-1 text-[9px] uppercase tracking-wide text-slate-700">
-                  {t("soonBadge")}
-                </span>
-              )}
-            </button>
-          ))}
+          {timeRangeOptions.map((option) => {
+            const isActive = option.key === period;
+
+            return (
+              <a
+                key={option.key}
+                href={`${basePath}?period=${option.key}&date=${selectedDate}`}
+                aria-current={isActive ? "true" : undefined}
+                className={
+                  isActive
+                    ? "rounded-md bg-white/10 px-2.5 py-1 text-xs font-medium text-white"
+                    : "rounded-md px-2.5 py-1 text-xs font-medium text-slate-400 transition hover:text-white"
+                }
+              >
+                {option.label}
+              </a>
+            );
+          })}
         </div>
 
         <select

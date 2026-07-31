@@ -8,8 +8,10 @@ import {
   computeExportRevenue,
   type RevenueSummary,
 } from "@/lib/market-price/revenue";
+import { formatDateInZone, type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
+import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { MarketDistribution } from "@/components/market/MarketDistribution";
@@ -43,6 +45,84 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
   const sign = delta > 0 ? "+" : delta < 0 ? "-" : "±";
 
   return { direction, label: `${sign}${Math.abs(delta).toFixed(2)} EUR/MWh` };
+}
+
+function parsePeriod(value: string | undefined): CalendarPeriod {
+  return value === "week" || value === "month" || value === "year" ? value : "today";
+}
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). ▲/▼ +
+ * absolute + percentage difference versus the previous calendar period —
+ * reuses `MarketSummaryCard`'s existing `trend` prop (already built for
+ * Current Price's day-over-day delta above), just fed a period-over-period
+ * comparison instead. `null` whenever either value is unavailable — never
+ * fabricated.
+ */
+function periodComparisonTrend(
+  current: number | null,
+  previous: number | null,
+  unit: string,
+  suffix: string,
+): { direction: Trend; label: string } | undefined {
+  if (current === null || previous === null) {
+    return undefined;
+  }
+
+  const absoluteDelta = Math.round((current - previous) * 100) / 100;
+  const direction: Trend = absoluteDelta > 0 ? "up" : absoluteDelta < 0 ? "down" : "flat";
+  const sign = absoluteDelta > 0 ? "+" : absoluteDelta < 0 ? "-" : "±";
+  const percentDelta = previous !== 0 ? (absoluteDelta / Math.abs(previous)) * 100 : null;
+  const percentPart = percentDelta !== null ? ` (${sign}${Math.abs(percentDelta).toFixed(1)}%)` : "";
+
+  return {
+    direction,
+    label: `${sign}${Math.abs(absoluteDelta).toFixed(2)} ${unit}${percentPart} ${suffix}`,
+  };
+}
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). Buckets
+ * `production.settlementEnergySeries` (native 15-minute resolution across
+ * the whole selected period) into one point per calendar day (Week/Month)
+ * or per calendar month (Year), for `MarketPriceChart`'s exported-energy
+ * bars — same technique `market-data.ts`'s `buildPeriodPriceChartSeries`
+ * uses for the price line, kept here (not there) since it operates on
+ * `production-data.ts`'s output, not `market-data.ts`'s.
+ */
+function bucketSettlementForChart(
+  period: "week" | "month" | "year",
+  points: SettlementEnergyPoint[],
+): Pick<SettlementEnergyPoint, "intervalStart" | "exportedKwh">[] {
+  const granularity: "day" | "month" = period === "year" ? "month" : "day";
+  const bucketKey = (instant: Date) => {
+    const dateStr = formatDateInZone(instant, "Europe/Sofia");
+    return granularity === "day" ? dateStr : dateStr.slice(0, 7);
+  };
+
+  const sumByBucket = new Map<string, number>();
+  const instantByBucket = new Map<string, number>();
+
+  for (const point of points) {
+    if (point.exportedKwh === null) {
+      continue;
+    }
+
+    const key = bucketKey(point.intervalStart);
+    sumByBucket.set(key, (sumByBucket.get(key) ?? 0) + point.exportedKwh);
+    if (!instantByBucket.has(key)) {
+      instantByBucket.set(key, point.intervalStart.getTime());
+    }
+  }
+
+  const keys = [...instantByBucket.keys()].sort(
+    (a, b) => (instantByBucket.get(a) as number) - (instantByBucket.get(b) as number),
+  );
+
+  return keys.map((key) => ({
+    intervalStart: new Date(instantByBucket.get(key) as number),
+    exportedKwh: Math.round((sumByBucket.get(key) as number) * 100) / 100,
+  }));
 }
 
 /**
@@ -86,7 +166,7 @@ function configuredModeStatus(
 }
 
 type MarketPageProps = {
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; period?: string }>;
 };
 
 export default async function MarketPage({ searchParams }: MarketPageProps) {
@@ -98,6 +178,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // zero assigned clients.
   const { organizationId, readOnly } = await resolveOrganizationViewAccess();
   const params = await searchParams;
+  const period = parsePeriod(params.period);
 
   // Trader Workspace milestone: market data is global (`MarketPrice` has no
   // `organizationId` at all - see prisma/schema.prisma), so a Trader with
@@ -112,6 +193,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       getMarketPageData({
         organizationId: null,
         selectedDateParam: params.date,
+        period,
         automationSettings: null,
       }),
       getTranslations("market"),
@@ -120,10 +202,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     return (
       <PageContainer className="space-y-3">
         <MarketToolbar
+          period={data.period}
           selectedDate={data.selectedDate}
           prevDateParam={data.prevDateParam}
           nextDateParam={data.nextDateParam}
           isToday={data.isToday}
+          periodRangeLabel={data.periodRangeLabel}
         />
 
         {!data.dataAvailable ? (
@@ -146,8 +230,9 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicMarketPriceChart
-                    series={data.series}
+                    series={data.chartSeries}
                     thresholdPrice={data.threshold.minimumExportPrice}
+                    xAxisUnit={period === "today" ? "time" : period === "year" ? "month" : "day"}
                   />
                 </Suspense>
               </div>
@@ -204,9 +289,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     getMarketPageData({
       organizationId,
       selectedDateParam: params.date,
+      period,
       automationSettings,
     }),
-    getProductionPageData(organizationId, params.date),
+    getProductionPageData(organizationId, params.date, period),
     getStoredExportMode(organizationId),
     getTranslations("market"),
     getTranslations("market.summary"),
@@ -225,6 +311,30 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     : { available: false };
   const revenueEyebrow =
     data.dataAvailable && data.isToday ? t("summary.revenueToday") : t("summary.revenue");
+
+  // Dashboard & Market Analytics milestone: reuses the exact same
+  // `computeExportRevenue` above, just fed the previous calendar period's
+  // price series (`market-data.ts`) and settlement series
+  // (`production-data.ts`) instead of a second revenue implementation.
+  // Both are only ever populated when `period !== "today"`.
+  const previousRevenue: RevenueSummary =
+    data.dataAvailable && data.previousPeriodSeries && production.previousPeriodSettlementEnergySeries
+      ? computeExportRevenue(data.previousPeriodSeries, production.previousPeriodSettlementEnergySeries)
+      : { available: false };
+  const vsPreviousPeriodLabel: Record<"week" | "month" | "year", string> = {
+    week: tSummary("vsLastWeek"),
+    month: tSummary("vsLastMonth"),
+    year: tSummary("vsLastYear"),
+  };
+  const revenueTrend =
+    period !== "today"
+      ? periodComparisonTrend(
+          revenue.available ? revenue.revenueEur : null,
+          previousRevenue.available ? previousRevenue.revenueEur : null,
+          "EUR",
+          vsPreviousPeriodLabel[period],
+        )
+      : undefined;
 
   const currentPriceTrend =
     data.dataAvailable && data.summary.currentPrice
@@ -282,10 +392,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <MarketToolbar
+            period={data.period}
             selectedDate={data.selectedDate}
             prevDateParam={data.prevDateParam}
             nextDateParam={data.nextDateParam}
             isToday={data.isToday}
+            periodRangeLabel={data.periodRangeLabel}
           />
         </div>
       </div>
@@ -313,11 +425,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               }
               valueUnit={revenue.available ? "EUR" : undefined}
               unavailableNote={tSummary("waitingForProductionTelemetry")}
+              trend={revenueTrend}
               rows={
                 revenue.available
                   ? [
                       {
-                        label: tSummary("exportedToday"),
+                        label: data.isToday ? tSummary("exportedToday") : tSummary("exported"),
                         value: `${revenue.exportedKwh.toFixed(2)} kWh`,
                       },
                       {
@@ -392,23 +505,33 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
               <Suspense fallback={<ChartSkeleton />}>
                 <DynamicMarketPriceChart
-                  series={data.series}
+                  series={data.chartSeries}
                   thresholdPrice={data.threshold.minimumExportPrice}
                   nowAnnotation={nowAnnotation}
+                  xAxisUnit={period === "today" ? "time" : period === "year" ? "month" : "day"}
                   // production-data.ts computes this for whichever day is
                   // selected (the whole day if it's a past day, today-so-far
                   // if it's today) — historical days now render telemetry
                   // exactly like today, fixing the earlier "historical
                   // telemetry missing" bug (this used to be unconditionally
-                  // suppressed for any non-today day).
+                  // suppressed for any non-today day). For Week/Month/Year,
+                  // bucketed to one point per day/month via
+                  // `bucketSettlementForChart` — same technique
+                  // `market-data.ts`'s `buildPeriodPriceChartSeries` uses for
+                  // the price line, applied here to the exported-energy bars.
                   //
                   // Narrowed to the two fields MarketPriceChart actually
                   // reads — `importedKwh` is real data used elsewhere (KPI
                   // totals), just never by this chart, so it's dropped here
                   // rather than serialized into this prop for nothing.
-                  settlementEnergySeries={production.settlementEnergySeries.map(
-                    ({ intervalStart, exportedKwh }) => ({ intervalStart, exportedKwh }),
-                  )}
+                  settlementEnergySeries={
+                    period === "today"
+                      ? production.settlementEnergySeries.map(({ intervalStart, exportedKwh }) => ({
+                          intervalStart,
+                          exportedKwh,
+                        }))
+                      : bucketSettlementForChart(period, production.settlementEnergySeries)
+                  }
                   installedCapacityKw={production.installedCapacityKw}
                 />
               </Suspense>

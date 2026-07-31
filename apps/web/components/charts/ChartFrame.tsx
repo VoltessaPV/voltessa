@@ -75,11 +75,28 @@ type ChartFrameProps = {
   hasAnnotationMargin?: boolean;
   /** Explicit X-axis tick positions (ms) — see `chart-style.ts`'s `computeFixedHourlyTicks`. Omitted falls back to recharts' automatic placement. */
   xTicks?: number[];
+  /**
+   * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). How to
+   * label an X-axis tick — defaults to `formatSofiaTime` (unchanged
+   * behavior for every existing caller), overridden by a Week/Month/Year
+   * chart to `formatSofiaDate`/`formatSofiaMonth` (`chart-style.ts`)
+   * instead, since a time-of-day label is meaningless once one point is a
+   * whole day or month.
+   */
+  tickFormatter?: (time: number) => string;
   /** The chart's own marks — `Line`/`Bar`/`ReferenceArea`/`ReferenceLine`, rendered as direct children of `ComposedChart`, exactly as if written inline. */
   children: ReactNode;
 };
 
-export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, xTicks, children }: ChartFrameProps) {
+export function ChartFrame({
+  data,
+  yAxes,
+  tooltipContent,
+  hasAnnotationMargin,
+  xTicks,
+  tickFormatter = formatSofiaTime,
+  children,
+}: ChartFrameProps) {
   const [widthRef, containerWidth] = useElementWidth<HTMLDivElement>();
 
   return (
@@ -94,7 +111,7 @@ export function ChartFrame({ data, yAxes, tooltipContent, hasAnnotationMargin, x
             scale="time"
             domain={["dataMin", "dataMax"]}
             ticks={thinXTicks(xTicks, containerWidth)}
-            tickFormatter={formatSofiaTime}
+            tickFormatter={tickFormatter}
             tick={CHART_AXIS_TICK}
             tickLine={false}
             axisLine={CHART_AXIS_LINE}

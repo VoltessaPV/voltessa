@@ -95,19 +95,29 @@ import {
 } from "@/lib/fusionsolar/get-plant-inverter-status";
 import type { MarketEventLogEntry, MarketSummaryData } from "@/app/[locale]/(platform)/market/market-data";
 import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
-import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone";
+import {
+  formatDateInZone,
+  formatPeriodRangeLabel,
+  periodBoundsUtc,
+  previousPeriodBoundsUtc,
+  type CalendarPeriod,
+} from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
   getPlantTelemetrySeries,
   sumSettlementEnergy,
   type PlantTelemetrySeriesPoint,
+  type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
 import {
   getLatestInverterTelemetryForDevices,
   INVERTER_DEV_TYPE_ID,
 } from "@/lib/telemetry/queries";
-import { getPlantDailyKpi } from "@/lib/telemetry/plant-daily-kpi";
+import {
+  getPlantDailyKpiRange,
+  type PlantDailyKpiRangeDay,
+} from "@/lib/telemetry/plant-daily-kpi";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
 
@@ -129,14 +139,14 @@ const TELEMETRY_GRID_MINUTES = 5;
 
 export type DashboardKpis = {
   producedTodayKwh: number | null;
-  /** Lifetime PV yield (Huawei `total_power`) — see `getPlantDailyKpi`'s doc comment. `null` only when the field isn't present, never fabricated. */
+  /** Lifetime PV yield (Huawei `total_power`) — see `getPlantDailyKpiRange`'s doc comment. Read off the *last* day within the selected period (for "today", that's today's own row) — `null` only when the field isn't present, never fabricated. */
   totalYieldKwh: number | null;
   consumedTodayKwh: number | null;
   /**
-   * Self-consumption: the portion of today's PV yield that never left the
-   * site (`producedTodayKwh - exportedTodayKwh`) — a plain energy-balance
-   * identity over two values already computed above, not a new
-   * measurement or Huawei field. `null` whenever either input is
+   * Self-consumption: the portion of the period's PV yield that never left
+   * the site (`producedTodayKwh - exportedTodayKwh`) — a plain
+   * energy-balance identity over two values already computed above, not a
+   * new measurement or Huawei field. `null` whenever either input is
    * unavailable, or when the subtraction would go negative (a genuine
    * disagreement between the two independent Huawei-sourced counters) —
    * never clamped to zero.
@@ -145,6 +155,23 @@ export type DashboardKpis = {
   exportedTodayKwh: number | null;
   importedTodayKwh: number | null;
   revenue: RevenueSummary;
+};
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The same
+ * five period-scoped KPI totals, but for the immediately preceding calendar
+ * period (previous calendar week/month/year — never a rolling window, see
+ * `previousPeriodBoundsUtc`). Only computed when `period !== "today"` — this
+ * milestone doesn't add a "yesterday" comparison for the Today view, since
+ * nothing in the existing UI asked for one there. `null` per-field exactly
+ * like `DashboardKpis`, never fabricated.
+ */
+export type DashboardKpiComparison = {
+  producedKwh: number | null;
+  consumedKwh: number | null;
+  consumedFromPvKwh: number | null;
+  exportedKwh: number | null;
+  importedKwh: number | null;
 };
 
 /**
@@ -176,13 +203,22 @@ export type DashboardMarketWidgetData = {
  * (duplicated intentionally, matching `production-data.ts`'s own documented
  * precedent for this exact pattern, rather than sharing a new utility
  * module) so Dashboard can render the same `MarketToolbar` component with
- * real, working day navigation.
+ * real, working day/period navigation.
+ *
+ * Dashboard & Market Analytics milestone: `isToday` keeps its exact
+ * pre-existing meaning (`period === "today" && selectedDate ===` today's
+ * date) — every Category-A/"current state" gate in this module already
+ * reads this flag, so Week/Month/Year automatically fall through to the
+ * same "not today" rendering a browsed historical day already used, with
+ * zero changes to those call sites.
  */
 export type DashboardToolbarState = {
+  period: CalendarPeriod;
   selectedDate: string;
   isToday: boolean;
   prevDateParam: string;
   nextDateParam: string;
+  periodRangeLabel: string;
 };
 
 export type DashboardPageData =
@@ -191,9 +227,13 @@ export type DashboardPageData =
       plantAvailable: true;
       plantName: string;
       kpis: DashboardKpis;
+      /** Only present when `period !== "today"` — the previous calendar period's same five totals, for the KPI cards' ▲/▼ comparison. */
+      previousPeriodKpis?: DashboardKpiComparison;
       energyFlow: EnergyFlowState;
       chartSeries: EnergyFlowPoint[];
-      /** Real-time reading for the chart's NOW marker — same values `energyFlow` uses, never a second live read. */
+      /** `"kWh"` (a per-bucket energy total) for Week/Month/Year, `"kW"` (an instantaneous reading) for Today — same field names in `chartSeries`, just a different physical quantity, per this module's `buildPeriodChartSeries` doc comment. */
+      chartUnit: "kW" | "kWh";
+      /** Real-time reading for the chart's NOW marker — same values `energyFlow` uses, never a second live read. Only ever set for the literal "today" period. */
       nowAnnotation: string | undefined;
       inverters: InverterStatusResult;
       latestTelemetryAt: Date | null;
@@ -264,6 +304,85 @@ function buildFullDayChartSeries(
   return grid;
 }
 
+/** `YYYY-MM-DD` or `YYYY-MM` bucket key for a given instant, in Europe/Sofia. */
+function bucketKey(instant: Date, granularity: "day" | "month"): string {
+  const dateStr = formatDateInZone(instant, BULGARIA_TIMEZONE);
+  return granularity === "day" ? dateStr : dateStr.slice(0, 7);
+}
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). Builds
+ * the Live Energy chart's data for a Week/Month/Year view — one point per
+ * calendar day (Week/Month) or per calendar month (Year), reusing the
+ * EXACT SAME `EnergyFlowPoint` shape `buildFullDayChartSeries` produces for
+ * Today, so `LiveEnergyChart` needs no new data contract, only a `chartUnit`
+ * label to say these are kWh totals per bucket, not kW instantaneous
+ * readings (see `DashboardPageData.chartUnit`). Produced/Consumed come from
+ * `PlantDailyKpi` (already one row per day — `getPlantDailyKpiRange`);
+ * Exported/Imported come from `production.settlementEnergySeries`, already
+ * fetched at native 15-minute resolution for the whole period (needed for
+ * the revenue calculation regardless), summed per bucket here rather than
+ * queried again at a coarser resolution. A bucket missing one of the two
+ * inputs (e.g. a sync gap) simply has `null` for that field — never
+ * fabricated.
+ */
+function buildPeriodChartSeries(
+  period: "week" | "month" | "year",
+  dailyKpiDays: PlantDailyKpiRangeDay[],
+  settlementSeries: SettlementEnergyPoint[],
+): EnergyFlowPoint[] {
+  const granularity: "day" | "month" = period === "year" ? "month" : "day";
+
+  const producedByBucket = new Map<string, number>();
+  const consumedByBucket = new Map<string, number>();
+  const exportedByBucket = new Map<string, number>();
+  const importedByBucket = new Map<string, number>();
+  const bucketInstant = new Map<string, number>();
+
+  for (const day of dailyKpiDays) {
+    const key = bucketKey(day.localDate, granularity);
+    producedByBucket.set(key, (producedByBucket.get(key) ?? 0) + day.producedKwh);
+    consumedByBucket.set(key, (consumedByBucket.get(key) ?? 0) + day.consumedKwh);
+    if (!bucketInstant.has(key)) {
+      bucketInstant.set(key, day.localDate.getTime());
+    }
+  }
+
+  for (const point of settlementSeries) {
+    const key = bucketKey(point.intervalStart, granularity);
+
+    if (point.exportedKwh !== null) {
+      exportedByBucket.set(key, (exportedByBucket.get(key) ?? 0) + point.exportedKwh);
+    }
+    if (point.importedKwh !== null) {
+      importedByBucket.set(key, (importedByBucket.get(key) ?? 0) + point.importedKwh);
+    }
+    if (!bucketInstant.has(key)) {
+      bucketInstant.set(key, point.intervalStart.getTime());
+    }
+  }
+
+  const keys = [...bucketInstant.keys()].sort(
+    (a, b) => (bucketInstant.get(a) as number) - (bucketInstant.get(b) as number),
+  );
+
+  return keys.map((key) => ({
+    time: bucketInstant.get(key) as number,
+    pvKw: producedByBucket.has(key)
+      ? Math.round((producedByBucket.get(key) as number) * 100) / 100
+      : null,
+    consumptionKw: consumedByBucket.has(key)
+      ? Math.round((consumedByBucket.get(key) as number) * 100) / 100
+      : null,
+    gridImportKw: importedByBucket.has(key)
+      ? Math.round((importedByBucket.get(key) as number) * 100) / 100
+      : null,
+    gridExportKw: exportedByBucket.has(key)
+      ? Math.round((exportedByBucket.get(key) as number) * 100) / 100
+      : null,
+  }));
+}
+
 function buildEnergyFlow(production: {
   currentProduction: ProductionReading;
   currentExport: ProductionReading;
@@ -293,19 +412,6 @@ function buildNowAnnotation(energyFlow: EnergyFlowState): string | undefined {
   return `${energyFlow.pvKw} kW PV · ${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`;
 }
 
-/** Identical logic to `market-data.ts`'s own (private) `shiftDateString` — duplicated, not imported, matching `production-data.ts`'s documented precedent for this exact date-handling pattern. */
-function shiftDateString(dateStr: string, deltaDays: number): string {
-  const parts = dateStr.split("-").map(Number);
-  const year = parts[0] ?? 1970;
-  const month = parts[1] ?? 1;
-  const day = parts[2] ?? 1;
-
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-
-  return date.toISOString().slice(0, 10);
-}
-
 function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
@@ -332,6 +438,13 @@ async function fetchSolarWeatherSafe(
   }
 }
 
+/** Self-consumption energy-balance identity, shared by the current and previous-period KPI computations below — never a new measurement, see `DashboardKpis.consumedFromPvKwh`'s doc comment. */
+function computeConsumedFromPv(producedKwh: number | null, exportedKwh: number | null): number | null {
+  return producedKwh !== null && exportedKwh !== null && producedKwh >= exportedKwh
+    ? Math.round((producedKwh - exportedKwh) * 100) / 100
+    : null;
+}
+
 export async function getDashboardPageData(
   organizationId: string,
   automationSettings: {
@@ -339,6 +452,7 @@ export async function getDashboardPageData(
     currency: string;
   } | null,
   selectedDateParam: string | undefined,
+  period: CalendarPeriod = "today",
 ): Promise<DashboardPageData> {
   // Same resolution as `market-data.ts`'s own `getMarketPageData` — see
   // `DashboardToolbarState`'s doc comment for why this is duplicated here
@@ -346,12 +460,29 @@ export async function getDashboardPageData(
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDate =
     selectedDateParam && isValidDateString(selectedDateParam) ? selectedDateParam : todayDateStr;
-  const isToday = selectedDate === todayDateStr;
+  const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
+  const { start: periodStart, end: periodEnd } = periodBoundsUtc(
+    period,
+    referenceInstant,
+    BULGARIA_TIMEZONE,
+  );
+
+  // Category A ("current state" — inverters, System Overview, the chart's
+  // NOW marker) only ever describes the literal "today" period, never
+  // "this week/month/year" even when that period happens to contain today —
+  // same convention `production-data.ts` uses for its own Category A
+  // fields (see its doc comment), so every existing gate below keeps
+  // working unchanged for Week/Month/Year: they simply see `isToday: false`,
+  // exactly like a browsed historical day already did.
+  const isToday = period === "today" && selectedDate === todayDateStr;
+
   const toolbarState: DashboardToolbarState = {
+    period,
     selectedDate,
     isToday,
-    prevDateParam: shiftDateString(selectedDate, -1),
-    nextDateParam: shiftDateString(selectedDate, 1),
+    prevDateParam: formatDateInZone(new Date(periodStart.getTime() - 1), BULGARIA_TIMEZONE),
+    nextDateParam: formatDateInZone(periodEnd, BULGARIA_TIMEZONE),
+    periodRangeLabel: formatPeriodRangeLabel(period, periodStart, periodEnd, BULGARIA_TIMEZONE),
   };
 
   const context = await resolvePlantContext(organizationId);
@@ -362,20 +493,19 @@ export async function getDashboardPageData(
 
   const { plant } = context;
 
-  const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
   const now = new Date();
-  const { start: dayStart, end: dayEnd } = localDayBoundsUtc(referenceInstant, BULGARIA_TIMEZONE);
-  // Never show future data for "today" (the day is still in progress); a
-  // past day already fully happened, so its whole day is real data — same
-  // convention as `production-data.ts`'s own `seriesEnd`.
-  const seriesEnd = isToday ? now : dayEnd;
+  // Never show future data for an in-progress period; a period that's
+  // already fully elapsed uses its whole span — same clamp
+  // `production-data.ts` uses for its own `seriesEnd`.
+  const seriesEnd = now < periodStart ? periodStart : now < periodEnd ? now : periodEnd;
 
   // Category A (inverter status) only ever describes "right now" — same
   // convention `production-data.ts` already uses for its own Category A
-  // fields, so a historical day never shows current state. Fetched once,
-  // here, and reused both for this page's own Inverters card (below) and
-  // as a preload passed into `getProductionPageData` — that function
-  // previously re-fetched the exact same 4 `DeviceTelemetry` rows itself.
+  // fields, so a historical day (or any non-"today" period) never shows
+  // current state. Fetched once, here, and reused both for this page's own
+  // Inverters card (below) and as a preload passed into
+  // `getProductionPageData` — that function previously re-fetched the
+  // exact same 4 `DeviceTelemetry` rows itself.
   const inverterDevices = isToday
     ? await prisma.device.findMany({
         where: { plantId: plant.id, devTypeId: INVERTER_DEV_TYPE_ID },
@@ -387,54 +517,101 @@ export async function getDashboardPageData(
     ? await getLatestInverterTelemetryForDevices(inverterDevices.map((device) => device.id))
     : [];
 
-  // Reused wholesale from Market's own orchestration — never a second
-  // implementation of price fetching, export-revenue math, or real-time
-  // FusionSolar reads. See each module's own doc comment. Passing the real
-  // `selectedDateParam` through (instead of always `undefined`) is what
-  // makes Dashboard capable of showing any day Market/Production already
-  // support — neither function needed a single change. `context`/
-  // `inverterTelemetry` preloaded above so `getProductionPageData` skips
-  // its own equivalent (otherwise redundant) resolution and fetch.
-  const [marketData, production, chartSeriesRaw, dailyKpi, weather] = await Promise.all([
-    getMarketPageData({ organizationId, selectedDateParam, automationSettings }),
-    getProductionPageData(organizationId, selectedDateParam, { context, inverterTelemetry }),
-    getPlantTelemetrySeries(plant.id, dayStart, seriesEnd),
-    getPlantDailyKpi(plant.id, dayStart),
-    fetchSolarWeatherSafe(
-      plant.latitude?.toNumber() ?? null,
-      plant.longitude?.toNumber() ?? null,
-    ),
-  ]);
+  // Dashboard & Market Analytics milestone: the Today chart still needs
+  // the real 5-minute telemetry grid (`chartSeriesRaw`), but Week/Month/
+  // Year build their chart from `PlantDailyKpi`/`settlementEnergySeries`
+  // instead (see `buildPeriodChartSeries`) — fetching a full period's worth
+  // of 5-minute samples for that would be a wasted query, so it's skipped
+  // entirely whenever `period !== "today"`.
+  const [marketData, production, chartSeriesRaw, dailyKpiRange, previousPeriodDailyKpiRange, weather] =
+    await Promise.all([
+      getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
+      getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
+      period === "today"
+        ? getPlantTelemetrySeries(plant.id, periodStart, seriesEnd)
+        : Promise.resolve([]),
+      // Replaces the old single-day `getPlantDailyKpi` call: a `[dayStart,
+      // dayEnd)` range always resolves to zero or one row, so this one
+      // function now serves both "today" and Week/Month/Year — see
+      // `getPlantDailyKpiRange`'s own doc comment.
+      getPlantDailyKpiRange(plant.id, periodStart, periodEnd),
+      period === "today"
+        ? Promise.resolve(undefined)
+        : (() => {
+            const { start: previousStart, end: previousEnd } = previousPeriodBoundsUtc(
+              period,
+              periodStart,
+              BULGARIA_TIMEZONE,
+            );
+            return getPlantDailyKpiRange(plant.id, previousStart, previousEnd);
+          })(),
+      fetchSolarWeatherSafe(
+        plant.latitude?.toNumber() ?? null,
+        plant.longitude?.toNumber() ?? null,
+      ),
+    ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
     ? computeExportRevenue(marketData.series, production.settlementEnergySeries)
     : { available: false };
 
-  // Exported/Imported Today: unchanged, still the meter's cumulative
-  // counters (energy-metrics.ts) — reused directly against data already
-  // fetched above instead of issuing a second, redundant DeviceTelemetry
-  // query for the same [dayStart, now) window.
+  // Exported/Imported for the selected period: still the meter's
+  // cumulative counters (energy-metrics.ts) — reused directly against data
+  // already fetched above (now spanning the whole period, not just one
+  // day) instead of issuing a second, redundant `DeviceTelemetry` query.
   const settlementTotals = sumSettlementEnergy(production.settlementEnergySeries);
 
-  const producedTodayKwh = dailyKpi.available ? dailyKpi.producedKwh : null;
+  const producedTodayKwh = dailyKpiRange.available ? dailyKpiRange.producedKwh : null;
   const exportedTodayKwh = settlementTotals.available ? settlementTotals.exportedKwh : null;
-  const selfConsumptionKwh =
-    producedTodayKwh !== null && exportedTodayKwh !== null && producedTodayKwh >= exportedTodayKwh
-      ? Math.round((producedTodayKwh - exportedTodayKwh) * 100) / 100
-      : null;
 
   const kpis: DashboardKpis = {
     producedTodayKwh,
-    totalYieldKwh: dailyKpi.available ? dailyKpi.totalYieldKwh : null,
-    consumedTodayKwh: dailyKpi.available ? dailyKpi.consumedKwh : null,
-    consumedFromPvKwh: selfConsumptionKwh,
+    // Lifetime counter, read off the *last* day within the selected
+    // period (for "today" that's today's own row, unchanged from before) —
+    // never summed across days, since it isn't a period-scoped quantity.
+    totalYieldKwh: dailyKpiRange.available
+      ? (dailyKpiRange.days.at(-1)?.totalYieldKwh ?? null)
+      : null,
+    consumedTodayKwh: dailyKpiRange.available ? dailyKpiRange.consumedKwh : null,
+    consumedFromPvKwh: computeConsumedFromPv(producedTodayKwh, exportedTodayKwh),
     exportedTodayKwh,
     importedTodayKwh: settlementTotals.available ? settlementTotals.importedKwh : null,
     revenue,
   };
 
+  let previousPeriodKpis: DashboardKpiComparison | undefined;
+  if (period !== "today") {
+    const previousSettlementTotals = production.previousPeriodSettlementEnergySeries
+      ? sumSettlementEnergy(production.previousPeriodSettlementEnergySeries)
+      : undefined;
+    const previousProducedKwh = previousPeriodDailyKpiRange?.available
+      ? previousPeriodDailyKpiRange.producedKwh
+      : null;
+    const previousExportedKwh = previousSettlementTotals?.available
+      ? previousSettlementTotals.exportedKwh
+      : null;
+
+    previousPeriodKpis = {
+      producedKwh: previousProducedKwh,
+      consumedKwh: previousPeriodDailyKpiRange?.available
+        ? previousPeriodDailyKpiRange.consumedKwh
+        : null,
+      consumedFromPvKwh: computeConsumedFromPv(previousProducedKwh, previousExportedKwh),
+      exportedKwh: previousExportedKwh,
+      importedKwh: previousSettlementTotals?.available ? previousSettlementTotals.importedKwh : null,
+    };
+  }
+
   const energyFlow = buildEnergyFlow(production);
-  const chartSeries = buildFullDayChartSeries(dayStart, dayEnd, chartSeriesRaw);
+  const chartSeries =
+    period === "today"
+      ? buildFullDayChartSeries(periodStart, periodEnd, chartSeriesRaw)
+      : buildPeriodChartSeries(
+          period,
+          dailyKpiRange.available ? dailyKpiRange.days : [],
+          production.settlementEnergySeries,
+        );
+  const chartUnit: "kW" | "kWh" = period === "today" ? "kW" : "kWh";
   const nowAnnotation = buildNowAnnotation(energyFlow);
 
 // "Current state" has no meaning for a day that already happened
@@ -484,8 +661,10 @@ export async function getDashboardPageData(
     ...toolbarState,
     plantName: plant.name,
     kpis,
+    previousPeriodKpis,
     energyFlow,
     chartSeries,
+    chartUnit,
     nowAnnotation,
     inverters,
     latestTelemetryAt: production.latestTelemetryAt,

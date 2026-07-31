@@ -36,7 +36,13 @@ import {
 } from "@/lib/automation/export-threshold-config";
 import { DEFAULT_RESOLUTION_MINUTES } from "@/lib/market-price/constants";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
-import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone";
+import {
+  formatDateInZone,
+  formatPeriodRangeLabel,
+  periodBoundsUtc,
+  previousPeriodBoundsUtc,
+  type CalendarPeriod,
+} from "@/lib/market-price/timezone";
 
 /**
  * The Market page's displayed day is always a full Bulgaria calendar day
@@ -108,11 +114,20 @@ export type MarketInsight = {
   dotColorClass?: string;
 };
 
+/**
+ * Dashboard & Market Analytics milestone: `isToday` keeps its exact
+ * pre-existing meaning (`period === "today" && selectedDate ===` today's
+ * date) — the Current Price/Next Interval fields below already gate on
+ * this flag, so Week/Month/Year automatically fall through to the same
+ * "not today" rendering a browsed historical day already used.
+ */
 export type MarketToolbarState = {
+  period: CalendarPeriod;
   selectedDate: string;
   isToday: boolean;
   prevDateParam: string;
   nextDateParam: string;
+  periodRangeLabel: string;
 };
 
 export type MarketPageResult =
@@ -123,25 +138,37 @@ export type MarketPageResult =
   | ({
       dataAvailable: true;
       threshold: ExportThresholdConfig;
+      /**
+       * Real price points at native resolution across the whole selected
+       * period — one day's worth (unchanged) for "today", up to a full
+       * year's worth for "year". This is what Insights/Distribution/Revenue
+       * are computed from; see `chartSeries` for what the chart itself
+       * renders.
+       */
       series: MarketPricePoint[];
+      /**
+       * What `MarketPriceChart` actually plots: `series` unchanged for
+       * "today" (already just one day, native resolution), but bucketed to
+       * one point per calendar day (Week/Month) or per calendar month
+       * (Year) otherwise — see `buildPeriodChartSeries`. Never a second
+       * query: built entirely from `series`, already fetched above.
+       */
+      chartSeries: MarketPricePoint[];
+      /**
+       * Same shape as `series`, for the previous calendar period — only
+       * present when `period !== "today"`. `page.tsx` feeds this into the
+       * same `computeExportRevenue` the current period already uses
+       * (paired with `production-data.ts`'s
+       * `previousPeriodSettlementEnergySeries`) for the Revenue card's
+       * ▲/▼ comparison, rather than a second revenue calculation.
+       */
+      previousPeriodSeries?: MarketPricePoint[];
       isPartialImport: boolean;
       summary: MarketSummaryData;
       eventLog: MarketEventLogEntry[];
       distribution: DistributionBucket[];
       insights: MarketInsight[];
     } & MarketToolbarState);
-
-function shiftDateString(dateStr: string, deltaDays: number): string {
-  const parts = dateStr.split("-").map(Number);
-  const year = parts[0] ?? 1970;
-  const month = parts[1] ?? 1;
-  const day = parts[2] ?? 1;
-
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + deltaDays);
-
-  return date.toISOString().slice(0, 10);
-}
 
 function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
@@ -168,6 +195,24 @@ function hasOnlyResidualPreviousDayInterval(
 function sofiaTimeLabel(date: Date): string {
   return date.toLocaleTimeString("en-GB", {
     timeZone: "Europe/Sofia",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). Date +
+ * time ("28 Jul, 14:30") — used by `buildInsights`'s Highest/Lowest price
+ * entries, which can now describe a moment anywhere within a whole
+ * calendar week/month/year, not just today; a bare time-of-day (what
+ * `sofiaTimeLabel` gives) would be ambiguous once the period spans more
+ * than one day.
+ */
+function sofiaDateTimeShortLabel(date: Date): string {
+  return date.toLocaleString("en-GB", {
+    timeZone: "Europe/Sofia",
+    day: "numeric",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -288,19 +333,28 @@ export function buildInsights(
     Math.round((knownPoints.length - aboveThresholdCount) * intervalHours * 10) /
     10;
 
+  // Dashboard & Market Analytics milestone: a plain count of negative-price
+  // intervals, same statistic shape as hoursAbove/BelowThreshold above —
+  // meaningful over any period length, so this row is included for
+  // "today" too, not just Week/Month/Year.
+  const negativePriceCount = knownPoints.filter(
+    (point) => point.price !== null && point.price < 0,
+  ).length;
+  const negativePriceHours = Math.round(negativePriceCount * intervalHours * 10) / 10;
+
   return [
     {
-      text: tInsights("highestPriceToday", {
+      text: tInsights("highestPrice", {
         price: highest.price,
-        time: sofiaTimeLabel(highest.timestamp),
+        time: sofiaDateTimeShortLabel(highest.timestamp),
       }),
       tone: "warning",
       dotColorClass: DISTRIBUTION_HIGH_COLOR_CLASS,
     },
     {
-      text: tInsights("lowestPriceToday", {
+      text: tInsights("lowestPrice", {
         price: lowest.price,
-        time: sofiaTimeLabel(lowest.timestamp),
+        time: sofiaDateTimeShortLabel(lowest.timestamp),
       }),
       tone: "positive",
       dotColorClass: DISTRIBUTION_LOW_COLOR_CLASS,
@@ -309,34 +363,237 @@ export function buildInsights(
     { text: tInsights("averagePrice", { price: averagePrice }), tone: "neutral" },
     { text: tInsights("hoursAboveThreshold", { hours: hoursAboveThreshold }), tone: "positive" },
     { text: tInsights("hoursBelowThreshold", { hours: hoursBelowThreshold }), tone: "neutral" },
+    { text: tInsights("negativePriceHours", { hours: negativePriceHours }), tone: "neutral" },
   ];
+}
+
+/** `YYYY-MM-DD` or `YYYY-MM` bucket key for a given instant, in Europe/Sofia — same technique `dashboard-data.ts`'s own `bucketKey` uses, duplicated per this codebase's established small-helper convention rather than a shared utility module. */
+function priceBucketKey(instant: Date, granularity: "day" | "month"): string {
+  const dateStr = formatDateInZone(instant, BULGARIA_TIMEZONE);
+  return granularity === "day" ? dateStr : dateStr.slice(0, 7);
+}
+
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). What
+ * `MarketPriceChart` actually renders for Week/Month/Year: one point per
+ * calendar day (Week/Month) or per calendar month (Year), each `price` the
+ * average of the real known prices in that bucket — never a second query,
+ * built entirely from the already-fetched, native-resolution `knownPoints`
+ * Insights/Distribution also use. `exportEnabled` is recomputed against the
+ * bucket's average price purely for shape-consistency with `MarketPricePoint`
+ * — the chart itself never reads that field.
+ */
+function buildPeriodPriceChartSeries(
+  period: "week" | "month" | "year",
+  knownPoints: Array<MarketPricePoint & { price: number }>,
+  threshold: ExportThresholdConfig,
+): MarketPricePoint[] {
+  const granularity: "day" | "month" = period === "year" ? "month" : "day";
+
+  const sumByBucket = new Map<string, number>();
+  const countByBucket = new Map<string, number>();
+  const instantByBucket = new Map<string, number>();
+
+  for (const point of knownPoints) {
+    const key = priceBucketKey(point.timestamp, granularity);
+    sumByBucket.set(key, (sumByBucket.get(key) ?? 0) + point.price);
+    countByBucket.set(key, (countByBucket.get(key) ?? 0) + 1);
+    if (!instantByBucket.has(key)) {
+      instantByBucket.set(key, point.timestamp.getTime());
+    }
+  }
+
+  const keys = [...instantByBucket.keys()].sort(
+    (a, b) => (instantByBucket.get(a) as number) - (instantByBucket.get(b) as number),
+  );
+
+  return keys.map((key) => {
+    const averagePrice =
+      Math.round(((sumByBucket.get(key) as number) / (countByBucket.get(key) as number)) * 100) /
+      100;
+
+    return {
+      timestamp: new Date(instantByBucket.get(key) as number),
+      price: averagePrice,
+      exportEnabled: isExportRecommended(averagePrice, threshold),
+    };
+  });
+}
+
+/** Builds the translated `MarketEventLogEntry[]` shared by both branches of `getMarketPageData` below — extracted so neither branch duplicates this mapping. */
+function buildEventLog(
+  recentEvents: Awaited<ReturnType<typeof getRecentAutomationEvents>>,
+  tEventLog: Awaited<ReturnType<typeof getTranslations<"automations.eventLog">>>,
+  tDecisionReasons: Awaited<ReturnType<typeof getTranslations<"automations.eventLog.decisionReasons">>>,
+  tTerm: Awaited<ReturnType<typeof getTranslations<"terminology">>>,
+): MarketEventLogEntry[] {
+  return recentEvents.map((event) => ({
+    timestamp: event.createdAt,
+    type: event.type,
+    // next-intl's translators are typed against a static, literal key
+    // union; these two helpers deliberately look up a DYNAMIC key (a
+    // runtime `ExportDecisionReasonCode` value) from a known closed set,
+    // which is exactly the case next-intl's own typed-keys feature can't
+    // express statically - the `as never` casts here are that documented,
+    // narrow escape hatch (same pattern used in
+    // lib/notifications/automation-notifications.ts), not a general
+    // loosening of translation type-safety elsewhere.
+    label: translateAutomationEventSummary(
+      (key, values) => tEventLog(key as never, values as never),
+      (key) => tTerm(key as never),
+      event,
+    ),
+    // automation_service_failed's reason is raw diagnostic text (out of
+    // this fix's scope, see AutomationEvent.reason's schema comment);
+    // only mode_changed's reason is a translatable decision-reason code.
+    detail:
+      event.type === "mode_changed"
+        ? translateDecisionReason(
+            (key, values) => tDecisionReasons(key as never, values as never),
+            (key) => tTerm(key as never),
+            event.reason,
+          )
+        : event.reason,
+  }));
 }
 
 export async function getMarketPageData(params: {
   /** Null for a Trader Workspace with no client selected - the platform-wide price series is still computed, only the organization-scoped event log is skipped. */
   organizationId: string | null;
   selectedDateParam: string | undefined;
+  period?: CalendarPeriod;
   automationSettings: {
     minimumExportPrice: { toString(): string };
     currency: string;
   } | null;
 }): Promise<MarketPageResult> {
+  const period = params.period ?? "today";
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDate =
     params.selectedDateParam && isValidDateString(params.selectedDateParam)
       ? params.selectedDateParam
       : todayDateStr;
-  const isToday = selectedDate === todayDateStr;
+  // Dashboard & Market Analytics milestone: `isToday` keeps its exact
+  // pre-existing meaning for the literal "today" period — Week/Month/Year
+  // simply never satisfy it, so Current Price/Next Interval fall through
+  // to the same "not available" rendering a browsed historical day
+  // already used.
+  const isToday = period === "today" && selectedDate === todayDateStr;
   const referenceInstant = new Date(`${selectedDate}T12:00:00Z`);
 
   const threshold = resolveExportThreshold(params.automationSettings);
 
+  // Replaces the old `shiftDateString`-based day-only prev/next — for
+  // `period === "today"` this resolves to the exact same calendar day
+  // (`periodBoundsUtc("today", ...)` === `localDayBoundsUtc(...)`), so the
+  // existing single-day toolbar behavior is unchanged; Week/Month/Year get
+  // real period-length navigation for free from the same computation.
+  const { start: periodStart, end: periodEnd } = periodBoundsUtc(
+    period,
+    referenceInstant,
+    BULGARIA_TIMEZONE,
+  );
+
   const toolbarState: MarketToolbarState = {
+    period,
     selectedDate,
     isToday,
-    prevDateParam: shiftDateString(selectedDate, -1),
-    nextDateParam: shiftDateString(selectedDate, 1),
+    prevDateParam: formatDateInZone(new Date(periodStart.getTime() - 1), BULGARIA_TIMEZONE),
+    nextDateParam: formatDateInZone(periodEnd, BULGARIA_TIMEZONE),
+    periodRangeLabel: formatPeriodRangeLabel(period, periodStart, periodEnd, BULGARIA_TIMEZONE),
   };
+
+  if (period !== "today") {
+    // Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). A
+    // new, separate branch rather than threading period-awareness through
+    // every line of the existing "today" path below — that path (day-ahead
+    // fetch, current/next interval, the residual-previous-day guard) is
+    // specific to a single calendar day and stays completely untouched.
+    const { start: previousStart, end: previousEnd } = previousPeriodBoundsUtc(
+      period,
+      periodStart,
+      BULGARIA_TIMEZONE,
+    );
+
+    const [
+      rangeResult,
+      previousRangeResult,
+      importStatus,
+      recentEvents,
+      tEventLog,
+      tDecisionReasons,
+      tTerm,
+      tDistribution,
+      tInsights,
+      tInfo,
+    ] = await Promise.all([
+      dbMarketPriceProvider.getPricesInRange({ start: periodStart, end: periodEnd }),
+      dbMarketPriceProvider.getPricesInRange({ start: previousStart, end: previousEnd }),
+      dbMarketPriceProvider.getLatestImportStatus(),
+      params.organizationId ? getRecentAutomationEvents(params.organizationId) : Promise.resolve([]),
+      getTranslations("automations.eventLog"),
+      getTranslations("automations.eventLog.decisionReasons"),
+      getTranslations("terminology"),
+      getTranslations("market.distribution"),
+      getTranslations("market.insights"),
+      getTranslations("market.info"),
+    ]);
+
+    if (!rangeResult.available) {
+      return { dataAvailable: false, threshold, ...toolbarState };
+    }
+
+    const resolutionMinutes = importStatus.available
+      ? importStatus.resolutionMinutes
+      : DEFAULT_RESOLUTION_MINUTES;
+
+    const series = buildSeries(rangeResult.prices, periodStart, periodEnd, resolutionMinutes, threshold);
+    const knownPoints = series.filter(
+      (point): point is MarketPricePoint & { price: number } => point.price !== null,
+    );
+
+    if (knownPoints.length === 0) {
+      return { dataAvailable: false, threshold, ...toolbarState };
+    }
+
+    const lowestKnown = knownPoints.reduce((min, point) => (point.price < min.price ? point : min));
+    const highestKnown = knownPoints.reduce((max, point) => (point.price > max.price ? point : max));
+
+    const summary: MarketSummaryData = {
+      // A single "current price" has no meaning over a multi-day period —
+      // same "unavailable" rendering the existing UI already uses for a
+      // browsed historical single day.
+      currentPrice: null,
+      nextInterval: null,
+      lowestToday: { value: lowestKnown.price, intervalLabel: sofiaTimeLabel(lowestKnown.timestamp) },
+      highestToday: { value: highestKnown.price, intervalLabel: sofiaTimeLabel(highestKnown.timestamp) },
+      marketStatus: {
+        country: tInfo("countryName"),
+        source: "ENTSO-E",
+        healthy: importStatus.available ? !importStatus.isPartial : false,
+      },
+    };
+
+    const previousPeriodSeries = previousRangeResult.available
+      ? buildSeries(previousRangeResult.prices, previousStart, previousEnd, resolutionMinutes, threshold)
+      : undefined;
+
+    return {
+      dataAvailable: true,
+      threshold,
+      series,
+      chartSeries: buildPeriodPriceChartSeries(period, knownPoints, threshold),
+      previousPeriodSeries,
+      isPartialImport: false,
+      summary,
+      eventLog: buildEventLog(recentEvents, tEventLog, tDecisionReasons, tTerm),
+      distribution: buildDistribution(knownPoints, (key) => tDistribution(key)),
+      insights: buildInsights(knownPoints, resolutionMinutes, (key, values) =>
+        tInsights(key as never, values as never),
+      ),
+      ...toolbarState,
+    };
+  }
 
   // These reads don't depend on each other's results (only the subsequent
   // processing below does) — fetched in parallel instead of four
@@ -371,11 +628,6 @@ export async function getMarketPageData(params: {
   if (!dayAheadResult.available) {
     return { dataAvailable: false, threshold, ...toolbarState };
   }
-
-  const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
-    referenceInstant,
-    BULGARIA_TIMEZONE,
-  );
 
   // A day whose only persisted row is the residual tail hour of the
   // *previous* CET trading day (see `hasOnlyResidualPreviousDayInterval`)
@@ -475,36 +727,10 @@ export async function getMarketPageData(params: {
     dataAvailable: true,
     threshold,
     series,
+    chartSeries: series,
     isPartialImport: isToday && importStatus.available && importStatus.isPartial,
     summary,
-    eventLog: recentEvents.map((event) => ({
-      timestamp: event.createdAt,
-      type: event.type,
-      // next-intl's translators are typed against a static, literal key
-      // union; these two helpers deliberately look up a DYNAMIC key (a
-      // runtime `ExportDecisionReasonCode` value) from a known closed set,
-      // which is exactly the case next-intl's own typed-keys feature can't
-      // express statically - the `as never` casts here are that documented,
-      // narrow escape hatch (same pattern used in
-      // lib/notifications/automation-notifications.ts), not a general
-      // loosening of translation type-safety elsewhere.
-      label: translateAutomationEventSummary(
-        (key, values) => tEventLog(key as never, values as never),
-        (key) => tTerm(key as never),
-        event,
-      ),
-      // automation_service_failed's reason is raw diagnostic text (out of
-      // this fix's scope, see AutomationEvent.reason's schema comment);
-      // only mode_changed's reason is a translatable decision-reason code.
-      detail:
-        event.type === "mode_changed"
-          ? translateDecisionReason(
-              (key, values) => tDecisionReasons(key as never, values as never),
-              (key) => tTerm(key as never),
-              event.reason,
-            )
-          : event.reason,
-    })),
+    eventLog: buildEventLog(recentEvents, tEventLog, tDecisionReasons, tTerm),
     distribution: buildDistribution(knownPoints, (key) => tDistribution(key)),
     insights: buildInsights(knownPoints, resolutionMinutes, (key, values) =>
       tInsights(key as never, values as never),

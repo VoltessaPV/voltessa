@@ -16,6 +16,28 @@ export function formatSofiaTime(time: number): string {
   });
 }
 
+/**
+ * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). X-axis
+ * label for a Week/Month chart point — one per calendar day, so a time of
+ * day is meaningless here; "28 Jul" instead.
+ */
+export function formatSofiaDate(time: number): string {
+  return new Date(time).toLocaleDateString("en-GB", {
+    timeZone: "Europe/Sofia",
+    day: "numeric",
+    month: "short",
+  });
+}
+
+/** X-axis label for a Year chart point — one per calendar month; "Jul 2026". */
+export function formatSofiaMonth(time: number): string {
+  return new Date(time).toLocaleDateString("en-GB", {
+    timeZone: "Europe/Sofia",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export const CHART_GRID_STROKE = "rgba(255,255,255,0.05)";
 
 export const CHART_AXIS_TICK = { fill: "#64748b", fontSize: 11 } as const;
