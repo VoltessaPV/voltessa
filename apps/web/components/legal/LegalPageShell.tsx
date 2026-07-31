@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import Footer from "@/components/layout/Footer";
 import Navbar from "@/components/layout/Navbar";
+import { CTAProvider } from "@/components/providers/CTAProvider";
 import type { Locale } from "@/lib/i18n/locale";
 
 import { LanguageToggle } from "./LanguageToggle";
@@ -29,7 +30,13 @@ type LegalPageShellProps = {
  */
 export function LegalPageShell({ locale, title, lastUpdated, children }: LegalPageShellProps) {
   return (
-    <>
+    // Navbar renders a "Contact" link (`ContactNavLink`) that calls
+    // `useCTA()`, which throws outside a `CTAProvider` — verified as a real
+    // production crash on this milestone's preview deployment
+    // (`Error: useCTA must be used within a CTAProvider`, every /privacy,
+    // /terms, /cookie-policy, /company request). Hero.tsx (the marketing
+    // homepage) already wraps Navbar the same way; this mirrors that.
+    <CTAProvider>
       <Navbar />
 
       <main className="mx-auto max-w-4xl px-4 pb-16 pt-28 text-slate-200 sm:px-8 sm:pb-24 sm:pt-32">
@@ -49,6 +56,6 @@ export function LegalPageShell({ locale, title, lastUpdated, children }: LegalPa
       </main>
 
       <Footer />
-    </>
+    </CTAProvider>
   );
 }
