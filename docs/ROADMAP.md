@@ -124,3 +124,30 @@
   via `/dev/huawei-api`) — mirrors the existing telemetry/market-price
   scheduler split (ADR-009) of keeping different-cadence jobs in separate
   systemd units.
+
+---
+
+# GDPR + Cookie Consent Platform — Milestone 1
+
+## Completed
+
+- In-house consent management system: first-visit banner (Accept All/Reject
+  All/Customize), a WCAG-oriented preferences modal, and a persistent
+  "Cookie Settings" entry in the footer and authenticated Settings page.
+  Consent is versioned (`CONSENT_VERSION`) and logged append-only in
+  `ConsentLog` for GDPR accountability. `lib/consent/cookie-registry.ts` is
+  the single source of truth for every real cookie, driving both the new
+  Cookie Policy page and the preferences modal.
+- Real, Voltessa-specific Privacy Policy and Terms of Service (replacing
+  generic placeholders), a new Company Information page, and a documented
+  data-retention schedule (`docs/legal/data-retention.md`) — all reading
+  from one company/retention/sub-processor configuration under
+  `lib/legal/*`. All four compliance pages and the consent UI support
+  Bulgarian and English.
+- Self-service account deletion now writes an `AccountDeletionRecord` (no
+  personal data) in the same transaction as the delete, distinct from the
+  general-purpose `AuditLog`.
+- Explicitly out of scope for this milestone: GDPR self-service features
+  (data export, access requests, restriction of processing) — architecture
+  (`getConsent()`/`hasConsentFor()`, the registry/dictionary pattern) is
+  structured so those can be added later without refactoring.
