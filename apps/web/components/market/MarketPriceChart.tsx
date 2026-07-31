@@ -63,9 +63,28 @@ type MarketPriceChartProps = {
    * 15-minute interval ("time", the default, unchanged Today behavior), a
    * whole calendar day ("day", Week/Month), or a whole calendar month
    * ("year"). Only changes X-axis tick labels/spacing and the export-energy
-   * axis's per-point capacity scale — never the data itself.
+   * axis's scale (Historical Analytics Refinement milestone — see
+   * `computeNiceEnergyAxis`) — never the data itself.
    */
   xAxisUnit?: "time" | "day" | "month";
+  /**
+   * Historical Analytics Refinement milestone. Export Threshold (the line,
+   * its legend entry, and the pill label) is an operational, today-only
+   * concept — a historical Average Selling Price has no "threshold" to
+   * compare against. Defaults to `true` (unchanged Today behavior);
+   * `market/page.tsx` passes `false` for Week/Month/Year.
+   */
+  showThreshold?: boolean;
+  /**
+   * Historical Analytics Refinement milestone. Which real metric `series`'s
+   * blue line actually carries — `"electricity"` (the default, unchanged
+   * Today behavior) is the raw real-time ENTSO-E price; `"averageSelling"`
+   * is the plant's real Average Selling Price for Week/Month/Year
+   * (`market/page.tsx`'s `buildAspChartSeries`) — a genuinely different
+   * business metric, not the same values under a new label, so the legend
+   * text must say which one is actually being plotted.
+   */
+  priceMetric?: "electricity" | "averageSelling";
 };
 
 const X_AXIS_TICK_FORMATTERS: Record<"time" | "day" | "month", (time: number) => string> = {
@@ -74,12 +93,39 @@ const X_AXIS_TICK_FORMATTERS: Record<"time" | "day" | "month", (time: number) =>
   month: formatSofiaMonth,
 };
 
-/** Hours represented by one data point, per `xAxisUnit` — the export-energy axis scale is "installed capacity x this many hours", so a Week/Month/Year chart's bars stay physically meaningful instead of using Today's fixed 15-minute scale. Average month length for "year", since points don't fall on the same day count. */
-const HOURS_PER_POINT: Record<"time" | "day" | "month", number> = {
-  time: 15 / 60,
-  day: 24,
-  month: (365 / 12) * 24,
-};
+/** Hours in one Today settlement interval (15 minutes) — the export-energy axis's Today scale is "installed capacity x this many hours", unchanged from before the Historical Analytics Refinement milestone. Week/Month/Year no longer use a capacity-derived scale at all; see `computeNiceEnergyAxis`. */
+const TODAY_SETTLEMENT_INTERVAL_HOURS = 15 / 60;
+
+/**
+ * Historical Analytics Refinement milestone. A "nice" (1/2/5 x 10^n) axis
+ * maximum and evenly-spaced tick set, computed from the actual visible
+ * exported-energy data instead of the plant's theoretical physical
+ * capacity — the previous capacity-derived domain was almost always far
+ * larger than any real bucket ever reaches (a whole day/month of exports
+ * vs. one settlement interval's worth of capacity), making the bars look
+ * compressed against mostly-empty axis space. Never produces awkward tick
+ * values like 173/347/521. Only used for Week/Month/Year — Today's scale
+ * is untouched (see `TODAY_SETTLEMENT_INTERVAL_HOURS`).
+ */
+function computeNiceEnergyAxis(maxDataValue: number): { max: number; ticks: number[] } {
+  if (maxDataValue <= 0) {
+    return { max: 0, ticks: [0] };
+  }
+
+  const roughStep = maxDataValue / 4;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(roughStep)));
+  const normalized = roughStep / magnitude;
+  const niceNormalized = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  const step = niceNormalized * magnitude;
+  const max = Math.ceil(maxDataValue / step) * step;
+
+  const ticks: number[] = [];
+  for (let tick = 0; tick <= max + step / 2; tick += step) {
+    ticks.push(Math.round(tick));
+  }
+
+  return { max, ticks };
+}
 
 /** One row per real price timestamp, carrying that same interval's exported energy (if any) — see `settlementEnergySeries`'s prop doc comment for why no resampling is needed. */
 type UnifiedDatum = {
@@ -234,6 +280,8 @@ export function MarketPriceChart({
   settlementEnergySeries,
   installedCapacityKw,
   xAxisUnit = "time",
+  showThreshold = true,
+  priceMetric = "electricity",
 }: MarketPriceChartProps) {
   const t = useTranslations("market.priceChart");
   const hasEnergyData = Boolean(
@@ -250,15 +298,19 @@ export function MarketPriceChart({
         exportedKwh: null,
       }));
 
-  // Engineering scale for exported energy: the plant's real installed
-  // capacity applied for one whole bucket's duration (a 15-minute
-  // settlement interval for "time"/Today, a full day for Week/Month, an
-  // average month for Year — see `HOURS_PER_POINT`) — the physical maximum
-  // a plant this size could export in that span. Never auto-scaled from
-  // the visible bars, never negative (a genuine exported-energy value is
-  // always >= 0, since it's a counter difference — see energy-metrics.ts).
+  // Historical Analytics Refinement milestone: Today keeps its exact
+  // original engineering scale (installed capacity x one settlement
+  // interval's worth of hours) unchanged; Week/Month/Year now auto-scale
+  // to the real visible data via `computeNiceEnergyAxis` instead, since a
+  // capacity-derived domain for a whole day/month of exports made every
+  // bar look tiny against mostly-empty axis space.
+  const niceEnergyAxis = hasEnergyAxis
+    ? computeNiceEnergyAxis(Math.max(0, ...data.map((point) => point.exportedKwh ?? 0)))
+    : { max: 0, ticks: [0] };
   const maxExportedKwhPerInterval = hasEnergyAxis
-    ? Math.round((installedCapacityKw as number) * HOURS_PER_POINT[xAxisUnit] * 100) / 100
+    ? xAxisUnit === "time"
+      ? Math.round((installedCapacityKw as number) * TODAY_SETTLEMENT_INTERVAL_HOURS * 100) / 100
+      : niceEnergyAxis.max
     : 0;
 
   // Left price axis: adapts to the selected day's own real ENTSO-E prices.
@@ -282,16 +334,17 @@ export function MarketPriceChart({
       : [-10, 20];
   const priceAxisTicks = computeMultipleOf50Ticks(priceAxisDomain[0], priceAxisDomain[1]);
 
-  // Right export-energy axis ticks: four round steps derived from the
-  // plant's own AC capacity, not the fixed decimal values recharts would
-  // otherwise pick from maxExportedKwhPerInterval. The domain itself
-  // (0..maxExportedKwhPerInterval) is unchanged - only which values get a
-  // visible label changes.
+  // Right export-energy axis ticks: for Today, four round steps derived
+  // from the plant's own AC capacity, unchanged from before this
+  // milestone. For Week/Month/Year, `computeNiceEnergyAxis` already
+  // computed a tick set consistent with its own nice domain max above.
   const energyAxisStep = hasEnergyAxis
     ? Math.floor((installedCapacityKw as number) / 12 / 5) * 5
     : 0;
   const energyAxisTicks = hasEnergyAxis
-    ? [0, energyAxisStep, energyAxisStep * 2, energyAxisStep * 3]
+    ? xAxisUnit === "time"
+      ? [0, energyAxisStep, energyAxisStep * 2, energyAxisStep * 3]
+      : niceEnergyAxis.ticks
     : undefined;
 
   const now = Date.now();
@@ -340,15 +393,19 @@ export function MarketPriceChart({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-blue-400" />
-          {t("electricityPrice")}
+          {priceMetric === "averageSelling" ? t("averageSellingPrice") : t("electricityPrice")}
         </span>
 
-        <span className="h-3 w-px bg-white/10" />
+        {showThreshold && (
+          <>
+            <span className="h-3 w-px bg-white/10" />
 
-        <span className="flex items-center gap-1.5 text-slate-500">
-          <span className="h-0.5 w-3 rounded-full border-t border-dashed border-amber-400" />
-          {t("exportThreshold")}
-        </span>
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-0.5 w-3 rounded-full border-t border-dashed border-amber-400" />
+              {t("exportThreshold")}
+            </span>
+          </>
+        )}
 
         {hasEnergyAxis && (
           <>
@@ -378,15 +435,17 @@ export function MarketPriceChart({
             strokeWidth={1}
           />
 
-          <ReferenceLine
-            yAxisId="price"
-            y={thresholdPrice}
-            stroke="#fbbf24"
-            strokeOpacity={0.6}
-            strokeWidth={1.5}
-            strokeDasharray="5 4"
-            label={<ThresholdLabel thresholdPrice={thresholdPrice} />}
-          />
+          {showThreshold && (
+            <ReferenceLine
+              yAxisId="price"
+              y={thresholdPrice}
+              stroke="#fbbf24"
+              strokeOpacity={0.6}
+              strokeWidth={1.5}
+              strokeDasharray="5 4"
+              label={<ThresholdLabel thresholdPrice={thresholdPrice} />}
+            />
+          )}
 
           {nowInRange && (
             <ReferenceLine

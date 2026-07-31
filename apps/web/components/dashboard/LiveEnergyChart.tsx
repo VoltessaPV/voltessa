@@ -201,6 +201,21 @@ export function LiveEnergyChart({
           xTicks={xTicks}
           tickFormatter={xAxisTickFormatter}
         >
+          {/*
+            Historical Analytics Refinement milestone: a subtle y=0
+            reference line for Week/Month/Year only - a historical chart
+            with only positive energy totals otherwise has no visible
+            baseline to read the bars/lines against, making it look flatter
+            than it is. Today is untouched (it already reads clearly
+            against its live NOW marker). Thin, low-opacity gray, matching
+            this chart family's existing axis-tick color (`#64748b`, see
+            `chart-style.ts`'s `CHART_AXIS_TICK`) rather than introducing a
+            new color token.
+          */}
+          {xAxisUnit !== "time" && (
+            <ReferenceLine yAxisId="power" y={0} stroke="#64748b" strokeOpacity={0.35} strokeWidth={1} />
+          )}
+
           {nowInRange && (
             <ReferenceLine
               x={now}

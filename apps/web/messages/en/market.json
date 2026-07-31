@@ -84,6 +84,7 @@
   },
   "priceChart": {
     "electricityPrice": "Electricity price",
+    "averageSellingPrice": "Average selling price",
     "exportThreshold": "Export threshold",
     "exportThresholdLabel": "EXPORT THRESHOLD",
     "exportedEnergy": "Exported energy",
