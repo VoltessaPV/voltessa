@@ -1,0 +1,18 @@
+{
+  "eventLog": {
+    "modeChangedSummary": "Превключено на {mode}",
+    "automationServiceFailedSummary": "Промяната на режима на износ се провали",
+    "decisionReasons": {
+      "already_zero_export_low_band": "Вече {zeroExport}; цената е на или под долната граница.",
+      "price_below_low_band": "Цената е под долната граница",
+      "already_no_limit_high_band": "Вече {noLimit}; цената е на или над горната граница.",
+      "price_above_high_band": "Цената е над горната граница",
+      "already_zero_export_below_threshold": "Вече {zeroExport}; цената е между долната граница и прага.",
+      "forecast_indicates_decline": "Прогнозата показва по-нататъшен спад на цената",
+      "below_threshold_no_decline_forecast": "Цената е между долната граница и прага; прогнозата не показва по-нататъшен спад.",
+      "already_no_limit_above_threshold": "Вече {noLimit}; цената е между прага и горната граница.",
+      "forecast_indicates_recovery": "Прогнозата показва възстановяване на пазара",
+      "above_threshold_no_recovery_forecast": "Цената е между прага и горната граница; прогнозата не показва възстановяване."
+    }
+  }
+}

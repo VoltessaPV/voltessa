@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { useCTA } from "@/components/providers/CTAProvider";
 
 /**
@@ -11,6 +13,7 @@ import { useCTA } from "@/components/providers/CTAProvider";
  */
 export function ContactNavLink() {
   const { scrollToContact } = useCTA();
+  const t = useTranslations("marketing.nav");
 
   return (
     <a
@@ -21,7 +24,7 @@ export function ContactNavLink() {
       }}
       className="transition hover:text-white"
     >
-      Contact
+      {t("contactLink")}
     </a>
   );
 }

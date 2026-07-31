@@ -16,66 +16,60 @@ import {
   Users,
   X,
 } from "lucide-react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/lib/i18n/navigation";
 import { useState } from "react";
 
 import { signOutAction } from "@/lib/auth/actions";
 
 import type { TraderShellContext } from "./AppShell";
 
-const navigation = [
-  {
-    label: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-  },
-  {
-    label: "Market",
-    href: "/market",
-    icon: LineChart,
-  },
-  {
-    label: "BESS",
-    href: "/bess",
-    icon: Battery,
-  },
-  {
-    label: "Automations",
-    href: "/automations",
-    icon: Bot,
-  },
-  {
-    label: "Alerts",
-    href: "/alerts",
-    icon: Bell,
-  },
-  {
-    label: "Settings",
-    href: "/settings",
-    icon: Settings,
-  },
-];
+/**
+ * Full Internationalization milestone: labels come from `useTranslations`
+ * (called inside the components below, not here) — these two builder
+ * functions take the resolved translator functions so the nav item arrays
+ * stay data, not JSX, matching the pre-i18n shape exactly.
+ */
+function buildNavigation(t: ReturnType<typeof useTranslations<"navigation.sidebar">>, tTerm: ReturnType<typeof useTranslations<"terminology">>) {
+  return [
+    { label: tTerm("dashboard"), href: "/dashboard", icon: LayoutDashboard },
+    { label: tTerm("market"), href: "/market", icon: LineChart },
+    { label: t("bessLink"), href: "/bess", icon: Battery },
+    { label: t("automationsLink"), href: "/automations", icon: Bot },
+    { label: t("alertsLink"), href: "/alerts", icon: Bell },
+    { label: tTerm("settings"), href: "/settings", icon: Settings },
+  ];
+}
 
 /**
  * Trader Workspace milestone. Its own explicit order (Dashboard, Clients,
  * Market, Automations, Alerts, BESS, Settings) - not derived from
- * `navigation` above, since it isn't a subset/reordering of the owner nav
- * anymore (Clients has no owner-side equivalent, and BESS moves relative
- * to Automations/Alerts). Settings is included - a Trader manages their
- * own profile there, same page Plant Owners use for theirs. Plants and
- * Administration stay Plant Owner / Platform Admin only.
+ * `buildNavigation` above, since it isn't a subset/reordering of the owner
+ * nav anymore (Clients has no owner-side equivalent, and BESS moves
+ * relative to Automations/Alerts). Settings is included - a Trader manages
+ * their own profile there, same page Plant Owners use for theirs. Plants
+ * and Administration stay Plant Owner / Platform Admin only.
  */
-const traderNavigation = [
-  { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Clients", href: "/clients", icon: Users },
-  { label: "Market", href: "/market", icon: LineChart },
-  { label: "Automations", href: "/automations", icon: Bot },
-  { label: "Alerts", href: "/alerts", icon: Bell },
-  { label: "BESS", href: "/bess", icon: Battery },
-  { label: "Settings", href: "/settings", icon: Settings },
-];
+function buildTraderNavigation(t: ReturnType<typeof useTranslations<"navigation.sidebar">>, tTerm: ReturnType<typeof useTranslations<"terminology">>) {
+  return [
+    { label: tTerm("dashboard"), href: "/dashboard", icon: LayoutDashboard },
+    { label: t("clientsLink"), href: "/clients", icon: Users },
+    { label: tTerm("market"), href: "/market", icon: LineChart },
+    { label: t("automationsLink"), href: "/automations", icon: Bot },
+    { label: t("alertsLink"), href: "/alerts", icon: Bell },
+    { label: t("bessLink"), href: "/bess", icon: Battery },
+    { label: tTerm("settings"), href: "/settings", icon: Settings },
+  ];
+}
 
-/** Platform Administration milestone — only ever rendered when `isPlatformAdmin`. See ADR-014. */
+/**
+ * Platform Administration milestone — only ever rendered when
+ * `isPlatformAdmin`. Full Internationalization milestone: deliberately
+ * NEVER translated, even though this component is shared with the
+ * localized platform tree — "Platform Admin remains English-only" and
+ * "Admin navigation" is explicitly named as out of scope. Fixed English
+ * literals, matching `/admin`'s own English-pinned layout. See ADR-014.
+ */
 const adminNavigation = [
   {
     label: "Dashboard",
@@ -119,7 +113,9 @@ function SidebarNav({
   isPlatformAdmin: boolean;
   trader?: TraderShellContext;
 }) {
-  const items = trader ? traderNavigation : navigation;
+  const t = useTranslations("navigation.sidebar");
+  const tTerm = useTranslations("terminology");
+  const items = trader ? buildTraderNavigation(t, tTerm) : buildNavigation(t, tTerm);
 
   return (
     <nav className="space-y-1 px-3 py-4">
@@ -167,6 +163,8 @@ function SidebarNav({
  * its own Sign Out item too - harmless redundancy, not removed.
  */
 function SignOutNavItem() {
+  const t = useTranslations("navigation.sidebar");
+
   return (
     <div className="border-t border-white/10 px-3 py-4">
       <form action={signOutAction}>
@@ -175,7 +173,7 @@ function SignOutNavItem() {
           className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
         >
           <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-          Sign Out
+          {t("signOutLink")}
         </button>
       </form>
     </div>
@@ -202,6 +200,7 @@ export function AppSidebar({
   trader?: TraderShellContext;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const t = useTranslations("navigation.sidebar");
 
   return (
     <>
@@ -218,7 +217,7 @@ export function AppSidebar({
       <button
         type="button"
         onClick={() => setIsOpen(true)}
-        aria-label="Open navigation menu"
+        aria-label={t("openMenuLabel")}
         className="fixed left-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-lg border border-white/10 bg-[#070B18] text-white/80 transition hover:text-white lg:hidden"
       >
         <Menu className="h-5 w-5" strokeWidth={1.75} />
@@ -239,7 +238,7 @@ export function AppSidebar({
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
-                aria-label="Close navigation menu"
+                aria-label={t("closeMenuLabel")}
                 className="flex h-9 w-9 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/5 hover:text-white"
               >
                 <X className="h-5 w-5" strokeWidth={1.75} />

@@ -1,7 +1,9 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+
+import { usePathname, useRouter } from "@/lib/i18n/navigation";
 
 import { Toast, type ToastVariant } from "./Toast";
 

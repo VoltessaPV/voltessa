@@ -1,4 +1,4 @@
-import { selectTraderOrganization } from "@/app/(platform)/actions";
+import { selectTraderOrganization } from "@/app/[locale]/(platform)/actions";
 import type { TraderClient } from "@/lib/trader/queries";
 
 type Props = {

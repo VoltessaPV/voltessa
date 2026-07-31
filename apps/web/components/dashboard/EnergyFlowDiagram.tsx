@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
-import type { EnergyFlowState } from "@/app/(platform)/dashboard/dashboard-data";
+import type { EnergyFlowState } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { LoadBuildingIcon, SolarPanelIcon, TransmissionTowerIcon } from "@/components/dashboard/energy-icons";
 
 type EnergyFlowDiagramProps = {

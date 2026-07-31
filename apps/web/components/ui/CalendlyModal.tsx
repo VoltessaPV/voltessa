@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import { useConsent } from "@/components/consent/ConsentProvider";
@@ -38,6 +39,7 @@ type CalendlyModalProps = {
 export function CalendlyModal({ open, onClose }: CalendlyModalProps) {
   const [mounted, setMounted] = useState(false);
   const { consent } = useConsent();
+  const t = useTranslations("cookie-consent.calendlyGate");
 
   useEffect(() => {
     setMounted(true);
@@ -66,16 +68,15 @@ export function CalendlyModal({ open, onClose }: CalendlyModalProps) {
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4">
         <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#050816] p-6 text-center shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)]">
-          <p className="text-sm font-medium text-white">Functional cookies required</p>
+          <p className="text-sm font-medium text-white">{t("title")}</p>
 
           <p className="mt-2 text-xs leading-relaxed text-slate-400">
-            Scheduling a call uses Calendly, a third-party widget that sets its own cookies.
-            Enable Functional cookies in Cookie Settings to continue.
+            {t("description")}
           </p>
 
           <div className="mt-5 flex justify-center gap-2.5">
             <CookieSettingsLink className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-blue-500">
-              Open Cookie Settings
+              {t("openSettingsButton")}
             </CookieSettingsLink>
 
             <button
@@ -83,7 +84,7 @@ export function CalendlyModal({ open, onClose }: CalendlyModalProps) {
               onClick={onClose}
               className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-xs font-medium text-white transition hover:bg-white/10"
             >
-              Close
+              {t("closeButton")}
             </button>
           </div>
         </div>

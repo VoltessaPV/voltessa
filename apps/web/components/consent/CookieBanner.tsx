@@ -1,8 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
-
-import { getConsentDictionary } from "@/lib/consent/dictionary";
 
 import { useConsent } from "./ConsentProvider";
 
@@ -16,8 +15,9 @@ import { useConsent } from "./ConsentProvider";
  * acceptance), not a requirement that all three look identical.
  */
 export function CookieBanner() {
-  const { isBannerOpen, acceptAll, rejectAll, openPreferences, locale, isPending } = useConsent();
+  const { isBannerOpen, acceptAll, rejectAll, openPreferences, isPending } = useConsent();
   const [isVisible, setIsVisible] = useState(false);
+  const t = useTranslations("cookie-consent.banner");
 
   useEffect(() => {
     if (!isBannerOpen) {
@@ -33,21 +33,19 @@ export function CookieBanner() {
     return null;
   }
 
-  const dict = getConsentDictionary(locale).banner;
-
   return (
     <div
       role="region"
       aria-live="polite"
-      aria-label={dict.heading}
+      aria-label={t("heading")}
       className={`fixed inset-x-0 bottom-0 z-[100] px-4 pb-4 transition-transform duration-300 ease-out motion-reduce:transition-none sm:px-6 sm:pb-6 ${
         isVisible ? "translate-y-0" : "translate-y-full"
       }`}
     >
       <div className="mx-auto flex max-w-4xl flex-col gap-4 rounded-2xl border border-white/10 bg-[#050816] p-5 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.6)] sm:flex-row sm:items-center sm:justify-between sm:p-6">
         <div>
-          <p className="text-sm font-semibold text-white">{dict.heading}</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-slate-400 sm:max-w-xl">{dict.body}</p>
+          <p className="text-sm font-semibold text-white">{t("heading")}</p>
+          <p className="mt-1.5 text-xs leading-relaxed text-slate-400 sm:max-w-xl">{t("body")}</p>
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
@@ -56,7 +54,7 @@ export function CookieBanner() {
             onClick={openPreferences}
             className="rounded-xl px-4 py-2.5 text-sm font-medium text-slate-300 underline-offset-4 transition hover:text-white hover:underline"
           >
-            {dict.customize}
+            {t("customizeButton")}
           </button>
 
           <button
@@ -65,7 +63,7 @@ export function CookieBanner() {
             disabled={isPending}
             className="rounded-xl border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {dict.rejectAll}
+            {t("rejectAllButton")}
           </button>
 
           <button
@@ -74,7 +72,7 @@ export function CookieBanner() {
             disabled={isPending}
             className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {dict.acceptAll}
+            {t("acceptAllButton")}
           </button>
         </div>
       </div>

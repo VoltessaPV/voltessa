@@ -1,4 +1,6 @@
-import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+
+import { Link } from "@/lib/i18n/navigation";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { routes } from "@/lib/routes";
@@ -17,7 +19,7 @@ import { CTAProvider } from "../providers/CTAProvider";
 
 
 export default async function Hero() {
-  const user = await getCurrentUser();
+  const [user, t] = await Promise.all([getCurrentUser(), getTranslations("marketing.hero")]);
   const isAuthenticated = user !== null;
 
   return (
@@ -29,23 +31,21 @@ export default async function Hero() {
 
           <div>
             <Badge>
-              AI-powered Renewable Operations
+              {t("badge")}
             </Badge>
 
             <h1 className="mt-8 text-3xl font-bold leading-tight sm:text-4xl md:text-5xl xl:text-6xl">
-              AI Platform
+              {t("titleLine1")}
               <br />
               <span className="text-blue-500">
-                for Solar & Battery
+                {t("titleLine2")}
               </span>
               <br />
-              Operations
+              {t("titleLine3")}
             </h1>
 
             <p className="mt-8 max-w-xl text-lg text-slate-400 leading-8">
-              Voltessa continuously monitors solar plants, battery systems,
-              weather forecasts and electricity markets
-              to automate operations and maximize revenue.
+              {t("description")}
             </p>
 
             <div className="mt-10 flex flex-col gap-4 sm:flex-row">
@@ -58,12 +58,12 @@ export default async function Hero() {
               href={isAuthenticated ? routes.dashboard : routes.createAccount}
               className="mt-5 inline-flex items-center gap-1.5 text-sm font-medium text-slate-300 transition hover:text-blue-400"
             >
-              {isAuthenticated ? "Go to My Voltessa" : "Create Account"}
+              {isAuthenticated ? t("goToVoltessaLink") : t("createAccountLink")}
               <span aria-hidden="true">→</span>
             </Link>
 
             <div className="mt-10 tracking-[0.35em] text-sm uppercase text-slate-500">
-              SOLAR • BESS • MARKET • AI AUTOMATION
+              {t("tagline")}
             </div>
           </div>
 

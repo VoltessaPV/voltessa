@@ -35,9 +35,33 @@ export type ExportDecisionAction =
   | "SWITCH_TO_ZERO_EXPORT"
   | "SWITCH_TO_NO_LIMIT";
 
+/**
+ * Full Internationalization milestone: a stable, canonical code — never
+ * English prose — so the backend stays language-independent (per the
+ * approved architecture: "no translated database values, database stores
+ * canonical values, localization belongs exclusively to the presentation
+ * layer"). Translated at render/notification time via
+ * `lib/automation/automation-event-i18n.ts`, from `automations.json`'s
+ * `decisionReasons.*` keys (same code, both places — keep them in sync).
+ * Previously this field held literal English sentences directly; that was
+ * a real violation this milestone fixed (see `AutomationEvent.reason`'s
+ * schema comment).
+ */
+export type ExportDecisionReasonCode =
+  | "already_zero_export_low_band"
+  | "price_below_low_band"
+  | "already_no_limit_high_band"
+  | "price_above_high_band"
+  | "already_zero_export_below_threshold"
+  | "forecast_indicates_decline"
+  | "below_threshold_no_decline_forecast"
+  | "already_no_limit_above_threshold"
+  | "forecast_indicates_recovery"
+  | "above_threshold_no_recovery_forecast";
+
 export type ExportDecision = {
   action: ExportDecisionAction;
-  reason: string;
+  reason: ExportDecisionReasonCode;
   currentPrice: number;
   nextIntervalPrice: number | null;
   threshold: number;
@@ -78,50 +102,50 @@ export function decideExportAction(
   // Case 1: price at or below the low band.
   if (currentPrice <= lowBand) {
     if (currentMode === "Zero Export") {
-      return { ...base, action: "NONE", reason: "Already Zero Export; price at or below low band." };
+      return { ...base, action: "NONE", reason: "already_zero_export_low_band" };
     }
 
-    return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "Price below low band" };
+    return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "price_below_low_band" };
   }
 
   // Case 2: price at or above the high band.
   if (currentPrice >= highBand) {
     if (currentMode === "No Limit") {
-      return { ...base, action: "NONE", reason: "Already No Limit; price at or above high band." };
+      return { ...base, action: "NONE", reason: "already_no_limit_high_band" };
     }
 
-    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "Price above high band" };
+    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "price_above_high_band" };
   }
 
   // Case 3: strictly between the low band and the threshold.
   if (currentPrice < threshold) {
     if (currentMode === "Zero Export") {
-      return { ...base, action: "NONE", reason: "Already Zero Export; price between low band and threshold." };
+      return { ...base, action: "NONE", reason: "already_zero_export_below_threshold" };
     }
 
     if (nextIntervalPrice !== null && nextIntervalPrice < threshold) {
-      return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "Forecast indicates further price decline" };
+      return { ...base, action: "SWITCH_TO_ZERO_EXPORT", reason: "forecast_indicates_decline" };
     }
 
     return {
       ...base,
       action: "NONE",
-      reason: "Price between low band and threshold; forecast does not indicate further decline.",
+      reason: "below_threshold_no_decline_forecast",
     };
   }
 
   // Case 4: from the threshold up to (but not including) the high band.
   if (currentMode === "No Limit") {
-    return { ...base, action: "NONE", reason: "Already No Limit; price between threshold and high band." };
+    return { ...base, action: "NONE", reason: "already_no_limit_above_threshold" };
   }
 
   if (nextIntervalPrice !== null && nextIntervalPrice > threshold) {
-    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "Forecast indicates market recovery" };
+    return { ...base, action: "SWITCH_TO_NO_LIMIT", reason: "forecast_indicates_recovery" };
   }
 
   return {
     ...base,
     action: "NONE",
-    reason: "Price between threshold and high band; forecast does not indicate recovery.",
+    reason: "above_threshold_no_recovery_forecast",
   };
 }

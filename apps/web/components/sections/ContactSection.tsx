@@ -1,3 +1,5 @@
+import { useTranslations } from "next-intl";
+
 import { CONTACT_EMAIL } from "@/lib/constants";
 
 import Badge from "../ui/Badge";
@@ -12,25 +14,25 @@ import { TalkToUsButton } from "../ui/TalkToUsButton";
  * as the Hero/Navbar buttons do).
  */
 export default function ContactSection() {
+  const t = useTranslations("marketing.contact");
+
   return (
     <section id="contact" className="border-t border-slate-900 bg-[#050816] py-24 text-white">
       <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 sm:px-8 lg:grid-cols-2">
         <div>
-          <Badge>Contact</Badge>
+          <Badge>{t("badge")}</Badge>
 
           <h2 className="mt-8 text-4xl font-bold leading-tight">
-            Let&apos;s discuss your solar portfolio.
+            {t("heading")}
           </h2>
 
           <p className="mt-6 max-w-xl text-lg leading-8 text-slate-400">
-            Whether you&apos;re operating one utility-scale plant or an entire
-            fleet, we&apos;d love to show you how Voltessa can automate your
-            operations.
+            {t("description")}
           </p>
 
           <div className="mt-10 space-y-6">
             <div>
-              <p className="text-xs uppercase tracking-wider text-slate-500">Email</p>
+              <p className="text-xs uppercase tracking-wider text-slate-500">{t("emailLabel")}</p>
               <a
                 href={`mailto:${CONTACT_EMAIL}`}
                 className="mt-1 block text-white transition hover:text-blue-400"
@@ -40,8 +42,8 @@ export default function ContactSection() {
             </div>
 
             <div>
-              <p className="text-xs uppercase tracking-wider text-slate-500">Location</p>
-              <p className="mt-1 text-white">Sofia, Bulgaria</p>
+              <p className="text-xs uppercase tracking-wider text-slate-500">{t("locationLabel")}</p>
+              <p className="mt-1 text-white">{t("location")}</p>
             </div>
           </div>
         </div>

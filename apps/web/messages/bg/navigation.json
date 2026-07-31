@@ -1,0 +1,11 @@
+{
+  "sidebar": {
+    "bessLink": "Батерии",
+    "automationsLink": "Автоматизации",
+    "alertsLink": "Аларми",
+    "clientsLink": "Клиенти",
+    "signOutLink": "Изход",
+    "openMenuLabel": "Отвори навигационното меню",
+    "closeMenuLabel": "Затвори навигационното меню"
+  }
+}

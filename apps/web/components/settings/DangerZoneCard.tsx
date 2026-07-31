@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { deleteAccount } from "@/app/(platform)/settings/actions";
+import { deleteAccount } from "@/app/[locale]/(platform)/settings/actions";
 
 import { SettingsCard } from "./SettingsCard";
 

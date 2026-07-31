@@ -1,0 +1,21 @@
+{
+  "footer": {
+    "copyright": "© {year} Voltessa. All rights reserved.",
+    "privacyLink": "Privacy",
+    "cookiePolicyLink": "Cookie Policy",
+    "termsLink": "Terms",
+    "companyInformationLink": "Company Information",
+    "cookieSettingsLink": "Cookie Settings",
+    "contactLink": "Contact"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "loading": "Loading…",
+    "confirm": "Confirm",
+    "edit": "Edit",
+    "delete": "Delete",
+    "back": "Back"
+  }
+}

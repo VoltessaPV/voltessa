@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 
-import { purgeUser } from "@/app/(platform)/admin/actions";
+import { purgeUser } from "@/app/admin/actions";
 
 type PurgeUserButtonProps = {
   userId: string;

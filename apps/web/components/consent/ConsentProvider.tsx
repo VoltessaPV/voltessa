@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 
 import { saveConsent } from "@/lib/consent/actions";
 import type { ConsentAction, ConsentChoices } from "@/lib/consent/types";
-import type { Locale } from "@/lib/i18n/locale";
 
 type ConsentContextValue = {
   /** `null` means no valid decision exists yet (first visit, or a stale/older-version cookie) — see `lib/consent/session.ts`. */
@@ -18,7 +17,6 @@ type ConsentContextValue = {
   rejectAll: () => void;
   saveCustom: (choices: Omit<ConsentChoices, "necessary">) => void;
   isPending: boolean;
-  locale: Locale;
 };
 
 const ConsentContext = createContext<ConsentContextValue | null>(null);
@@ -35,19 +33,18 @@ export function useConsent(): ConsentContextValue {
 
 type ConsentProviderProps = {
   initialConsent: ConsentChoices | null;
-  locale: Locale;
   children: ReactNode;
 };
 
 /**
- * Mounted once at the root layout, sitewide — this is the one place a
- * consent decision is made client-side, always via the `saveConsent` Server
- * Action (`lib/consent/actions.ts`), never a direct `document.cookie` write.
- * `locale` is read fresh from props every render (not copied into local
- * state) so that switching language via `LanguageToggle` — which calls
- * `router.refresh()` — is reflected immediately; only `consent` needs local
- * state, since it must update optimistically before the Server Action's
- * round trip completes.
+ * Mounted once per root layout (the localized tree, admin, and dev each
+ * mount their own instance via `components/layout/RootProviders.tsx`) —
+ * this is the one place a consent decision is made client-side, always via
+ * the `saveConsent` Server Action (`lib/consent/actions.ts`), never a direct
+ * `document.cookie` write. Locale/translated text for the banner/modal
+ * comes from next-intl's own `useTranslations()`/`useLocale()` directly
+ * (reading the ambient `NextIntlClientProvider`) — this provider only
+ * tracks consent state, deliberately decoupled from i18n concerns.
  *
  * No implied consent: there is no "dismiss" path that sets `consent` without
  * going through `acceptAll`/`rejectAll`/`saveCustom` — closing the
@@ -55,7 +52,7 @@ type ConsentProviderProps = {
  * (`null` if this is a first visit, so the banner reappears; unchanged
  * otherwise).
  */
-export function ConsentProvider({ initialConsent, locale, children }: ConsentProviderProps) {
+export function ConsentProvider({ initialConsent, children }: ConsentProviderProps) {
   const [consent, setConsent] = useState<ConsentChoices | null>(initialConsent);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -106,7 +103,6 @@ export function ConsentProvider({ initialConsent, locale, children }: ConsentPro
         rejectAll,
         saveCustom,
         isPending,
-        locale,
       }}
     >
       {children}

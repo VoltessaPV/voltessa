@@ -2,7 +2,7 @@
 
 import { Line, ReferenceLine } from "recharts";
 
-import type { EnergyFlowPoint } from "@/app/(platform)/dashboard/dashboard-data";
+import type { EnergyFlowPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
 import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaTime } from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";

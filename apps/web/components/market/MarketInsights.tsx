@@ -1,4 +1,4 @@
-import type { MarketInsight } from "@/app/(platform)/market/market-data";
+import type { MarketInsight } from "@/app/[locale]/(platform)/market/market-data";
 
 type MarketInsightsProps = {
   insights: MarketInsight[];

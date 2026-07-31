@@ -1,9 +1,9 @@
 "use client";
 
 import { X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
-import { getConsentDictionary } from "@/lib/consent/dictionary";
 import { useBodyScrollLock } from "@/lib/hooks/useBodyScrollLock";
 import { useFocusTrap } from "@/lib/hooks/useFocusTrap";
 
@@ -61,8 +61,8 @@ function CategoryToggle({ id, title, description, checked, disabled, alwaysOnLab
  * shows what's actually in effect.
  */
 export function CookiePreferencesModal() {
-  const { isModalOpen, closeModal, acceptAll, rejectAll, saveCustom, consent, locale, isPending } = useConsent();
-  const dict = getConsentDictionary(locale).modal;
+  const { isModalOpen, closeModal, acceptAll, rejectAll, saveCustom, consent, isPending } = useConsent();
+  const t = useTranslations("cookie-consent.modal");
 
   const [functional, setFunctional] = useState(consent?.functional ?? false);
   const [analytics, setAnalytics] = useState(consent?.analytics ?? false);
@@ -113,18 +113,18 @@ export function CookiePreferencesModal() {
         <div className="flex items-start justify-between gap-4 border-b border-white/10 p-5">
           <div>
             <h2 id="cookie-preferences-title" className="text-lg font-semibold text-white">
-              {dict.title}
+              {t("title")}
             </h2>
 
             <p id="cookie-preferences-description" className="mt-1 text-xs text-slate-400">
-              {dict.description}
+              {t("description")}
             </p>
           </div>
 
           <button
             type="button"
             onClick={closeModal}
-            aria-label={dict.close}
+            aria-label={t("closeButton")}
             className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-white/5 hover:text-white"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
@@ -134,33 +134,33 @@ export function CookiePreferencesModal() {
         <div className="flex-1 space-y-3 overflow-y-auto p-5">
           <CategoryToggle
             id="cookie-category-necessary"
-            title={dict.categories.necessary.title}
-            description={dict.categories.necessary.description}
+            title={t("categories.necessary.title")}
+            description={t("categories.necessary.description")}
             checked
             disabled
-            alwaysOnLabel={dict.categories.necessary.alwaysOn}
+            alwaysOnLabel={t("categories.necessary.alwaysOnBadge")}
           />
 
           <CategoryToggle
             id="cookie-category-functional"
-            title={dict.categories.functional.title}
-            description={dict.categories.functional.description}
+            title={t("categories.functional.title")}
+            description={t("categories.functional.description")}
             checked={functional}
             onChange={setFunctional}
           />
 
           <CategoryToggle
             id="cookie-category-analytics"
-            title={dict.categories.analytics.title}
-            description={dict.categories.analytics.description}
+            title={t("categories.analytics.title")}
+            description={t("categories.analytics.description")}
             checked={analytics}
             onChange={setAnalytics}
           />
 
           <CategoryToggle
             id="cookie-category-marketing"
-            title={dict.categories.marketing.title}
-            description={dict.categories.marketing.description}
+            title={t("categories.marketing.title")}
+            description={t("categories.marketing.description")}
             checked={marketing}
             onChange={setMarketing}
           />
@@ -173,7 +173,7 @@ export function CookiePreferencesModal() {
             disabled={isPending}
             className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {dict.rejectAll}
+            {t("rejectAllButton")}
           </button>
 
           <button
@@ -182,7 +182,7 @@ export function CookiePreferencesModal() {
             disabled={isPending}
             className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {dict.acceptAll}
+            {t("acceptAllButton")}
           </button>
 
           <button
@@ -191,7 +191,7 @@ export function CookiePreferencesModal() {
             disabled={isPending}
             className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {dict.save}
+            {t("saveButton")}
           </button>
         </div>
       </div>

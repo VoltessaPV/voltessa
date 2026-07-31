@@ -6,7 +6,7 @@ import {
   changePassword,
   createPassword,
   type ActionResult,
-} from "@/app/(platform)/settings/actions";
+} from "@/app/[locale]/(platform)/settings/actions";
 
 import { ActionToast } from "./ActionToast";
 import { FormField } from "./FormField";

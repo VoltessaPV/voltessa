@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import type { ActionResult } from "@/app/(platform)/settings/actions";
+import type { ActionResult } from "@/app/[locale]/(platform)/settings/actions";
 
 /**
  * Same fixed-position toast shape `HuaweiControlCard` already established

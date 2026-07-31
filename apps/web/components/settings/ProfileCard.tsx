@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 
-import { updateProfile, type ActionResult } from "@/app/(platform)/settings/actions";
+import { updateProfile, type ActionResult } from "@/app/[locale]/(platform)/settings/actions";
 
 import { ActionToast } from "./ActionToast";
 import { FormField } from "./FormField";

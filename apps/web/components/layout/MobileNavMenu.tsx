@@ -1,6 +1,7 @@
 "use client";
 
 import { Menu, X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 import { AuthNavActions } from "./AuthNavActions";
@@ -23,13 +24,16 @@ type MobileNavMenuProps = {
  */
 export function MobileNavMenu({ isAuthenticated }: MobileNavMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const t = useTranslations("marketing.nav");
+  // Reuses navigation.sidebar's open/close menu labels rather than a second pair of near-identical strings.
+  const tMenu = useTranslations("navigation.sidebar");
 
   return (
     <div className="md:hidden">
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
+        aria-label={isOpen ? tMenu("closeMenuLabel") : tMenu("openMenuLabel")}
         className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-white/80 transition hover:text-white"
       >
         {isOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
@@ -45,9 +49,9 @@ export function MobileNavMenu({ isAuthenticated }: MobileNavMenuProps) {
           className="absolute inset-x-0 top-full border-t border-white/10 bg-[#050816] px-6 py-6 shadow-lg"
         >
           <nav className="flex flex-col gap-5 text-sm text-slate-300">
-            <SectionNavLink id="hero" label="Platform" />
-            <SectionNavLink id="solutions" label="Solutions" />
-            <SectionNavLink id="about" label="About" />
+            <SectionNavLink id="hero" label={t("platformLink")} />
+            <SectionNavLink id="solutions" label={t("solutionsLink")} />
+            <SectionNavLink id="about" label={t("aboutLink")} />
             <ContactNavLink />
           </nav>
 
