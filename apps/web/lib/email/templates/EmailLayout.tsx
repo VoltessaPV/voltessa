@@ -1,9 +1,11 @@
 import { Body, Container, Head, Heading, Html, Section, Text } from "react-email";
 
 import { APP_NAME } from "@/lib/constants";
+import type { AppLocale } from "@/lib/i18n/routing";
 
 type EmailLayoutProps = {
-  previewText?: string;
+  locale: AppLocale;
+  footerText: string;
   children: React.ReactNode;
 };
 
@@ -17,9 +19,9 @@ type EmailLayoutProps = {
  * translucency/backdrop effects - email clients render `rgba`/opacity
  * inconsistently, unlike the browser-only marketing/platform UI.
  */
-export function EmailLayout({ children }: EmailLayoutProps) {
+export function EmailLayout({ locale, footerText, children }: EmailLayoutProps) {
   return (
-    <Html>
+    <Html lang={locale}>
       <Head />
       <Body style={styles.body}>
         <Container style={styles.container}>
@@ -29,9 +31,7 @@ export function EmailLayout({ children }: EmailLayoutProps) {
 
           <Section style={styles.card}>{children}</Section>
 
-          <Text style={styles.footer}>
-            {APP_NAME} — AI-powered renewable operations.
-          </Text>
+          <Text style={styles.footer}>{footerText}</Text>
         </Container>
       </Body>
     </Html>

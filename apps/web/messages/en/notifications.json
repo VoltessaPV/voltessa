@@ -1,1 +1,6 @@
-{}
+{
+  "queryToast": {
+    "passwordReset": "Password reset. Please log in with your new password.",
+    "accountDisabled": "This account is no longer active. Contact your administrator."
+  }
+}

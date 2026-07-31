@@ -1,29 +1,33 @@
 import { Button, Preview, render } from "react-email";
 
+import { APP_NAME } from "@/lib/constants";
+import type { AppLocale } from "@/lib/i18n/routing";
+
+import { createEmailTranslator, resolveEmailLocale } from "../locale";
 import { sendEmail } from "../service";
 import { EmailHeading, EmailLayout, EmailText } from "./EmailLayout";
 
 type ResetPasswordTemplateProps = {
   resetUrl: string;
+  locale: AppLocale;
 };
 
-export function ResetPasswordTemplate({ resetUrl }: ResetPasswordTemplateProps) {
+export function ResetPasswordTemplate({ resetUrl, locale }: ResetPasswordTemplateProps) {
+  const t = createEmailTranslator(locale);
+
   return (
-    <EmailLayout>
-      <Preview>Reset your Voltessa password</Preview>
+    <EmailLayout locale={locale} footerText={t("emails.layout.footer", { appName: APP_NAME })}>
+      <Preview>{t("emails.resetPassword.preview")}</Preview>
 
-      <EmailHeading>Reset your password</EmailHeading>
+      <EmailHeading>{t("emails.resetPassword.heading")}</EmailHeading>
 
-      <EmailText>We received a request to reset your password.</EmailText>
+      <EmailText>{t("emails.resetPassword.body")}</EmailText>
 
       <Button href={resetUrl} style={buttonStyle}>
-        Reset Password
+        {t("emails.resetPassword.button")}
       </Button>
 
-      <EmailText>
-        This link expires in 60 minutes. If you didn&apos;t request a password reset you can
-        safely ignore this email.
-      </EmailText>
+      <EmailText>{t("emails.resetPassword.footnote")}</EmailText>
     </EmailLayout>
   );
 }
@@ -45,14 +49,22 @@ const buttonStyle = {
  * `verify-email.tsx`'s `deliverVerificationEmail`, sharing `EmailLayout`
  * rather than duplicating any markup. Auth code (see
  * `lib/auth/password-reset.ts`) calls this, never `sendEmail` or a
- * provider directly.
+ * provider directly. Renders using the recipient's own stored
+ * `User.locale` (`resolveEmailLocale`, Full Internationalization
+ * milestone) - never the locale of whatever request triggered the send.
  */
-export async function deliverPasswordResetEmail(to: string, resetUrl: string): Promise<void> {
-  const html = await render(<ResetPasswordTemplate resetUrl={resetUrl} />);
+export async function deliverPasswordResetEmail(
+  to: string,
+  resetUrl: string,
+  userId: string,
+): Promise<void> {
+  const locale = await resolveEmailLocale(userId);
+  const t = createEmailTranslator(locale);
+  const html = await render(<ResetPasswordTemplate resetUrl={resetUrl} locale={locale} />);
 
   await sendEmail({
     to,
-    subject: "Reset your Voltessa password",
+    subject: t("emails.resetPassword.subject"),
     html,
   });
 }

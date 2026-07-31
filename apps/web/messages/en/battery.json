@@ -1,1 +1,8 @@
-{}
+{
+  "page": {
+    "emptyStateTitle": "No plant connected",
+    "emptyStateDescription": "Connect a power plant to see live operational data, energy flow, and inverter status.",
+    "noBatteryTitle": "Battery Energy Storage System",
+    "noBatteryDescription": "No battery storage system configured. Battery optimization and energy storage features become available after connecting a supported battery."
+  }
+}

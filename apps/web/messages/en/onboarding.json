@@ -1,1 +1,33 @@
-{}
+{
+  "persona": {
+    "title": "Welcome to Voltessa",
+    "subtitle": "How will you be using the platform?",
+    "plantOwnerDescription": "Monitor and automate your own solar plants.",
+    "plantOwnerButton": "Continue as Plant Owner",
+    "traderTitle": "Energy Trader",
+    "traderDescription": "Manage market operations for a portfolio of client organizations.",
+    "traderButton": "Continue as Energy Trader"
+  },
+  "plantOwner": {
+    "title": "Set up your organization",
+    "subtitle": "Create your Voltessa workspace to start managing plants and energy operations.",
+    "organizationNameLabel": "Organization name",
+    "submitButton": "Continue to dashboard"
+  },
+  "traderProfile": {
+    "title": "Complete your Trader Profile",
+    "subtitle": "A Platform Administrator will review your profile and assign you to one or more organizations. All fields are required.",
+    "firstNameLabel": "First name",
+    "lastNameLabel": "Last name",
+    "phoneLabel": "Phone",
+    "companyNameLabel": "Company name",
+    "distributionCompanyLabel": "Distribution company",
+    "distributionCompanyPlaceholder": "Select a distribution company…",
+    "submitButton": "Submit Profile",
+    "errors": {
+      "missingFields": "All fields are required.",
+      "invalidDistributionCompany": "Select a valid distribution company.",
+      "generic": "Something went wrong."
+    }
+  }
+}

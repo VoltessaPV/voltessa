@@ -1,11 +1,18 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { Link } from "@/lib/i18n/navigation";
 
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { auth } from "@/auth";
 import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
 import { prisma } from "@/lib/prisma";
 
 import { chooseEnergyTraderPersona } from "./actions";
+
+export async function generateMetadata() {
+  const t = await getTranslations("onboarding.persona");
+  return { title: t("title") };
+}
 
 const TRADER_STAGE_ROUTES = {
   profile: "/onboarding/trader-profile",
@@ -56,44 +63,46 @@ export default async function OnboardingPage() {
     redirect("/dashboard");
   }
 
+  const [t, tTerm] = await Promise.all([
+    getTranslations("onboarding.persona"),
+    getTranslations("terminology"),
+  ]);
+
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
       <div className="w-full max-w-lg">
+        <div className="mb-4 flex justify-end">
+          <LanguageSwitcher />
+        </div>
+
         <div className="text-center">
-          <h1 className="text-2xl font-semibold">Welcome to Voltessa</h1>
-          <p className="mt-2 text-sm text-white/60">
-            How will you be using the platform?
-          </p>
+          <h1 className="text-2xl font-semibold">{t("title")}</h1>
+          <p className="mt-2 text-sm text-white/60">{t("subtitle")}</p>
         </div>
 
         <div className="mt-8 space-y-4">
           <div className="rounded-2xl border border-blue-500/40 bg-blue-500/10 p-6">
-            <h2 className="text-lg font-semibold">Plant Owner</h2>
-            <p className="mt-1 text-sm text-white/70">
-              Monitor and automate your own solar plants.
-            </p>
+            <h2 className="text-lg font-semibold">{tTerm("plantOwner")}</h2>
+            <p className="mt-1 text-sm text-white/70">{t("plantOwnerDescription")}</p>
 
             <Link
               href="/onboarding/plant-owner"
               className="mt-5 block w-full rounded-xl bg-blue-600 px-4 py-3 text-center font-semibold transition hover:bg-blue-500"
             >
-              Continue as Plant Owner
+              {t("plantOwnerButton")}
             </Link>
           </div>
 
           <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-lg font-semibold">Energy Trader</h2>
-            <p className="mt-1 text-sm text-white/70">
-              Manage market operations for a portfolio of client
-              organizations.
-            </p>
+            <h2 className="text-lg font-semibold">{t("traderTitle")}</h2>
+            <p className="mt-1 text-sm text-white/70">{t("traderDescription")}</p>
 
             <form action={chooseEnergyTraderPersona} className="mt-5">
               <button
                 type="submit"
                 className="w-full rounded-xl border border-white/20 px-4 py-3 text-center font-semibold text-white transition hover:bg-white/10"
               >
-                Continue as Energy Trader
+                {t("traderButton")}
               </button>
             </form>
           </div>

@@ -1,9 +1,10 @@
+import { getTranslations } from "next-intl/server";
+
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
-export { pageHeading } from "./heading";
 
 export default async function AlertsPage() {
   // Trader Workspace milestone: resolves either the owner's own
@@ -28,11 +29,11 @@ export default async function AlertsPage() {
     onSettled: revalidateTelemetryPagesIfSynced,
   });
 
+  const t = await getTranslations("alerts.page");
+
   return (
     <section>
-      <p className="text-white/60">
-        Review operational alerts and important platform events.
-      </p>
+      <p className="text-white/60">{t("intro")}</p>
     </section>
   );
 }

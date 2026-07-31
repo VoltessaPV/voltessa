@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 import { EmptyState } from "@/components/platform/EmptyState";
 
 /**
@@ -9,11 +11,8 @@ import { EmptyState } from "@/components/platform/EmptyState";
  * dead end - the trader can still use every other part of the workspace
  * (Dashboard, Clients, Market, Settings).
  */
-export function NoClientAssignedState() {
-  return (
-    <EmptyState
-      title="No client selected"
-      description="Select a client from the Clients page to see their data here."
-    />
-  );
+export async function NoClientAssignedState() {
+  const t = await getTranslations("shared.noClientAssigned");
+
+  return <EmptyState title={t("title")} description={t("description")} />;
 }

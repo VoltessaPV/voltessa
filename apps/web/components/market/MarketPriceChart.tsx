@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Bar, Line, ReferenceLine } from "recharts";
 
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
@@ -120,6 +121,8 @@ function ChartTooltip({
   payload?: Array<{ value: number | null; dataKey: string }>;
   label?: number;
 }) {
+  const t = useTranslations("market.priceChart");
+
   if (!active || !payload || payload.length === 0 || label === undefined) {
     return null;
   }
@@ -147,11 +150,11 @@ function ChartTooltip({
       {exportedKwh !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-emerald-400">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-          {exportedKwh} kWh exported
+          {exportedKwh} {t("exportedKwhSuffix")}
         </p>
       )}
 
-      {!hasAnything && <p className="mt-1 text-slate-500">No data</p>}
+      {!hasAnything && <p className="mt-1 text-slate-500">{t("noData")}</p>}
     </div>
   );
 }
@@ -161,6 +164,7 @@ function ThresholdLabel(props: {
   viewBox?: { x?: number; y?: number; width?: number };
   thresholdPrice: number;
 }) {
+  const t = useTranslations("market.priceChart");
   const { viewBox, thresholdPrice } = props;
   if (!viewBox || viewBox.x === undefined || viewBox.y === undefined) {
     return null;
@@ -181,7 +185,7 @@ function ThresholdLabel(props: {
         stroke="rgba(251,191,36,0.35)"
       />
       <text x={-8} y={11} fontSize={9} fontWeight={600} fill="#fbbf24" letterSpacing={0.4}>
-        EXPORT THRESHOLD
+        {t("exportThresholdLabel")}
       </text>
       <text x={-8} y={22} fontSize={10} fill="#fcd34d">
         {thresholdPrice} EUR/MWh
@@ -210,6 +214,7 @@ export function MarketPriceChart({
   settlementEnergySeries,
   installedCapacityKw,
 }: MarketPriceChartProps) {
+  const t = useTranslations("market.priceChart");
   const hasEnergyData = Boolean(
     settlementEnergySeries && settlementEnergySeries.length > 0,
   );
@@ -308,14 +313,14 @@ export function MarketPriceChart({
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-blue-400" />
-          Electricity price
+          {t("electricityPrice")}
         </span>
 
         <span className="h-3 w-px bg-white/10" />
 
         <span className="flex items-center gap-1.5 text-slate-500">
           <span className="h-0.5 w-3 rounded-full border-t border-dashed border-amber-400" />
-          Export threshold
+          {t("exportThreshold")}
         </span>
 
         {hasEnergyAxis && (
@@ -324,7 +329,7 @@ export function MarketPriceChart({
 
             <span className="flex items-center gap-1.5 text-slate-500">
               <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />
-              Exported energy
+              {t("exportedEnergy")}
             </span>
           </>
         )}

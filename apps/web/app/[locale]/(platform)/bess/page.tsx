@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
@@ -7,7 +9,6 @@ import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
-export { pageHeading } from "./heading";
 
 /**
  * Placeholder page for future battery functionality - no battery
@@ -43,14 +44,12 @@ export default async function BessPage() {
   });
 
   const plantContext = await resolvePlantContext(organizationId);
+  const t = await getTranslations("battery.page");
 
   if (!plantContext) {
     return (
       <PageContainer className="space-y-3">
-        <EmptyState
-          title="No plant connected"
-          description="Connect a power plant to see live operational data, energy flow, and inverter status."
-        >
+        <EmptyState title={t("emptyStateTitle")} description={t("emptyStateDescription")}>
           {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       </PageContainer>
@@ -59,10 +58,7 @@ export default async function BessPage() {
 
   return (
     <PageContainer className="space-y-3">
-      <EmptyState
-        title="Battery Energy Storage System"
-        description="No battery storage system configured. Battery optimization and energy storage features become available after connecting a supported battery."
-      />
+      <EmptyState title={t("noBatteryTitle")} description={t("noBatteryDescription")} />
     </PageContainer>
   );
 }

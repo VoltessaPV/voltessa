@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 /**
  * The "start the FusionSolar OAuth flow" CTA shown wherever a page needs
  * to guide a plant-less organization toward connecting one (Dashboard,
@@ -13,14 +15,16 @@
  * the user actually clicks - same reasoning as Settings' own connect
  * button.
  */
-export function ConnectFusionSolarButton() {
+export async function ConnectFusionSolarButton() {
+  const t = await getTranslations("shared");
+
   return (
     // eslint-disable-next-line @next/next/no-html-link-for-pages
     <a
       href="/api/auth/fusionsolar/connect"
       className="inline-block rounded-xl bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
     >
-      Connect Plant
+      {t("connectPlantButton")}
     </a>
   );
 }

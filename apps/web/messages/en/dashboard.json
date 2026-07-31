@@ -1,1 +1,87 @@
-{}
+{
+  "emptyState": {
+    "title": "No plant connected",
+    "description": "Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
+  },
+  "kpis": {
+    "yieldToday": "Yield Today",
+    "totalYield": "Total Yield",
+    "consumptionToday": "Consumption Today",
+    "consumedFromPv": "Consumed from PV",
+    "fedToGrid": "Fed to Grid",
+    "fromGrid": "From Grid",
+    "waitingForTelemetry": "Waiting for telemetry",
+    "notAvailable": "Not available",
+    "noHistoricalProductionData": "No historical production data available",
+    "historicalDataNotAvailable": "Historical data not available"
+  },
+  "systemOverview": {
+    "title": "System Overview",
+    "subtitle": "Real-time energy flow"
+  },
+  "liveEnergy": {
+    "title": "Live Energy",
+    "subtitle": "Today's production, consumption, and grid exchange",
+    "pvOutput": "PV Output",
+    "totalConsumption": "Total Consumption",
+    "importFromGrid": "Import from Grid",
+    "fedToGrid": "Fed to Grid",
+    "noData": "No data"
+  },
+  "energyFlow": {
+    "liveMeterDataUnavailable": "Live meter data unavailable",
+    "noHistoricalLiveMeterData": "No historical live meter data available",
+    "pvLabel": "PV",
+    "loadLabel": "Load",
+    "gridLabel": "Grid",
+    "inconsistent": "Inconsistent",
+    "importing": "Importing",
+    "exporting": "Exporting",
+    "inconsistentNote": "PV and grid readings are momentarily inconsistent — Load can't be derived right now."
+  },
+  "inverters": {
+    "title": "Inverters",
+    "noInverterDevices": "No inverter devices configured",
+    "historicalUnavailable": "Historical inverter status is not available",
+    "dataUnavailable": "FusionSolar data unavailable"
+  },
+  "weather": {
+    "title": "Solar Weather",
+    "subtitle": "Solar forecast for the active plant",
+    "unavailable": "Solar weather temporarily unavailable.",
+    "solarIrradiance": "Solar irradiance",
+    "cloudCover": "Cloud cover",
+    "temperature": "Temperature",
+    "wind": "Wind",
+    "conditions": {
+      "clear": "Clear",
+      "mostlyClear": "Mostly Clear",
+      "partlyCloudy": "Partly Cloudy",
+      "cloudy": "Cloudy",
+      "overcast": "Overcast",
+      "rain": "Rain",
+      "showers": "Showers",
+      "thunderstorm": "Thunderstorm",
+      "snow": "Snow",
+      "fog": "Fog"
+    }
+  },
+  "forecast": {
+    "description": "Production forecasting is on the roadmap."
+  },
+  "lastTelemetry": {
+    "label": "Last telemetry:",
+    "noData": "No data"
+  },
+  "trader": {
+    "assignedClients": "Assigned Clients",
+    "totalPlants": "Total Plants",
+    "portfolioProduction": "Portfolio Production",
+    "portfolioRevenue": "Portfolio Revenue",
+    "noClientsAssigned": "No clients assigned yet",
+    "quickAccessTitle": "Quick access",
+    "quickAccessSubtitle": "Jump straight into a client",
+    "viewAllClientsLink": "View all clients",
+    "noClientsMessage": "You're all set. Clients you're assigned to will show up here for quick access - a Platform Administrator will assign you shortly."
+  }
+}

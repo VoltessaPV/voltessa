@@ -9,7 +9,15 @@
  * is the one place that changes: validation and the return contract below
  * stay the same, only the body replaces the console.log with a real send.
  */
-export type ContactSubmissionResult = { ok: true } | { ok: false; error: string };
+export type ContactSubmissionErrorCode =
+  | "fullNameRequired"
+  | "companyRequired"
+  | "emailRequired"
+  | "emailInvalid"
+  | "messageRequired";
+export type ContactSubmissionResult =
+  | { ok: true }
+  | { ok: false; code: ContactSubmissionErrorCode };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -24,23 +32,23 @@ export async function submitContactRequest(
   const message = formData.get("message")?.toString().trim() ?? "";
 
   if (!fullName) {
-    return { ok: false, error: "Full name is required." };
+    return { ok: false, code: "fullNameRequired" };
   }
 
   if (!company) {
-    return { ok: false, error: "Company is required." };
+    return { ok: false, code: "companyRequired" };
   }
 
   if (!email) {
-    return { ok: false, error: "Email is required." };
+    return { ok: false, code: "emailRequired" };
   }
 
   if (!EMAIL_PATTERN.test(email)) {
-    return { ok: false, error: "Enter a valid email address." };
+    return { ok: false, code: "emailInvalid" };
   }
 
   if (!message) {
-    return { ok: false, error: "Message is required." };
+    return { ok: false, code: "messageRequired" };
   }
 
   // TODO: send via Resend once configured. For now: validate, log, succeed.

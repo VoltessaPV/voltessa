@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
@@ -7,15 +8,14 @@ import { usePathname, useRouter } from "@/lib/i18n/navigation";
 
 import { Toast, type ToastVariant } from "./Toast";
 
-const TOAST_MESSAGES: Record<string, { message: string; variant: ToastVariant }> = {
-  "password-reset": {
-    message: "Password reset. Please log in with your new password.",
-    variant: "success",
-  },
-  "account-disabled": {
-    message: "This account is no longer active. Contact your administrator.",
-    variant: "error",
-  },
+const TOAST_VARIANTS: Record<string, ToastVariant> = {
+  "password-reset": "success",
+  "account-disabled": "error",
+};
+
+const TOAST_KEYS: Record<string, string> = {
+  "password-reset": "passwordReset",
+  "account-disabled": "accountDisabled",
 };
 
 /**
@@ -29,17 +29,19 @@ const TOAST_MESSAGES: Record<string, { message: string; variant: ToastVariant }>
  * above and mounts this wherever it lands.
  */
 export function QueryToast() {
+  const t = useTranslations("notifications.queryToast");
   const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
 
   const key = searchParams.get("toast");
-  const entry = key ? TOAST_MESSAGES[key] : undefined;
+  const variant = key ? TOAST_VARIANTS[key] : undefined;
+  const messageKey = key ? TOAST_KEYS[key] : undefined;
 
-  const [visible, setVisible] = useState(Boolean(entry));
+  const [visible, setVisible] = useState(Boolean(messageKey));
 
   useEffect(() => {
-    if (!entry) {
+    if (!messageKey) {
       return;
     }
 
@@ -55,11 +57,11 @@ export function QueryToast() {
     }, 5000);
 
     return () => clearTimeout(timer);
-  }, [entry, pathname, router, searchParams]);
+  }, [messageKey, pathname, router, searchParams]);
 
-  if (!entry || !visible) {
+  if (!messageKey || !variant || !visible) {
     return null;
   }
 
-  return <Toast message={entry.message} variant={entry.variant} />;
+  return <Toast message={t(messageKey as never)} variant={variant} />;
 }

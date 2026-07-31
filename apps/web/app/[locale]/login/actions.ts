@@ -8,7 +8,8 @@ import { verifyPassword } from "@/lib/auth/password";
 import { syncUserLocale } from "@/lib/i18n/locale-sync";
 import { prisma } from "@/lib/prisma";
 
-export type SignInResult = { success: false; message: string } | null;
+export type SignInErrorCode = "emailPasswordRequired" | "invalidCredentials" | "accountInactive";
+export type SignInResult = { success: false; code: SignInErrorCode } | null;
 
 /** Unchanged from the previous /login page - moved here so both this page's actions live in one place. */
 export async function continueWithGoogle(): Promise<void> {
@@ -39,7 +40,7 @@ export async function signInWithPassword(
   const password = formData.get("password");
 
   if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
-    return { success: false, message: "Email and password are required" };
+    return { success: false, code: "emailPasswordRequired" };
   }
 
   const user = await prisma.user.findUnique({
@@ -59,7 +60,7 @@ export async function signInWithPassword(
     : false;
 
   if (!user || !passwordValid) {
-    return { success: false, message: "Invalid email or password" };
+    return { success: false, code: "invalidCredentials" };
   }
 
   if (!user.emailVerified) {
@@ -71,7 +72,7 @@ export async function signInWithPassword(
   // verification (never reveal account status before proving the
   // password is even correct).
   if (user.deletedAt || user.deactivatedAt) {
-    return { success: false, message: "This account is no longer active." };
+    return { success: false, code: "accountInactive" };
   }
 
   await createDatabaseSession(user.id);

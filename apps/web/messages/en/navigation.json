@@ -7,5 +7,21 @@
     "signOutLink": "Sign Out",
     "openMenuLabel": "Open navigation menu",
     "closeMenuLabel": "Close navigation menu"
+  },
+  "userMenu": {
+    "signOutLink": "Sign out"
+  },
+  "pageHeadings": {
+    "dashboard": { "eyebrow": "Live plant operation" },
+    "market": { "eyebrow": "Bulgarian day-ahead market" },
+    "automations": { "eyebrow": "Automated export control", "title": "Automations" },
+    "alerts": { "eyebrow": "Operational alerts", "title": "Alerts" },
+    "bess": { "eyebrow": "Battery energy storage", "title": "BESS" },
+    "clients": { "eyebrow": "Client portfolio", "title": "Clients" },
+    "settings": { "eyebrow": "System configuration" },
+    "plants": { "eyebrow": "Power Plants", "title": "Plants" },
+    "plantsNew": { "eyebrow": "Power Plants", "title": "Add Plant" },
+    "plantDetails": { "eyebrow": "Plant details", "title": "Plant Details" },
+    "plantEdit": { "eyebrow": "Power Plants", "title": "Edit Plant" }
   }
 }

@@ -212,6 +212,7 @@ const DISTRIBUTION_LOW_COLOR_CLASS = "bg-amber-400";
 
 export function buildDistribution(
   knownPoints: MarketPricePoint[],
+  tDistribution: (key: "high" | "mid" | "low") => string,
 ): DistributionBucket[] {
   // Three bands, High-to-Low (Market Dashboard UX Polish milestone) —
   // deliberately not five: "Negative" collapses into Low (< 75) and "Peak"
@@ -219,9 +220,9 @@ export function buildDistribution(
   // these three bands and colors (High=green, Mid=blue, Low=amber),
   // ordered High first.
   const buckets = [
-    { label: "High", rangeLabel: "> 150", min: 150, max: Infinity, colorClass: DISTRIBUTION_HIGH_COLOR_CLASS },
-    { label: "Mid", rangeLabel: "75–150", min: 75, max: 150, colorClass: "bg-blue-400" },
-    { label: "Low", rangeLabel: "< 75", min: -Infinity, max: 75, colorClass: DISTRIBUTION_LOW_COLOR_CLASS },
+    { label: tDistribution("high"), rangeLabel: "> 150", min: 150, max: Infinity, colorClass: DISTRIBUTION_HIGH_COLOR_CLASS },
+    { label: tDistribution("mid"), rangeLabel: "75–150", min: 75, max: 150, colorClass: "bg-blue-400" },
+    { label: tDistribution("low"), rangeLabel: "< 75", min: -Infinity, max: 75, colorClass: DISTRIBUTION_LOW_COLOR_CLASS },
   ];
 
   return buckets
@@ -258,6 +259,7 @@ export function buildDistribution(
 export function buildInsights(
   knownPoints: MarketPricePoint[],
   resolutionMinutes: number,
+  tInsights: (key: string, values?: Record<string, string | number>) => string,
 ): MarketInsight[] {
   const withPrice = knownPoints.filter(
     (point): point is MarketPricePoint & { price: number } =>
@@ -288,19 +290,25 @@ export function buildInsights(
 
   return [
     {
-      text: `Highest price today: ${highest.price} EUR/MWh at ${sofiaTimeLabel(highest.timestamp)}`,
+      text: tInsights("highestPriceToday", {
+        price: highest.price,
+        time: sofiaTimeLabel(highest.timestamp),
+      }),
       tone: "warning",
       dotColorClass: DISTRIBUTION_HIGH_COLOR_CLASS,
     },
     {
-      text: `Lowest price today: ${lowest.price} EUR/MWh at ${sofiaTimeLabel(lowest.timestamp)}`,
+      text: tInsights("lowestPriceToday", {
+        price: lowest.price,
+        time: sofiaTimeLabel(lowest.timestamp),
+      }),
       tone: "positive",
       dotColorClass: DISTRIBUTION_LOW_COLOR_CLASS,
     },
-    { text: `Price spread: ${spread} EUR/MWh`, tone: "neutral" },
-    { text: `Average price: ${averagePrice} EUR/MWh`, tone: "neutral" },
-    { text: `Hours above threshold: ${hoursAboveThreshold} h`, tone: "positive" },
-    { text: `Hours below threshold: ${hoursBelowThreshold} h`, tone: "neutral" },
+    { text: tInsights("priceSpread", { spread }), tone: "neutral" },
+    { text: tInsights("averagePrice", { price: averagePrice }), tone: "neutral" },
+    { text: tInsights("hoursAboveThreshold", { hours: hoursAboveThreshold }), tone: "positive" },
+    { text: tInsights("hoursBelowThreshold", { hours: hoursBelowThreshold }), tone: "neutral" },
   ];
 }
 
@@ -333,19 +341,32 @@ export async function getMarketPageData(params: {
   // These reads don't depend on each other's results (only the subsequent
   // processing below does) — fetched in parallel instead of four
   // sequential round trips.
-  const [dayAheadResult, importStatus, currentResult, recentEvents, tEventLog, tDecisionReasons, tTerm] =
-    await Promise.all([
-      dbMarketPriceProvider.getDayAheadPrices({
-        referenceDate: referenceInstant,
-        timeZone: BULGARIA_TIMEZONE,
-      }),
-      dbMarketPriceProvider.getLatestImportStatus(),
-      isToday ? dbMarketPriceProvider.getCurrentPrice() : Promise.resolve(null),
-      params.organizationId ? getRecentAutomationEvents(params.organizationId) : Promise.resolve([]),
-      getTranslations("automations.eventLog"),
-      getTranslations("automations.eventLog.decisionReasons"),
-      getTranslations("terminology"),
-    ]);
+  const [
+    dayAheadResult,
+    importStatus,
+    currentResult,
+    recentEvents,
+    tEventLog,
+    tDecisionReasons,
+    tTerm,
+    tDistribution,
+    tInsights,
+    tInfo,
+  ] = await Promise.all([
+    dbMarketPriceProvider.getDayAheadPrices({
+      referenceDate: referenceInstant,
+      timeZone: BULGARIA_TIMEZONE,
+    }),
+    dbMarketPriceProvider.getLatestImportStatus(),
+    isToday ? dbMarketPriceProvider.getCurrentPrice() : Promise.resolve(null),
+    params.organizationId ? getRecentAutomationEvents(params.organizationId) : Promise.resolve([]),
+    getTranslations("automations.eventLog"),
+    getTranslations("automations.eventLog.decisionReasons"),
+    getTranslations("terminology"),
+    getTranslations("market.distribution"),
+    getTranslations("market.insights"),
+    getTranslations("market.info"),
+  ]);
 
   if (!dayAheadResult.available) {
     return { dataAvailable: false, threshold, ...toolbarState };
@@ -444,7 +465,7 @@ export async function getMarketPageData(params: {
       intervalLabel: sofiaTimeLabel(highestKnown.timestamp),
     },
     marketStatus: {
-      country: "Bulgaria",
+      country: tInfo("countryName"),
       source: "ENTSO-E",
       healthy: importStatus.available ? !importStatus.isPartial : false,
     },
@@ -484,8 +505,10 @@ export async function getMarketPageData(params: {
             )
           : event.reason,
     })),
-    distribution: buildDistribution(knownPoints),
-    insights: buildInsights(knownPoints, resolutionMinutes),
+    distribution: buildDistribution(knownPoints, (key) => tDistribution(key)),
+    insights: buildInsights(knownPoints, resolutionMinutes, (key, values) =>
+      tInsights(key as never, values as never),
+    ),
     ...toolbarState,
   };
 }

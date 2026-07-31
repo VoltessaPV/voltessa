@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 import { requireTraderOrganizationAccess } from "@/lib/auth/session";
 import { listTraderClients } from "@/lib/trader/queries";
 
@@ -6,7 +8,6 @@ import { ClientTable } from "@/components/clients/ClientTable";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
-export { pageHeading } from "./heading";
 
 /** Above this many clients, default to the table view - a grid of cards stops being scannable well before "dozens to hundreds." Either view is always explicitly selectable via `?view=`. */
 const GRID_VIEW_MAX_CLIENTS = 12;
@@ -45,6 +46,8 @@ export default async function ClientsPage({ searchParams }: Props) {
     return `/clients?${query.toString()}`;
   };
 
+  const t = await getTranslations("clients.page");
+
   return (
     <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
@@ -53,7 +56,7 @@ export default async function ClientsPage({ searchParams }: Props) {
             type="text"
             name="q"
             defaultValue={params.q ?? ""}
-            placeholder="Search clients..."
+            placeholder={t("searchPlaceholder")}
             className="h-9 w-64 rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white outline-none transition placeholder:text-white/30 focus:border-blue-500"
           />
           {view !== (clients.length > GRID_VIEW_MAX_CLIENTS ? "list" : "grid") && (
@@ -63,7 +66,7 @@ export default async function ClientsPage({ searchParams }: Props) {
             type="submit"
             className="h-9 rounded-lg border border-white/10 px-3 text-sm text-white/70 transition hover:border-white/20 hover:text-white"
           >
-            Search
+            {t("searchButton")}
           </button>
         </form>
 
@@ -76,7 +79,7 @@ export default async function ClientsPage({ searchParams }: Props) {
                 : "rounded-md px-3 py-1.5 text-xs font-medium text-white/50 hover:text-white"
             }
           >
-            Grid
+            {t("gridViewButton")}
           </a>
           <a
             href={viewHref("list")}
@@ -86,19 +89,15 @@ export default async function ClientsPage({ searchParams }: Props) {
                 : "rounded-md px-3 py-1.5 text-xs font-medium text-white/50 hover:text-white"
             }
           >
-            List
+            {t("listViewButton")}
           </a>
         </div>
       </div>
 
       {clients.length === 0 ? (
         <EmptyState
-          title={params.q ? "No clients match your search" : "No clients assigned yet"}
-          description={
-            params.q
-              ? "Try a different search term."
-              : "A Platform Administrator will assign you to one or more client organizations. They'll show up here as soon as that happens."
-          }
+          title={params.q ? t("noSearchResultsTitle") : t("noClientsTitle")}
+          description={params.q ? t("noSearchResultsDescription") : t("noClientsDescription")}
         />
       ) : view === "grid" ? (
         <ClientCardGrid clients={clients} redirectTo={redirectTo} />

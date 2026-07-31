@@ -20,6 +20,7 @@ import { useTranslations } from "next-intl";
 import { Link } from "@/lib/i18n/navigation";
 import { useState } from "react";
 
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { signOutAction } from "@/lib/auth/actions";
 
 import type { TraderShellContext } from "./AppShell";
@@ -250,6 +251,11 @@ export function AppSidebar({
               isPlatformAdmin={isPlatformAdmin}
               trader={trader}
             />
+
+            {/* Mobile-only: AppHeader's own switcher is hidden below `sm`, so the drawer is this control's only reachable home on small screens. */}
+            <div className="px-3 py-2">
+              <LanguageSwitcher className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1 text-xs" />
+            </div>
 
             <SignOutNavItem />
           </aside>

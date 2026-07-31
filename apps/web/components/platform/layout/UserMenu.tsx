@@ -1,6 +1,7 @@
 "use client";
 
 import { ChevronDown, LogOut, Settings } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Link } from "@/lib/i18n/navigation";
 import { useEffect, useRef, useState } from "react";
 
@@ -21,6 +22,8 @@ type UserMenuProps = {
 export function UserMenu({ name, role }: UserMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const t = useTranslations("navigation.userMenu");
+  const tTerm = useTranslations("terminology");
 
   useEffect(() => {
     if (!isOpen) {
@@ -69,7 +72,7 @@ export function UserMenu({ name, role }: UserMenuProps) {
             className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-white/80 transition hover:bg-white/5 hover:text-white"
           >
             <Settings className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-            Settings
+            {tTerm("settings")}
           </Link>
 
           <form action={signOutAction}>
@@ -79,7 +82,7 @@ export function UserMenu({ name, role }: UserMenuProps) {
               className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm text-white/80 transition hover:bg-white/5 hover:text-white"
             >
               <LogOut className="h-4 w-4 shrink-0" strokeWidth={1.75} />
-              Sign out
+              {t("signOutLink")}
             </button>
           </form>
         </div>

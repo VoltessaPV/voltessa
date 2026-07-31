@@ -1,4 +1,7 @@
+"use client";
+
 import { History } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import {
   BULGARIA_TIMEZONE,
@@ -53,11 +56,13 @@ function marketTimestampLabel(date: Date): string {
  * pinned.
  */
 export function MarketEventLog({ entries }: MarketEventLogProps) {
+  const t = useTranslations("market.eventLog");
+
   return (
     <div className="flex h-[280px] flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <p className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
         <History className="h-3.5 w-3.5" />
-        Event Log (Last 10)
+        {t("title")}
       </p>
 
       {entries.length === 0 ? (
@@ -73,11 +78,8 @@ export function MarketEventLog({ entries }: MarketEventLogProps) {
               <path d="M10 6.5V10l2.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
             </svg>
           </span>
-          <p className="mt-3 text-sm text-slate-400">No events yet</p>
-          <p className="mt-1 max-w-[220px] text-xs text-slate-600">
-            Automation decisions will appear here once your first mode
-            change or automation event occurs.
-          </p>
+          <p className="mt-3 text-sm text-slate-400">{t("emptyTitle")}</p>
+          <p className="mt-1 max-w-[220px] text-xs text-slate-600">{t("emptyDescription")}</p>
         </div>
       ) : (
         <ol className="mt-3 flex-1 space-y-3 overflow-y-auto pr-1">

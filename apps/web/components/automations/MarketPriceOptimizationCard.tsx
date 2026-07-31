@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect, useState, useTransition } from "react";
 
 import { updateMarketPriceAutomation } from "@/app/[locale]/(platform)/automations/actions";
@@ -25,6 +26,8 @@ export function MarketPriceOptimizationCard({
   initialEnabled,
   initialMinimumExportPrice,
 }: Props) {
+  const t = useTranslations("automations.marketPriceCard");
+  const tActions = useTranslations("shared.actions");
   const [enabled, setEnabled] = useState(initialEnabled);
   const [threshold, setThreshold] = useState(initialMinimumExportPrice);
   const [isPending, startTransition] = useTransition();
@@ -54,7 +57,7 @@ export function MarketPriceOptimizationCard({
 
       setToast(
         result.ok
-          ? { kind: "success", message: "Automation settings saved" }
+          ? { kind: "success", message: t("savedToast") }
           : { kind: "error", message: result.error },
       );
     });
@@ -63,13 +66,10 @@ export function MarketPriceOptimizationCard({
   return (
     <>
       <Card className="p-6">
-        <CardHeader
-          title="Market Price Optimization"
-          subtitle="Automatically stops exporting electricity to the grid when the market price falls below your threshold, and resumes automatically once the price recovers."
-        />
+        <CardHeader title={t("title")} subtitle={t("subtitle")} />
 
         <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-4 py-3">
-          <span className="text-sm text-white/80">Enable automation</span>
+          <span className="text-sm text-white/80">{t("enableAutomation")}</span>
 
           <button
             type="button"
@@ -93,7 +93,7 @@ export function MarketPriceOptimizationCard({
             htmlFor="minimumExportPrice"
             className="block text-sm text-white/80"
           >
-            When electricity price falls below (€/MWh)
+            {t("thresholdLabel")}
           </label>
 
           <input
@@ -113,7 +113,7 @@ export function MarketPriceOptimizationCard({
           onClick={handleSave}
           className="mt-6 rounded-xl bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {isPending ? "Saving..." : "Save"}
+          {isPending ? tActions("saving") : tActions("save")}
         </button>
       </Card>
 

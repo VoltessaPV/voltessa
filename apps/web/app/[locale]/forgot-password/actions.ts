@@ -3,9 +3,10 @@
 import { sendPasswordResetEmail } from "@/lib/auth/password-reset";
 import { prisma } from "@/lib/prisma";
 
-export type ForgotPasswordResult = { success: boolean; message: string } | null;
-
-const GENERIC_MESSAGE = "If that email has a Voltessa account, we've sent a password reset link.";
+export type ForgotPasswordResult =
+  | { success: true; code: "passwordResetSent" }
+  | { success: false; code: "emailRequired" }
+  | null;
 
 /**
  * Enumeration-safe: identical response whether the email doesn't exist at
@@ -20,7 +21,7 @@ export async function requestPasswordReset(
   const email = formData.get("email");
 
   if (typeof email !== "string" || !email) {
-    return { success: false, message: "Email is required" };
+    return { success: false, code: "emailRequired" };
   }
 
   const user = await prisma.user.findUnique({
@@ -32,5 +33,5 @@ export async function requestPasswordReset(
     await sendPasswordResetEmail(user.id, user.email!);
   }
 
-  return { success: true, message: GENERIC_MESSAGE };
+  return { success: true, code: "passwordResetSent" };
 }

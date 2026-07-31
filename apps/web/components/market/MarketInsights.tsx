@@ -1,3 +1,7 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
 import type { MarketInsight } from "@/app/[locale]/(platform)/market/market-data";
 
 type MarketInsightsProps = {
@@ -11,10 +15,12 @@ const TONE_DOT_CLASS: Record<MarketInsight["tone"], string> = {
 };
 
 export function MarketInsights({ insights }: MarketInsightsProps) {
+  const t = useTranslations("market.insights");
+
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-        Market Insights
+        {t("title")}
       </p>
 
       <ul className="mt-3 space-y-2">

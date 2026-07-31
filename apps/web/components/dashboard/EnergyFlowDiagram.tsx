@@ -1,3 +1,4 @@
+import { useTranslations } from "next-intl";
 import type { CSSProperties, ReactNode } from "react";
 
 import type { EnergyFlowState } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
@@ -44,10 +45,12 @@ type EnergyFlowDiagramProps = {
  * `gridKw` > 0) — never shown active for a flow that isn't happening.
  */
 export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
+  const t = useTranslations("dashboard.energyFlow");
+
   if (!flow.available) {
     return (
       <div className="flex h-full min-h-[180px] items-center justify-center text-sm text-slate-500">
-        {isToday ? "Live meter data unavailable" : "No historical live meter data available"}
+        {isToday ? t("liveMeterDataUnavailable") : t("noHistoricalLiveMeterData")}
       </div>
     );
   }
@@ -224,7 +227,7 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
 
         <FlowNode
           icon={<SolarPanelIcon className="h-[31px] w-[31px] text-emerald-300/90" />}
-          label="PV"
+          label={t("pvLabel")}
           value={`${pvKw.toFixed(1)} kW`}
           layout="labelValueIcon"
           style={{ left: `${PV.x}%`, top: toTopPercent(PV.y) }}
@@ -232,14 +235,14 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
 
         <FlowNode
           icon={<LoadBuildingIcon className="h-[31px] w-[31px] text-slate-300" />}
-          label="Load"
-          value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : "Inconsistent"}
+          label={t("loadLabel")}
+          value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : t("inconsistent")}
           style={{ left: `${LOAD.x}%`, top: toTopPercent(ICON_Y) }}
         />
 
         <FlowNode
           icon={<TransmissionTowerIcon className="h-[31px] w-[31px] text-cyan-300/90" />}
-          label="Grid"
+          label={t("gridLabel")}
           value={`${gridKw.toFixed(1)} kW`}
           style={{ left: `${GRID.x}%`, top: toTopPercent(ICON_Y) }}
         />
@@ -247,13 +250,12 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
 
       <div className="flex items-center gap-2 text-sm">
         <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-orange-400" : "bg-emerald-400"}`} />
-        <span className="font-medium text-white">{importing ? "Importing" : "Exporting"}</span>
+        <span className="font-medium text-white">{importing ? t("importing") : t("exporting")}</span>
       </div>
 
       {loadKw === null && (
         <p className="max-w-[220px] text-center text-xs text-amber-400/80">
-          PV and grid readings are momentarily inconsistent — Load can&apos;t be derived right
-          now.
+          {t("inconsistentNote")}
         </p>
       )}
     </div>

@@ -1,8 +1,9 @@
 import { CloudSun } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { SolarWeather } from "@/lib/weather/openMeteo";
 
-import { WEATHER_CONDITION_LABELS, WeatherIcon, type WeatherConditionKey } from "./WeatherIcons";
+import { WeatherIcon, type WeatherConditionKey } from "./WeatherIcons";
 
 /** Shown below the summary — enough to read as a strip without crowding this card's narrow (1-of-4 grid column) width. */
 const HOURLY_STRIP_COUNT = 8;
@@ -72,12 +73,8 @@ function cloudCoverCondition(cloudCoverPercent: number): WeatherConditionKey {
  * when a real weather event (storm/snow/rain/fog) is more informative than
  * cloud cover alone - see `weatherCodeOverride`.
  */
-function solarCondition(
-  cloudCoverPercent: number,
-  weatherCode: number,
-): { condition: WeatherConditionKey; label: string } {
-  const condition = weatherCodeOverride(weatherCode) ?? cloudCoverCondition(cloudCoverPercent);
-  return { condition, label: WEATHER_CONDITION_LABELS[condition] };
+function solarCondition(cloudCoverPercent: number, weatherCode: number): WeatherConditionKey {
+  return weatherCodeOverride(weatherCode) ?? cloudCoverCondition(cloudCoverPercent);
 }
 
 function hourLabel(date: Date): string {
@@ -88,16 +85,14 @@ function hourLabel(date: Date): string {
   });
 }
 
-function CardEyebrow() {
+function CardEyebrow({ t }: { t: ReturnType<typeof useTranslations<"dashboard.weather">> }) {
   return (
     <div>
       <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
         <CloudSun className="h-3.5 w-3.5" />
-        Solar Weather
+        {t("title")}
       </p>
-      <p className="mt-0.5 text-[11px] text-slate-600">
-        Solar forecast for the active plant
-      </p>
+      <p className="mt-0.5 text-[11px] text-slate-600">{t("subtitle")}</p>
     </div>
   );
 }
@@ -111,13 +106,14 @@ function CardEyebrow() {
  * that module.
  */
 export function WeatherCard({ weather }: WeatherCardProps) {
+  const t = useTranslations("dashboard.weather");
+  const tConditions = useTranslations("dashboard.weather.conditions");
+
   if (!weather) {
     return (
       <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
-        <CardEyebrow />
-        <p className="mt-3 text-sm text-slate-500">
-          Solar weather temporarily unavailable.
-        </p>
+        <CardEyebrow t={t} />
+        <p className="mt-3 text-sm text-slate-500">{t("unavailable")}</p>
       </div>
     );
   }
@@ -130,34 +126,34 @@ export function WeatherCard({ weather }: WeatherCardProps) {
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
-      <CardEyebrow />
+      <CardEyebrow t={t} />
 
       <div className="mt-3 flex items-center gap-2 text-sm font-medium text-white">
-        <WeatherIcon condition={condition.condition} size={20} />
-        {condition.label}
+        <WeatherIcon condition={condition} size={20} />
+        {tConditions(condition as never)}
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
         <div>
-          <dt className="text-[11px] text-slate-500">Solar irradiance</dt>
+          <dt className="text-[11px] text-slate-500">{t("solarIrradiance")}</dt>
           <dd className="text-sm font-medium tabular-nums text-white">
             {Math.round(weather.current.irradiance)} W/m²
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] text-slate-500">Cloud cover</dt>
+          <dt className="text-[11px] text-slate-500">{t("cloudCover")}</dt>
           <dd className="text-sm font-medium tabular-nums text-white">
             {Math.round(weather.current.cloudCover)}%
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] text-slate-500">Temperature</dt>
+          <dt className="text-[11px] text-slate-500">{t("temperature")}</dt>
           <dd className="text-sm font-medium tabular-nums text-white">
             {Math.round(weather.current.temperature)}°C
           </dd>
         </div>
         <div>
-          <dt className="text-[11px] text-slate-500">Wind</dt>
+          <dt className="text-[11px] text-slate-500">{t("wind")}</dt>
           <dd className="text-sm font-medium tabular-nums text-white">
             {weather.current.windSpeed.toFixed(1)} m/s
           </dd>
@@ -177,7 +173,7 @@ export function WeatherCard({ weather }: WeatherCardProps) {
                 <span className="text-[10px] text-slate-500">
                   {hourLabel(point.time)}
                 </span>
-                <WeatherIcon condition={pointCondition.condition} size={17} />
+                <WeatherIcon condition={pointCondition} size={17} />
                 <span className="text-[10px] tabular-nums text-slate-400">
                   {Math.round(point.irradiance)} W/m²
                 </span>

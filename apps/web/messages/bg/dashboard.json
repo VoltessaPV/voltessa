@@ -1,1 +1,87 @@
-{}
+{
+  "emptyState": {
+    "title": "Няма свързана централа",
+    "description": "Свържете централа FusionSolar, за да видите оперативни данни на живо, енергийния поток и статуса на инверторите."
+  },
+  "kpis": {
+    "yieldToday": "Добив днес",
+    "totalYield": "Общ добив",
+    "consumptionToday": "Потребление днес",
+    "consumedFromPv": "Потребено от ФЕЦ",
+    "fedToGrid": "Подадено към мрежата",
+    "fromGrid": "От мрежата",
+    "waitingForTelemetry": "Изчакване на телеметрия",
+    "notAvailable": "Не е налично",
+    "noHistoricalProductionData": "Няма налични исторически данни за производство",
+    "historicalDataNotAvailable": "Историческите данни не са налични"
+  },
+  "systemOverview": {
+    "title": "Преглед на системата",
+    "subtitle": "Енергиен поток в реално време"
+  },
+  "liveEnergy": {
+    "title": "Енергия на живо",
+    "subtitle": "Днешното производство, потребление и обмен с мрежата",
+    "pvOutput": "Изход на ФЕЦ",
+    "totalConsumption": "Общо потребление",
+    "importFromGrid": "Внос от мрежата",
+    "fedToGrid": "Подадено към мрежата",
+    "noData": "Няма данни"
+  },
+  "energyFlow": {
+    "liveMeterDataUnavailable": "Данните от измервателния уред на живо не са налични",
+    "noHistoricalLiveMeterData": "Няма налични исторически данни от измервателния уред",
+    "pvLabel": "ФЕЦ",
+    "loadLabel": "Товар",
+    "gridLabel": "Мрежа",
+    "inconsistent": "Несъответствие",
+    "importing": "Внос",
+    "exporting": "Износ",
+    "inconsistentNote": "Показанията от ФЕЦ и мрежата временно си противоречат — товарът не може да бъде изчислен в момента."
+  },
+  "inverters": {
+    "title": "Инвертори",
+    "noInverterDevices": "Не са конфигурирани инверторни устройства",
+    "historicalUnavailable": "Историческият статус на инверторите не е наличен",
+    "dataUnavailable": "Данните от FusionSolar не са налични"
+  },
+  "weather": {
+    "title": "Слънчево време",
+    "subtitle": "Слънчева прогноза за активната централа",
+    "unavailable": "Слънчевото време временно не е налично.",
+    "solarIrradiance": "Слънчево облъчване",
+    "cloudCover": "Облачност",
+    "temperature": "Температура",
+    "wind": "Вятър",
+    "conditions": {
+      "clear": "Ясно",
+      "mostlyClear": "Предимно ясно",
+      "partlyCloudy": "Разкъсана облачност",
+      "cloudy": "Облачно",
+      "overcast": "Плътна облачност",
+      "rain": "Дъжд",
+      "showers": "Превалявания",
+      "thunderstorm": "Гръмотевична буря",
+      "snow": "Сняг",
+      "fog": "Мъгла"
+    }
+  },
+  "forecast": {
+    "description": "Прогнозирането на производството е в пътната карта на продукта."
+  },
+  "lastTelemetry": {
+    "label": "Последна телеметрия:",
+    "noData": "Няма данни"
+  },
+  "trader": {
+    "assignedClients": "Назначени клиенти",
+    "totalPlants": "Общо централи",
+    "portfolioProduction": "Производство на портфолиото",
+    "portfolioRevenue": "Приход на портфолиото",
+    "noClientsAssigned": "Все още няма назначени клиенти",
+    "quickAccessTitle": "Бърз достъп",
+    "quickAccessSubtitle": "Влезте директно при клиент",
+    "viewAllClientsLink": "Виж всички клиенти",
+    "noClientsMessage": "Всичко е готово. Клиентите, към които сте назначени, ще се появят тук за бърз достъп — администратор на платформата ще ви назначи скоро."
+  }
+}

@@ -3,9 +3,10 @@
 import { sendVerificationEmail } from "@/lib/auth/email-verification";
 import { prisma } from "@/lib/prisma";
 
-export type ResendResult = { success: boolean; message: string } | null;
-
-const GENERIC_MESSAGE = "If that email needs verification, we've sent a new link.";
+export type ResendResult =
+  | { success: true; code: "verificationResent" | "alreadyVerified" }
+  | { success: false; code: "emailRequired" | "verificationRateLimited"; params?: { seconds: number } }
+  | null;
 
 /**
  * Reused from both the /verify-email check-your-inbox page and the
@@ -31,7 +32,7 @@ export async function resendVerificationEmail(
   const email = formData.get("email");
 
   if (typeof email !== "string" || !email) {
-    return { success: false, message: "Email is required" };
+    return { success: false, code: "emailRequired" };
   }
 
   const user = await prisma.user.findUnique({
@@ -40,11 +41,11 @@ export async function resendVerificationEmail(
   });
 
   if (!user || !user.passwordHash) {
-    return { success: true, message: GENERIC_MESSAGE };
+    return { success: true, code: "verificationResent" };
   }
 
   if (user.emailVerified) {
-    return { success: true, message: "This account is already verified — you can log in." };
+    return { success: true, code: "alreadyVerified" };
   }
 
   const result = await sendVerificationEmail(user.id, user.email!);
@@ -52,9 +53,10 @@ export async function resendVerificationEmail(
   if (!result.sent) {
     return {
       success: false,
-      message: `Please wait ${result.retryAfterSeconds}s before requesting another email.`,
+      code: "verificationRateLimited",
+      params: { seconds: result.retryAfterSeconds },
     };
   }
 
-  return { success: true, message: GENERIC_MESSAGE };
+  return { success: true, code: "verificationResent" };
 }

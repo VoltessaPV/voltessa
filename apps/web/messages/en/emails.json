@@ -1,1 +1,21 @@
-{}
+{
+  "layout": {
+    "footer": "{appName} — AI-powered renewable operations."
+  },
+  "verifyEmail": {
+    "preview": "Verify your email address to activate your Voltessa account",
+    "subject": "Verify your Voltessa account",
+    "heading": "Welcome to Voltessa",
+    "body": "Please verify your email address to activate your account.",
+    "button": "Verify Email",
+    "footnote": "If you didn't create this account you can safely ignore this email."
+  },
+  "resetPassword": {
+    "preview": "Reset your Voltessa password",
+    "subject": "Reset your Voltessa password",
+    "heading": "Reset your password",
+    "body": "We received a request to reset your password.",
+    "button": "Reset Password",
+    "footnote": "This link expires in 60 minutes. If you didn't request a password reset you can safely ignore this email."
+  }
+}

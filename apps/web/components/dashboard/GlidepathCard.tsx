@@ -1,4 +1,5 @@
 import { TrendingUp } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 /**
  * No production-forecasting model exists anywhere in this codebase
@@ -14,13 +15,16 @@ import { TrendingUp } from "lucide-react";
  * touching every import site for a label-only rename.
  */
 export function GlidepathCard() {
+  const t = useTranslations("dashboard.forecast");
+  const tTerm = useTranslations("terminology");
+
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
         <TrendingUp className="h-3.5 w-3.5" />
-        Forecast
+        {tTerm("forecast")}
       </p>
-      <p className="mt-3 text-sm text-slate-500">Production forecasting is on the roadmap.</p>
+      <p className="mt-3 text-sm text-slate-500">{t("description")}</p>
     </div>
   );
 }

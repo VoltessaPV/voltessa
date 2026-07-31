@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { useCTA } from "@/components/providers/CTAProvider";
 
 import { buttonClassName, type ButtonVariant } from "./Button";
@@ -19,13 +21,14 @@ type TalkToUsButtonProps = {
 export function TalkToUsButton({
   variant = "secondary",
   className,
-  text = "Talk to Us",
+  text,
 }: TalkToUsButtonProps) {
   const { openContactForm } = useCTA();
+  const t = useTranslations("marketing.cta");
 
   return (
     <button type="button" className={buttonClassName(variant, className)} onClick={openContactForm}>
-      {text}
+      {text ?? t("talkToUs")}
     </button>
   );
 }

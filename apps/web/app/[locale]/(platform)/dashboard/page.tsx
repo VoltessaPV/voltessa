@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import {
@@ -26,7 +27,6 @@ import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getDashboardPageData } from "./dashboard-data";
 
-export { pageHeading } from "./heading";
 
 /**
  * Design-System Consistency milestone: rebuilt from `market/page.tsx` (the
@@ -88,9 +88,10 @@ export { pageHeading } from "./heading";
  * ## Fixed Header Architecture milestone
  *
  * The eyebrow/title block that used to open this page's own JSX now
- * renders once inside `AppHeader` (via `PageHeading`, reading this page's
- * own `pageHeading` - see `./heading.ts`) instead of here - this page
- * starts directly with `MarketToolbar`.
+ * renders once inside `AppHeader` (via `PageHeading`, which resolves this
+ * route's translated copy from `navigation.pageHeadings` - see
+ * `components/platform/layout/page-headings.ts`, Full Internationalization
+ * milestone) instead of here - this page starts directly with `MarketToolbar`.
  *
  * ## Transparent Freshness milestone
  *
@@ -189,9 +190,10 @@ export default async function DashboardPage({
     select: { minimumExportPrice: true, currency: true, automationEnabled: true },
   });
 
-  const [data, currentExportMode] = await Promise.all([
+  const [data, currentExportMode, t] = await Promise.all([
     getDashboardPageData(organizationId, automationSettings, params.date),
     getStoredExportMode(organizationId),
+    getTranslations("dashboard"),
   ]);
 
   // Inverters card's subtle Zero Export badge - see InvertersCard's own
@@ -216,88 +218,85 @@ export default async function DashboardPage({
       </div>
 
       {!data.plantAvailable ? (
-        <EmptyState
-          title="No plant connected"
-          description="Connect a FusionSolar plant to see live operational data, energy flow, and inverter status."
-        >
+        <EmptyState title={t("emptyState.title")} description={t("emptyState.description")}>
           <ConnectFusionSolarButton />
         </EmptyState>
       ) : (
         <>
           <section className="grid gap-2.5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
             <MarketSummaryCard
-              eyebrow="Yield Today"
+              eyebrow={t("kpis.yieldToday")}
               value={energyValueLabel(data.kpis.producedTodayKwh)}
               valueUnit={
                 data.kpis.producedTodayKwh !== null ? "kWh" : undefined
               }
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Waiting for telemetry",
-                "No historical production data available",
+                t("kpis.waitingForTelemetry"),
+                t("kpis.noHistoricalProductionData"),
               )}
             />
 
             <MarketSummaryCard
-              eyebrow="Total Yield"
+              eyebrow={t("kpis.totalYield")}
               value={mwhValueLabel(data.kpis.totalYieldKwh)}
               valueUnit={data.kpis.totalYieldKwh !== null ? "MWh" : undefined}
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Not available",
-                "Historical data not available",
+                t("kpis.notAvailable"),
+                t("kpis.historicalDataNotAvailable"),
               )}
             />
 
             <MarketSummaryCard
-              eyebrow="Consumption Today"
+              eyebrow={t("kpis.consumptionToday")}
               value={energyValueLabel(data.kpis.consumedTodayKwh)}
               valueUnit={
                 data.kpis.consumedTodayKwh !== null ? "kWh" : undefined
               }
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
+                t("kpis.waitingForTelemetry"),
+                t("kpis.historicalDataNotAvailable"),
               )}
             />
 
             <MarketSummaryCard
-              eyebrow="Consumed from PV"
+              eyebrow={t("kpis.consumedFromPv")}
               value={energyValueLabel(data.kpis.consumedFromPvKwh)}
               valueUnit={
                 data.kpis.consumedFromPvKwh !== null ? "kWh" : undefined
               }
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
+                t("kpis.waitingForTelemetry"),
+                t("kpis.historicalDataNotAvailable"),
               )}
             />
 
             <MarketSummaryCard
-              eyebrow="Fed to Grid"
+              eyebrow={t("kpis.fedToGrid")}
               value={energyValueLabel(data.kpis.exportedTodayKwh)}
               valueUnit={
                 data.kpis.exportedTodayKwh !== null ? "kWh" : undefined
               }
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
+                t("kpis.waitingForTelemetry"),
+                t("kpis.historicalDataNotAvailable"),
               )}
             />
 
             <MarketSummaryCard
-              eyebrow="From Grid"
+              eyebrow={t("kpis.fromGrid")}
               value={energyValueLabel(data.kpis.importedTodayKwh)}
               valueUnit={
                 data.kpis.importedTodayKwh !== null ? "kWh" : undefined
               }
               unavailableNote={unavailableNote(
                 data.isToday,
-                "Waiting for telemetry",
-                "Historical data not available",
+                t("kpis.waitingForTelemetry"),
+                t("kpis.historicalDataNotAvailable"),
               )}
             />
           </section>
@@ -306,10 +305,10 @@ export default async function DashboardPage({
             <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">
-                  System Overview
+                  {t("systemOverview.title")}
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Real-time energy flow
+                  {t("systemOverview.subtitle")}
                 </p>
               </div>
 
@@ -324,10 +323,10 @@ export default async function DashboardPage({
             <div className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
                 <h2 className="text-sm font-semibold text-white">
-                  Live Energy
+                  {t("liveEnergy.title")}
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Today&apos;s production, consumption, and grid exchange
+                  {t("liveEnergy.subtitle")}
                 </p>
               </div>
 
@@ -352,11 +351,11 @@ export default async function DashboardPage({
       )}
 
       <p className="text-xs text-slate-500">
-        Last telemetry:{" "}
+        {t("lastTelemetry.label")}{" "}
         <span className="text-slate-300">
           {data.plantAvailable && data.latestTelemetryAt
             ? sofiaDateTimeLabel(data.latestTelemetryAt)
-            : "No data"}
+            : t("lastTelemetry.noData")}
         </span>
       </p>
     </PageContainer>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 
 import type { ActionResult } from "@/app/[locale]/(platform)/settings/actions";
@@ -16,6 +17,7 @@ import type { ActionResult } from "@/app/[locale]/(platform)/settings/actions";
  * state that resets on every new result.
  */
 export function ActionToast({ result }: { result: ActionResult }) {
+  const t = useTranslations("settings.actionMessages");
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export function ActionToast({ result }: { result: ActionResult }) {
           : "border-red-500/20 bg-red-500/10 text-red-300"
       }`}
     >
-      {result.success ? "✓" : "✕"} {result.message}
+      {result.success ? "✓" : "✕"} {t(result.code as never, result.params as never)}
     </div>
   );
 }

@@ -1,4 +1,25 @@
 {
+  "page": {
+    "introReadOnly": "Automated rules configured for this plant.",
+    "intro": "Configure automated rules for this plant.",
+    "emptyStateTitle": "No plant connected",
+    "emptyStateDescription": "Connect a power plant to see live operational data, energy flow, and inverter status."
+  },
+  "batteryCard": {
+    "title": "Battery Optimization",
+    "noBatteryInstalled": "This plant has no battery storage installed."
+  },
+  "marketPriceCard": {
+    "title": "Market Price Optimization",
+    "subtitle": "Automatically stops exporting electricity to the grid when the market price falls below your threshold, and resumes automatically once the price recovers.",
+    "subtitleReadOnly": "Automatically stops exporting electricity to the grid when the market price falls below the configured threshold, and resumes automatically once the price recovers.",
+    "enableAutomation": "Enable automation",
+    "thresholdLabel": "When electricity price falls below (€/MWh)",
+    "savedToast": "Automation settings saved",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "exportStopsBelowLabel": "Export stops below"
+  },
   "eventLog": {
     "modeChangedSummary": "Switched to {mode}",
     "automationServiceFailedSummary": "Export mode change failed",

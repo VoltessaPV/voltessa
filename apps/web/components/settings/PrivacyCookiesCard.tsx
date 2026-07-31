@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 import { CookieSettingsLink } from "@/components/consent/CookieSettingsLink";
 import { routes } from "@/lib/routes";
 
@@ -13,36 +15,35 @@ import { SettingsCard } from "./SettingsCard";
  * cookie preferences aren't organization-scoped — every signed-in user
  * needs this regardless of role.
  */
-export function PrivacyCookiesCard() {
+export async function PrivacyCookiesCard() {
+  const t = await getTranslations("settings.privacyCookies");
+
   return (
-    <SettingsCard
-      title="Privacy & Cookies"
-      description="Manage your cookie preferences, or review our legal and privacy pages."
-    >
+    <SettingsCard title={t("title")} description={t("description")}>
       <div className="flex flex-wrap items-center gap-3">
         <CookieSettingsLink className="rounded-xl border border-white/15 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10">
-          Manage Cookie Preferences
+          {t("manageCookiePreferencesButton")}
         </CookieSettingsLink>
 
         <a
           href={routes.privacy}
           className="text-sm text-slate-400 underline-offset-4 transition hover:text-white hover:underline"
         >
-          Privacy Policy
+          {t("privacyPolicyLink")}
         </a>
 
         <a
           href={routes.cookiePolicy}
           className="text-sm text-slate-400 underline-offset-4 transition hover:text-white hover:underline"
         >
-          Cookie Policy
+          {t("cookiePolicyLink")}
         </a>
 
         <a
           href={routes.terms}
           className="text-sm text-slate-400 underline-offset-4 transition hover:text-white hover:underline"
         >
-          Terms of Service
+          {t("termsLink")}
         </a>
       </div>
     </SettingsCard>

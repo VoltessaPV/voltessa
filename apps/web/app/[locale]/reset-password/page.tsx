@@ -1,5 +1,6 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
+import { Link } from "@/lib/i18n/navigation";
 
 import { auth } from "@/auth";
 import { AuthCard } from "@/components/auth/AuthCard";
@@ -8,9 +9,10 @@ import { routes } from "@/lib/routes";
 
 import { ResetPasswordForm } from "./ResetPasswordForm";
 
-export const metadata = {
-  title: "Reset Password",
-};
+export async function generateMetadata() {
+  const t = await getTranslations("auth.resetPassword");
+  return { title: t("title") };
+}
 
 type ResetPasswordPageProps = {
   searchParams: Promise<{ token?: string }>;
@@ -24,25 +26,23 @@ export default async function ResetPasswordPage({ searchParams }: ResetPasswordP
   }
 
   const { token } = await searchParams;
+  const t = await getTranslations("auth.resetPassword");
 
   if (!token) {
     return (
-      <AuthCard
-        title="Invalid reset link"
-        subtitle="This link is missing or invalid. Request a new one."
-      >
+      <AuthCard title={t("invalidLinkTitle")} subtitle={t("invalidLinkSubtitle")}>
         <Link
           href={routes.forgotPassword}
           className={buttonClassName("primary", "block w-full text-center")}
         >
-          Request a new link
+          {t("requestNewLinkButton")}
         </Link>
       </AuthCard>
     );
   }
 
   return (
-    <AuthCard title="Set a new password" subtitle="Choose a new password for your account.">
+    <AuthCard title={t("title")} subtitle={t("subtitle")}>
       <ResetPasswordForm token={token} />
     </AuthCard>
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import {
@@ -18,14 +19,8 @@ type SecurityCardProps = {
   hasPassword: boolean;
 };
 
-function authenticationLabel(isGoogleConnected: boolean, hasPassword: boolean): string {
-  if (isGoogleConnected) {
-    return hasPassword ? "Google + Password" : "Google Account";
-  }
-  return "Password";
-}
-
 export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardProps) {
+  const t = useTranslations("settings.security");
   const [createResult, createFormAction, isCreatingPending] = useActionState<
     ActionResult,
     FormData
@@ -35,33 +30,37 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
     FormData
   >(changePassword, null);
 
+  const authenticationLabel = isGoogleConnected
+    ? hasPassword
+      ? t("googleAndPassword")
+      : t("googleAccount")
+    : t("password");
+
   return (
-    <SettingsCard title="Security" description="Authentication and password.">
+    <SettingsCard title={t("title")} description={t("description")}>
       <div className="space-y-4">
         <div>
-          <p className="text-xs font-medium text-slate-500">Authentication</p>
-          <p className="mt-1 text-sm text-white">
-            {authenticationLabel(isGoogleConnected, hasPassword)}
-          </p>
+          <p className="text-xs font-medium text-slate-500">{t("authenticationLabel")}</p>
+          <p className="mt-1 text-sm text-white">{authenticationLabel}</p>
         </div>
 
         <div className="border-t border-white/10 pt-4">
           {!hasPassword ? (
             <>
-              <p className="text-xs font-medium text-slate-500">Password</p>
-              <p className="mt-1 text-sm text-slate-400">No password configured</p>
+              <p className="text-xs font-medium text-slate-500">{t("password")}</p>
+              <p className="mt-1 text-sm text-slate-400">{t("noPasswordConfigured")}</p>
 
               <form action={createFormAction} className="mt-4 space-y-3">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <FormField
-                    label="New password"
+                    label={t("newPasswordLabel")}
                     name="newPassword"
                     type="password"
                     autoComplete="new-password"
                     required
                   />
                   <FormField
-                    label="Confirm password"
+                    label={t("confirmPasswordLabel")}
                     name="confirmPassword"
                     type="password"
                     autoComplete="new-password"
@@ -72,8 +71,8 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
                 <div className="flex justify-end pt-1">
                   <SubmitButton
                     isPending={isCreatingPending}
-                    label="Create Password"
-                    pendingLabel="Creating..."
+                    label={t("createPasswordButton")}
+                    pendingLabel={t("creatingButton")}
                   />
                 </div>
               </form>
@@ -81,7 +80,7 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
           ) : (
             <form action={changeFormAction} className="space-y-3">
               <FormField
-                label="Current password"
+                label={t("currentPasswordLabel")}
                 name="currentPassword"
                 type="password"
                 autoComplete="current-password"
@@ -90,14 +89,14 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <FormField
-                  label="New password"
+                  label={t("newPasswordLabel")}
                   name="newPassword"
                   type="password"
                   autoComplete="new-password"
                   required
                 />
                 <FormField
-                  label="Confirm password"
+                  label={t("confirmPasswordLabel")}
                   name="confirmPassword"
                   type="password"
                   autoComplete="new-password"
@@ -108,8 +107,8 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
               <div className="flex justify-end pt-1">
                 <SubmitButton
                   isPending={isChangingPending}
-                  label="Change Password"
-                  pendingLabel="Changing..."
+                  label={t("changePasswordButton")}
+                  pendingLabel={t("changingButton")}
                 />
               </div>
             </form>
@@ -118,9 +117,9 @@ export function SecurityCard({ isGoogleConnected, hasPassword }: SecurityCardPro
 
         <div className="border-t border-white/10 pt-4">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm text-white">Two-factor authentication</p>
+            <p className="text-sm text-white">{t("twoFactorLabel")}</p>
             <span className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] font-medium text-slate-500">
-              Coming soon
+              {t("comingSoon")}
             </span>
           </div>
         </div>
