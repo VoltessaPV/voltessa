@@ -29,13 +29,31 @@ type SaveConsentInput = {
  * writing a first-party cookie through a Server Action rather than raw
  * client-side `document.cookie`.
  *
- * Writes two things, in this order: the `voltessa-consent` cookie (what the
- * rest of the app reads to decide what to render — see
- * `lib/consent/session.ts`), and a `ConsentLog` row (the append-only proof-
- * of-consent record — see that model's own schema comment for why it's
- * never updated or superseded). `getCurrentUser()` is best-effort: most
- * consent decisions happen before signup, where it's `null` and the log row
- * is written with `userId: null`.
+ * Writes two things: the `voltessa-consent` cookie (what the rest of the app
+ * reads to decide what to render — see `lib/consent/session.ts`), and a
+ * `ConsentLog` row (the append-only proof-of-consent record — see that
+ * model's own schema comment for why it's never updated or superseded).
+ * `getCurrentUser()` is best-effort: most consent decisions happen before
+ * signup, where it's `null` and the log row is written with `userId: null`.
+ *
+ * The `ConsentLog` write is deliberately wrapped in its own try/catch and
+ * never allowed to throw out of this function — the cookie write above (the
+ * thing that actually governs what the user sees and what scripts are
+ * allowed to run) must always succeed and this function must always
+ * resolve, even if the log write fails. This isn't a defensive guess: a
+ * production incident on this exact database showed both that a missing
+ * migration made this call throw (P2021, `ConsentLog` didn't exist yet —
+ * now fixed by deploying the migration) and, independently, that this
+ * database has real, recurring transient connectivity failures (see the
+ * Market Price Optimization / FusionSolar Telemetry Sync / Daily
+ * Reconciliation jobs' own "Can't reach database server" errors in
+ * production logs, predating this milestone). An uncaught exception here
+ * previously propagated out of the Server Action and surfaced to the user
+ * as Next.js's generic "This page couldn't load" error — exactly the
+ * "Accept All" bug reported in production. Mirrors the same principle
+ * `sendAutomationNotification` (`lib/notifications/automation-notifications.ts`)
+ * already established: a secondary logging/notification concern must never
+ * fail the primary action.
  */
 export async function saveConsent(input: SaveConsentInput): Promise<void> {
   const payload: ConsentPayload = {
@@ -56,23 +74,27 @@ export async function saveConsent(input: SaveConsentInput): Promise<void> {
     maxAge: CONSENT_COOKIE_MAX_AGE_SECONDS,
   });
 
-  const [currentUser, headerList] = await Promise.all([
-    getCurrentUser().catch(() => null),
-    headers(),
-  ]);
+  try {
+    const [currentUser, headerList] = await Promise.all([
+      getCurrentUser().catch(() => null),
+      headers(),
+    ]);
 
-  await prisma.consentLog.create({
-    data: {
-      userId: currentUser?.id ?? null,
-      version: CONSENT_VERSION,
-      necessary: true,
-      functional: input.functional,
-      analytics: input.analytics,
-      marketing: input.marketing,
-      action: input.action,
-      userAgent: headerList.get("user-agent"),
-    },
-  });
+    await prisma.consentLog.create({
+      data: {
+        userId: currentUser?.id ?? null,
+        version: CONSENT_VERSION,
+        necessary: true,
+        functional: input.functional,
+        analytics: input.analytics,
+        marketing: input.marketing,
+        action: input.action,
+        userAgent: headerList.get("user-agent"),
+      },
+    });
+  } catch (error) {
+    console.error("[Consent] Failed to write ConsentLog", { action: input.action, error });
+  }
 }
 
 /** Backs the small EN/BG toggle on the banner, preferences modal, and legal pages. */
