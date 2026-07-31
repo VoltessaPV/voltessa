@@ -1,10 +1,14 @@
 name: CI
 
-# Voltessa CI: install, lint, type-check, build. No deployment happens here —
-# apps/web deploys via Vercel's own Git integration on push to main (see
-# docs/DEVELOPMENT_WORKFLOW.md), and apps/api has no deployment target yet.
-# This workflow exists to keep `main` deployable, per the Definition of Done in
-# CLAUDE.md: `pnpm lint`, `turbo check-types`, and `turbo build` must all pass.
+# Voltessa CI: install, lint, type-check, build, e2e. No deployment happens
+# here — apps/web deploys via Vercel's own Git integration on push to main
+# (see docs/DEVELOPMENT_WORKFLOW.md), and apps/api has no deployment target
+# yet. This workflow exists to keep `main` deployable, per the Definition of
+# Done in CLAUDE.md: `pnpm lint`, `turbo check-types`, and `turbo build` must
+# all pass. The e2e step (apps/web's first automated test, see
+# docs/TESTING.md) runs Playwright against the build the preceding step just
+# produced, scoped to what's true with no real database behind it — this
+# workflow's `DATABASE_URL` below is still just a placeholder.
 
 on:
   push:
@@ -74,3 +78,9 @@ jobs:
 
       - name: Build
         run: pnpm exec turbo build
+
+      - name: Install Playwright browsers
+        run: pnpm --filter web exec playwright install --with-deps chromium
+
+      - name: E2E tests (admin routing regression suite)
+        run: pnpm --filter web run test:e2e

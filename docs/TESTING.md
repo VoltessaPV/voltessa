@@ -2,11 +2,13 @@
 
 ## Current state (be honest about this)
 
-- **`apps/web` has zero automated tests.** There are no `*.test.ts`/`*.spec.ts` files anywhere
-  under `apps/web`. Commit messages like `test FusionSolar access token refresh helper` in the
-  history refer to manual testing via diagnostic routes (`app/api/diag/fusionsolar-*`), not
-  automated tests — those diagnostic endpoints are the closest thing to an integration-test harness
-  the project currently has, and they hit the real (or gateway-proxied) FusionSolar API.
+- **`apps/web` has one automated test suite**, `apps/web/e2e/admin-routing.spec.ts` (Playwright,
+  added as a regression test for the admin-locale-prefix bug — see "Adding tests to `apps/web`"
+  below). There is still no unit test runner and no `*.test.ts`/`*.spec.ts` coverage of pure
+  functions. Commit messages like `test FusionSolar access token refresh helper` in the history
+  refer to manual testing via diagnostic routes (`app/api/diag/fusionsolar-*`), not automated tests —
+  those diagnostic endpoints are the closest thing to an integration-test harness for the FusionSolar
+  integration specifically, and they hit the real (or gateway-proxied) FusionSolar API.
 - **`apps/api` has exactly one test**, the NestJS-generated boilerplate
   (`apps/api/src/app.controller.spec.ts`, checks `AppController.getHello()` returns `"Hello
   World!"`) plus an unmodified e2e boilerplate spec (`apps/api/test/app.e2e-spec.ts`). None of the
@@ -35,8 +37,18 @@ pnpm test:debug              # attach a debugger, runs in-band
 pnpm test:e2e                # separate config: apps/api/test/jest-e2e.json
 ```
 
-`apps/web`: no test runner is configured. If you add the first test file, you'll also need to add a
-test script and a runner (see "Adding tests to apps/web" below) — don't assume one silently exists.
+`apps/web` (Playwright, `apps/web/playwright.config.ts`):
+
+```sh
+cd apps/web
+npx playwright install --with-deps chromium   # first run only, or after a Playwright version bump
+pnpm run test:e2e                             # builds nothing itself — run `pnpm build` first
+```
+
+`test:e2e`'s `webServer` runs `pnpm start` against whatever is already in `apps/web/.next` — it does
+not rebuild for you, so run `pnpm build` (or `turbo build --filter=web`) first if you've changed
+anything. This is the only test runner configured for `apps/web` today; there is still no unit test
+runner (see "Adding tests to apps/web" below) — don't assume one silently exists.
 
 ## What to prioritize testing, in order
 
@@ -91,14 +103,33 @@ Place `*.spec.ts` next to the file it tests, inside the same feature folder (`de
 
 ## Adding tests to `apps/web`
 
-There is no runner configured yet. Since `apps/web` is Next.js/React 19 with server-only logic
-(Prisma, Server Actions, route handlers) and no client components at all today, prefer a
-Node-based unit test runner over a browser/component-testing setup — the highest-value coverage
-(see the priority list above) is plain async functions, not rendered UI. Whatever runner you
-introduce (Vitest is the natural fit given Next.js 16 + ESM `"type": "module"` in
-`apps/web/package.json`), add the corresponding `test`/`test:watch` scripts to
+No unit test runner is configured yet. Since `apps/web` is Next.js/React 19 with server-only logic
+(Prisma, Server Actions, route handlers) and mostly-server components today, prefer a Node-based
+unit test runner over a browser/component-testing setup for that kind of coverage — the
+highest-value coverage (see the priority list above) is plain async functions, not rendered UI.
+Whatever runner you introduce for that (Vitest is the natural fit given Next.js 16 + ESM
+`"type": "module"` in `apps/web/package.json`), add the corresponding `test`/`test:watch` scripts to
 `apps/web/package.json` and document them here and in `CLAUDE.md`'s Commands section in the same
 PR — don't add a test file without also making it runnable via a documented command.
+
+`apps/web/e2e/admin-routing.spec.ts` is the one exception to "prefer Node-based unit tests above":
+it's a regression test for a routing/middleware bug (a `/en/admin`/`/bg/admin` locale prefix that
+should never exist, fixed via `proxy.ts`'s `LOCALIZED_ADMIN_PREFIX_RE` and `AppSidebar.tsx`'s admin
+nav links switching from next-intl's locale-aware `Link` to plain `next/link`) where the thing worth
+testing *is* an HTTP redirect/status code produced by `proxy.ts` and `app/admin/layout.tsx` working
+together — there's no meaningful way to unit-test that without actually running the server, so
+Playwright (`apps/web/playwright.config.ts`) was added for this one case. It deliberately stays
+within what's true for an **unauthenticated** request only: CI has no real database (see
+`.github/workflows/ci.yml`'s placeholder `DATABASE_URL`), and `getCurrentUser()`
+(`lib/auth/session.ts`) returns `null` before any Prisma call when there's no session, so every
+assertion in that spec is safe to run against a database-less `next start`. It does not attempt to
+render the sidebar as an authenticated Platform Admin (that would need a real session/database); the
+"no admin sidebar link is locale-prefixed" half of that regression is instead covered by a
+source-level check that reads `AppSidebar.tsx`'s text directly and asserts its `adminNavigation`
+hrefs and rendering (`NextLink` from `next/link`, not the locale-aware `Link`) haven't regressed.
+Future Playwright specs following this precedent should keep the same constraint in mind — anything
+requiring a real signed-in user is out of scope until `apps/web` has a way to seed a test database in
+CI.
 
 Do not write tests that hit the real FusionSolar gateway or a real Google OAuth flow. Mock
 `fetch`/the gateway boundary (`callFusionSolarApi`) and the Prisma client at the function boundary

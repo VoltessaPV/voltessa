@@ -127,8 +127,17 @@ pnpm test:cov
 pnpm test:e2e                      # e2e config in test/jest-e2e.json
 ```
 
-`apps/web` has **no automated tests today** — see `docs/TESTING.md` for the current state and how
-to add coverage.
+`apps/web` tests — Playwright, run from `apps/web/` against an already-built `.next` (run `pnpm
+build` first):
+
+```sh
+npx playwright install --with-deps chromium   # first run only
+pnpm run test:e2e
+```
+
+This is currently one regression suite (`e2e/admin-routing.spec.ts`, covering the
+`/en/admin`/`/bg/admin` locale-prefix regression), not general coverage — see `docs/TESTING.md` for
+the current state and how to add more.
 
 `apps/web` Prisma:
 
@@ -294,10 +303,12 @@ route still exists but is no longer invoked by anything scheduled (superseded by
 - `apps/api/src/market.controller.ts` is an orphaned duplicate of
   `apps/api/src/market/market.controller.ts`; it is not registered in `app.module.ts` and is dead
   code.
-- `apps/web` has zero automated tests (see `docs/TESTING.md`).
-- CI (`.github/workflows/ci.yml`) runs lint, type-check and build on push/PR, but does not run
-  tests (there is little to run — see `docs/TESTING.md`) and does not deploy; deployment stays on
-  Vercel's Git integration (`docs/DEVELOPMENT_WORKFLOW.md`).
+- `apps/web` has exactly one automated test suite, a Playwright regression suite for admin routing
+  (`apps/web/e2e/admin-routing.spec.ts`) — everything else (pure functions, Server Actions, route
+  handlers) still has zero coverage (see `docs/TESTING.md`).
+- CI (`.github/workflows/ci.yml`) runs lint, type-check, build, and the one Playwright suite above
+  on push/PR, but does not deploy; deployment stays on Vercel's Git integration
+  (`docs/DEVELOPMENT_WORKFLOW.md`).
 - `lib/result.ts` (`Result<T>`) and `lib/errors.ts` (`AppError`) exist but are not consistently
   used — most `lib/fusionsolar/*` code throws plain `Error`/custom error classes directly instead.
 - `lib/logger.ts` exists but most error paths call `console.error`/`console.log` directly instead
