@@ -142,18 +142,15 @@ export type MarketPageResult =
        * Real price points at native resolution across the whole selected
        * period — one day's worth (unchanged) for "today", up to a full
        * year's worth for "year". This is what Insights/Distribution/Revenue
-       * are computed from; see `chartSeries` for what the chart itself
-       * renders.
+       * are computed from. Historical Analytics Refinement milestone:
+       * `page.tsx` also feeds this (paired with
+       * `production-data.ts`'s `settlementEnergySeries`) into the Price &
+       * Export chart's real Average Selling Price computation for
+       * Week/Month/Year — that combination lives in `page.tsx`, not here,
+       * since this module deliberately never imports `production-data.ts`
+       * (see this file's own top doc comment).
        */
       series: MarketPricePoint[];
-      /**
-       * What `MarketPriceChart` actually plots: `series` unchanged for
-       * "today" (already just one day, native resolution), but bucketed to
-       * one point per calendar day (Week/Month) or per calendar month
-       * (Year) otherwise — see `buildPeriodChartSeries`. Never a second
-       * query: built entirely from `series`, already fetched above.
-       */
-      chartSeries: MarketPricePoint[];
       /**
        * Same shape as `series`, for the previous calendar period — only
        * present when `period !== "today"`. `page.tsx` feeds this into the
@@ -368,58 +365,6 @@ export function buildInsights(
 }
 
 /** `YYYY-MM-DD` or `YYYY-MM` bucket key for a given instant, in Europe/Sofia — same technique `dashboard-data.ts`'s own `bucketKey` uses, duplicated per this codebase's established small-helper convention rather than a shared utility module. */
-function priceBucketKey(instant: Date, granularity: "day" | "month"): string {
-  const dateStr = formatDateInZone(instant, BULGARIA_TIMEZONE);
-  return granularity === "day" ? dateStr : dateStr.slice(0, 7);
-}
-
-/**
- * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). What
- * `MarketPriceChart` actually renders for Week/Month/Year: one point per
- * calendar day (Week/Month) or per calendar month (Year), each `price` the
- * average of the real known prices in that bucket — never a second query,
- * built entirely from the already-fetched, native-resolution `knownPoints`
- * Insights/Distribution also use. `exportEnabled` is recomputed against the
- * bucket's average price purely for shape-consistency with `MarketPricePoint`
- * — the chart itself never reads that field.
- */
-function buildPeriodPriceChartSeries(
-  period: "week" | "month" | "year",
-  knownPoints: Array<MarketPricePoint & { price: number }>,
-  threshold: ExportThresholdConfig,
-): MarketPricePoint[] {
-  const granularity: "day" | "month" = period === "year" ? "month" : "day";
-
-  const sumByBucket = new Map<string, number>();
-  const countByBucket = new Map<string, number>();
-  const instantByBucket = new Map<string, number>();
-
-  for (const point of knownPoints) {
-    const key = priceBucketKey(point.timestamp, granularity);
-    sumByBucket.set(key, (sumByBucket.get(key) ?? 0) + point.price);
-    countByBucket.set(key, (countByBucket.get(key) ?? 0) + 1);
-    if (!instantByBucket.has(key)) {
-      instantByBucket.set(key, point.timestamp.getTime());
-    }
-  }
-
-  const keys = [...instantByBucket.keys()].sort(
-    (a, b) => (instantByBucket.get(a) as number) - (instantByBucket.get(b) as number),
-  );
-
-  return keys.map((key) => {
-    const averagePrice =
-      Math.round(((sumByBucket.get(key) as number) / (countByBucket.get(key) as number)) * 100) /
-      100;
-
-    return {
-      timestamp: new Date(instantByBucket.get(key) as number),
-      price: averagePrice,
-      exportEnabled: isExportRecommended(averagePrice, threshold),
-    };
-  });
-}
-
 /** Builds the translated `MarketEventLogEntry[]` shared by both branches of `getMarketPageData` below — extracted so neither branch duplicates this mapping. */
 function buildEventLog(
   recentEvents: Awaited<ReturnType<typeof getRecentAutomationEvents>>,
@@ -582,7 +527,6 @@ export async function getMarketPageData(params: {
       dataAvailable: true,
       threshold,
       series,
-      chartSeries: buildPeriodPriceChartSeries(period, knownPoints, threshold),
       previousPeriodSeries,
       isPartialImport: false,
       summary,
@@ -727,7 +671,6 @@ export async function getMarketPageData(params: {
     dataAvailable: true,
     threshold,
     series,
-    chartSeries: series,
     isPartialImport: isToday && importStatus.available && importStatus.isPartial,
     summary,
     eventLog: buildEventLog(recentEvents, tEventLog, tDecisionReasons, tTerm),

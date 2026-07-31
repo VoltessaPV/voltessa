@@ -84,6 +84,7 @@
   },
   "priceChart": {
     "electricityPrice": "Цена на електроенергията",
+    "averageSellingPrice": "Средна продажна цена",
     "exportThreshold": "Праг за износ",
     "exportThresholdLabel": "ПРАГ ЗА ИЗНОС",
     "exportedEnergy": "Изнесена енергия",

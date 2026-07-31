@@ -25,7 +25,7 @@ import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSol
 import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
-import { getMarketPageData } from "./market-data";
+import { getMarketPageData, type MarketPricePoint } from "./market-data";
 import { getProductionPageData } from "./production-data";
 
 
@@ -123,6 +123,94 @@ function bucketSettlementForChart(
     intervalStart: new Date(instantByBucket.get(key) as number),
     exportedKwh: Math.round((sumByBucket.get(key) as number) * 100) / 100,
   }));
+}
+
+/**
+ * Historical Analytics Refinement milestone. The Price & Export chart's
+ * blue line for Week/Month/Year: the plant's real Average Selling Price
+ * per bucket — `Σ(exportedKwh × price) / Σ(exportedKwh)`, calculated once
+ * from bucket TOTALS, never as an average of already-averaged daily/
+ * interval prices (the mathematically correct weighted average). This is
+ * a genuinely different business metric from the raw ENTSO-E price
+ * `market-data.ts`'s own `series` carries — it only equals the price when
+ * the plant happened to export perfectly evenly across every price level,
+ * which real export patterns never do.
+ *
+ * Computed here, not in `market-data.ts`, because it combines real price
+ * (`market-data.ts`) with real exported energy (`production-data.ts`) —
+ * the same two independent modules `computeExportRevenue` below already
+ * combines for the period TOTAL (the Revenue card's own "Average selling
+ * price" row); this is that identical math, per calendar bucket instead
+ * of once over the whole period. Both already-fetched native-resolution
+ * arrays are reused as-is — no second query.
+ *
+ * `null` (never `0`) whenever a bucket exported nothing, so the chart
+ * renders a real gap (`Line`'s `connectNulls={false}`) instead of a
+ * fabricated zero price — dividing by zero exported energy is never
+ * attempted.
+ */
+function buildAspChartSeries(
+  period: "week" | "month" | "year",
+  priceSeries: MarketPricePoint[],
+  settlementSeries: SettlementEnergyPoint[],
+): MarketPricePoint[] {
+  const granularity: "day" | "month" = period === "year" ? "month" : "day";
+  const bucketKey = (instant: Date) => {
+    const dateStr = formatDateInZone(instant, "Europe/Sofia");
+    return granularity === "day" ? dateStr : dateStr.slice(0, 7);
+  };
+
+  const priceByTime = new Map(
+    priceSeries
+      .filter((point): point is MarketPricePoint & { price: number } => point.price !== null)
+      .map((point) => [point.timestamp.getTime(), point.price]),
+  );
+
+  const revenueByBucket = new Map<string, number>();
+  const exportedByBucket = new Map<string, number>();
+  const instantByBucket = new Map<string, number>();
+
+  for (const point of settlementSeries) {
+    if (point.exportedKwh === null) {
+      continue;
+    }
+
+    const price = priceByTime.get(point.intervalStart.getTime());
+    if (price === undefined) {
+      // No matching real price for this real settlement interval - this
+      // interval simply doesn't contribute to either total, exactly like
+      // `computeExportRevenue`'s own handling of the same case.
+      continue;
+    }
+
+    const key = bucketKey(point.intervalStart);
+    revenueByBucket.set(key, (revenueByBucket.get(key) ?? 0) + (point.exportedKwh * price) / 1000);
+    exportedByBucket.set(key, (exportedByBucket.get(key) ?? 0) + point.exportedKwh);
+    if (!instantByBucket.has(key)) {
+      instantByBucket.set(key, point.intervalStart.getTime());
+    }
+  }
+
+  const keys = [...instantByBucket.keys()].sort(
+    (a, b) => (instantByBucket.get(a) as number) - (instantByBucket.get(b) as number),
+  );
+
+  return keys.map((key) => {
+    const exportedKwh = exportedByBucket.get(key) ?? 0;
+    const revenueEur = revenueByBucket.get(key) ?? 0;
+    const averageSellingPrice =
+      exportedKwh > 0 ? Math.round((revenueEur / (exportedKwh / 1000)) * 100) / 100 : null;
+
+    return {
+      timestamp: new Date(instantByBucket.get(key) as number),
+      price: averageSellingPrice,
+      // Export-threshold recommendation has no meaning for a historical
+      // Average Selling Price point - the chart never renders the
+      // threshold line/legend for these periods either (see `page.tsx`'s
+      // `showThreshold` prop).
+      exportEnabled: false,
+    };
+  });
 }
 
 /**
@@ -230,8 +318,9 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicMarketPriceChart
-                    series={data.chartSeries}
+                    series={data.series}
                     thresholdPrice={data.threshold.minimumExportPrice}
+                    showThreshold={period === "today"}
                     xAxisUnit={period === "today" ? "time" : period === "year" ? "month" : "day"}
                   />
                 </Suspense>
@@ -505,8 +594,22 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <div className="mt-2.5 h-[200px] sm:h-[280px] lg:h-[320px] xl:h-[380px]">
               <Suspense fallback={<ChartSkeleton />}>
                 <DynamicMarketPriceChart
-                  series={data.chartSeries}
+                  // Historical Analytics Refinement milestone: Today's blue
+                  // line stays the real ENTSO-E price (`data.series`,
+                  // unchanged); Week/Month/Year switch to the plant's real
+                  // Average Selling Price per bucket (`buildAspChartSeries`)
+                  // — a genuinely different business metric, never a
+                  // relabeled copy of the same price values.
+                  series={
+                    period === "today"
+                      ? data.series
+                      : buildAspChartSeries(period, data.series, production.settlementEnergySeries)
+                  }
                   thresholdPrice={data.threshold.minimumExportPrice}
+                  // Export Threshold is an operational, today-only concept —
+                  // never shown against a historical Average Selling Price.
+                  showThreshold={period === "today"}
+                  priceMetric={period === "today" ? "electricity" : "averageSelling"}
                   nowAnnotation={nowAnnotation}
                   xAxisUnit={period === "today" ? "time" : period === "year" ? "month" : "day"}
                   // production-data.ts computes this for whichever day is
@@ -516,9 +619,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                   // telemetry missing" bug (this used to be unconditionally
                   // suppressed for any non-today day). For Week/Month/Year,
                   // bucketed to one point per day/month via
-                  // `bucketSettlementForChart` — same technique
-                  // `market-data.ts`'s `buildPeriodPriceChartSeries` uses for
-                  // the price line, applied here to the exported-energy bars.
+                  // `bucketSettlementForChart`, applied to the exported-
+                  // energy bars (the same real per-interval data
+                  // `buildAspChartSeries` above also reads for the price
+                  // line, just bucketed independently for its own purpose).
                   //
                   // Narrowed to the two fields MarketPriceChart actually
                   // reads — `importedKwh` is real data used elsewhere (KPI
