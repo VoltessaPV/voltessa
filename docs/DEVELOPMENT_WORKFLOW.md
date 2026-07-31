@@ -100,6 +100,10 @@ check:
 
 ## Deployment workflow
 
+See `docs/PRODUCTION_VALIDATION_CHECKLIST.md` for the full commit-through-production-verification
+checklist (PR/CI/merge, preview verification, production deployment, production smoke test,
+completion criteria) — the notes below are the deployment mechanics specific to this repo.
+
 - **`apps/web`** deploys to **Vercel**, configured via `apps/web/vercel.json`. FusionSolar-related
   route handlers (`app/api/auth/fusionsolar/callback`, the `fusionsolar-*` diagnostic routes under
   `app/api/diag`) are pinned to the `fra1` (Frankfurt) region — keep new FusionSolar-related
