@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import NextLink from "next/link";
 import { Link } from "@/lib/i18n/navigation";
 import { useState } from "react";
 
@@ -70,6 +71,15 @@ function buildTraderNavigation(t: ReturnType<typeof useTranslations<"navigation.
  * localized platform tree — "Platform Admin remains English-only" and
  * "Admin navigation" is explicitly named as out of scope. Fixed English
  * literals, matching `/admin`'s own English-pinned layout. See ADR-014.
+ *
+ * These hrefs are rendered with plain `next/link` (`NextLink` below), never
+ * the locale-aware `Link` from `lib/i18n/navigation` used for every other
+ * nav item in this file — that Link automatically prepends the current
+ * locale to whatever href it's given, which silently turned `/admin` into
+ * `/en/admin` (a route that doesn't exist - `/admin` is its own root,
+ * physically outside `app/[locale]/`, so that 404s) the one time this used
+ * the wrong Link. `/admin/*` must render byte-for-byte as typed, regardless
+ * of which locale the surrounding (customer-facing) sidebar is in.
  */
 const adminNavigation = [
   {
@@ -140,7 +150,7 @@ function SidebarNav({
           </div>
 
           {adminNavigation.map((item) => (
-            <Link
+            <NextLink
               key={item.href}
               href={item.href}
               onClick={onNavigate}
@@ -148,7 +158,7 @@ function SidebarNav({
             >
               <item.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
               {item.label}
-            </Link>
+            </NextLink>
           ))}
         </div>
       )}
