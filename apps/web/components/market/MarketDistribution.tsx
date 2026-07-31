@@ -1,3 +1,7 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
 import type { DistributionBucket } from "@/app/[locale]/(platform)/market/market-data";
 
 type MarketDistributionProps = {
@@ -18,6 +22,7 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 /** Static SVG ring chart (stacked circles + stroke-dasharray) — no charting-library client boundary needed. */
 export function MarketDistribution({ buckets }: MarketDistributionProps) {
+  const t = useTranslations("market.distribution");
   let cumulativePercentage = 0;
 
   const dominant: DistributionBucket | undefined = buckets.reduce<
@@ -31,7 +36,7 @@ export function MarketDistribution({ buckets }: MarketDistributionProps) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-        Price Distribution
+        {t("title")}
       </p>
 
       <div className="mt-3 flex items-center gap-5">

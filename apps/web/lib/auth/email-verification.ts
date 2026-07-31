@@ -74,7 +74,7 @@ export async function sendVerificationEmail(
     console.log(`[Email Verification] Verification URL for ${email}: ${verificationUrl}`);
   }
 
-  await deliverVerificationEmail(email, verificationUrl);
+  await deliverVerificationEmail(email, verificationUrl, userId);
 
   return { sent: true };
 }

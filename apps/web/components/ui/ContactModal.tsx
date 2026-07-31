@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useEffect, useState, useTransition } from "react";
 
 import { submitContactRequest } from "@/app/[locale]/(marketing)/actions";
@@ -26,8 +27,10 @@ type ContactModalProps = {
  * useBodyScrollLock hook used there.
  */
 export function ContactModal({ open, onClose }: ContactModalProps) {
+  const t = useTranslations("marketing.contactModal");
+  const tErrors = useTranslations("marketing.contactModal.errors");
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
 
   useBodyScrollLock(open);
@@ -35,7 +38,7 @@ export function ContactModal({ open, onClose }: ContactModalProps) {
   // Reset to a fresh form each time the modal is (re)opened.
   useEffect(() => {
     if (open) {
-      setError(null);
+      setErrorCode(null);
       setSubmitted(false);
     }
   }, [open]);
@@ -66,13 +69,13 @@ export function ContactModal({ open, onClose }: ContactModalProps) {
     }
 
     const formData = new FormData(event.currentTarget);
-    setError(null);
+    setErrorCode(null);
 
     startTransition(async () => {
       const result = await submitContactRequest(formData);
 
       if (!result.ok) {
-        setError(result.error);
+        setErrorCode(result.code);
         return;
       }
 
@@ -91,15 +94,15 @@ export function ContactModal({ open, onClose }: ContactModalProps) {
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Talk to us"
+        aria-label={t("ariaLabel")}
       >
         <div className="flex items-start justify-between gap-4">
-          <h2 className="text-xl font-semibold text-white">Talk to Us</h2>
+          <h2 className="text-xl font-semibold text-white">{t("title")}</h2>
 
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("closeLabel")}
             className="rounded-lg p-1.5 text-slate-400 transition hover:bg-white/5 hover:text-white"
           >
             <X className="h-5 w-5" />
@@ -108,87 +111,85 @@ export function ContactModal({ open, onClose }: ContactModalProps) {
 
         {submitted ? (
           <div className="mt-8 py-6 text-center">
-            <p className="text-lg font-medium text-white">Thank you.</p>
-            <p className="mt-2 text-sm text-slate-400">
-              We will contact you shortly.
-            </p>
+            <p className="text-lg font-medium text-white">{t("thankYouTitle")}</p>
+            <p className="mt-2 text-sm text-slate-400">{t("thankYouDescription")}</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
             <label className={labelClassName}>
-              Full Name *
+              {t("fullNameLabel")}
               <input
                 type="text"
                 name="fullName"
                 required
                 className={inputClassName}
-                placeholder="Jane Doe"
+                placeholder={t("fullNamePlaceholder")}
               />
             </label>
 
             <label className={labelClassName}>
-              Company *
+              {t("companyLabel")}
               <input
                 type="text"
                 name="company"
                 required
                 className={inputClassName}
-                placeholder="Acme Renewables"
+                placeholder={t("companyPlaceholder")}
               />
             </label>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <label className={labelClassName}>
-                Email *
+                {t("emailLabel")}
                 <input
                   type="email"
                   name="email"
                   required
                   className={inputClassName}
-                  placeholder="jane@acme.com"
+                  placeholder={t("emailPlaceholder")}
                 />
               </label>
 
               <label className={labelClassName}>
-                Phone (optional)
+                {t("phoneLabel")}
                 <input
                   type="tel"
                   name="phone"
                   className={inputClassName}
-                  placeholder="+1 555 000 0000"
+                  placeholder={t("phonePlaceholder")}
                 />
               </label>
             </div>
 
             <label className={labelClassName}>
-              Country
+              {t("countryLabel")}
               <input
                 type="text"
                 name="country"
                 className={inputClassName}
-                placeholder="Bulgaria"
+                placeholder={t("countryPlaceholder")}
               />
             </label>
 
             <label className={labelClassName}>
-              Message *
+              {t("messageLabel")}
               <textarea
                 name="message"
                 required
                 rows={4}
                 className={`${inputClassName} resize-none`}
-                placeholder="Tell us about your plant(s) and what you're looking for."
+                placeholder={t("messagePlaceholder")}
               />
             </label>
 
-            {error && <p className="text-sm text-red-400">{error}</p>}
+            {errorCode && <p className="text-sm text-red-400">{tErrors(errorCode as never)}</p>}
 
             <button
               type="submit"
               disabled={isPending}
               className={`${buttonClassName("primary")} w-full disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              {isPending ? "Sending..." : "Send Message"}
+              {isPending ? t("sendingButton") : t("sendButton")}
             </button>
           </form>
         )}

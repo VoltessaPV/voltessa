@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { useCTA } from "@/components/providers/CTAProvider";
 
 import { buttonClassName, type ButtonVariant } from "./Button";
@@ -19,13 +21,14 @@ type RequestDemoButtonProps = {
 export function RequestDemoButton({
   variant = "primary",
   className,
-  text = "Request Demo",
+  text,
 }: RequestDemoButtonProps) {
   const { openCalendly } = useCTA();
+  const t = useTranslations("marketing.cta");
 
   return (
     <button type="button" className={buttonClassName(variant, className)} onClick={openCalendly}>
-      {text}
+      {text ?? t("requestDemo")}
     </button>
   );
 }

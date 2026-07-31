@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import { Link } from "@/lib/i18n/navigation";
 
 import { BillingCard } from "@/components/settings/BillingCard";
 import { EnergyMarketCard } from "@/components/settings/EnergyMarketCard";
@@ -14,7 +15,6 @@ import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { prisma } from "@/lib/prisma";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
-export { pageHeading } from "./heading";
 
 type SettingsPageProps = {
   searchParams: Promise<{
@@ -50,10 +50,12 @@ async function renderTraderSettings(userId: string, email: string) {
     }),
   ]);
 
+  const t = await getTranslations("settings.page");
+
   return (
     <PageContainer className="space-y-5">
       <div>
-        <p className="text-sm text-slate-500">Manage your account and notification preferences.</p>
+        <p className="text-sm text-slate-500">{t("introTrader")}</p>
       </div>
 
       <ProfileCard
@@ -166,13 +168,12 @@ export default async function SettingsPage({
     params.fusionsolar === "callback_ok" ||
     params.fusionsolar === "token_exchange_ok";
 
+  const t = await getTranslations("settings.page");
+
   return (
     <PageContainer className="space-y-5">
       <div>
-        <p className="text-sm text-slate-500">
-          Manage your account, organization billing, energy market, and
-          notification preferences.
-        </p>
+        <p className="text-sm text-slate-500">{t("introOwner")}</p>
       </div>
 
       <ProfileCard
@@ -216,19 +217,16 @@ export default async function SettingsPage({
       <PrivacyCookiesCard />
 
       {canViewPlants && (
-        <SettingsCard
-          title="Power Plants"
-          description="Manage photovoltaic plants, their FusionSolar connection, and plant-specific configuration."
-        >
+        <SettingsCard title={t("plantsTitle")} description={t("plantsDescription")}>
           <div>
             <div className="flex items-center justify-between gap-6">
               <div>
                 <h3 className="text-sm font-medium text-white">
-                  Huawei FusionSolar
+                  {t("fusionSolarTitle")}
                 </h3>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Connect your organization to FusionSolar.
+                  {t("fusionSolarSubtitle")}
                 </p>
               </div>
 
@@ -243,47 +241,42 @@ export default async function SettingsPage({
                   href="/api/auth/fusionsolar/connect"
                   className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
                 >
-                  {connection ? "Reconnect" : "Connect"}
+                  {connection ? t("fusionSolarReconnectButton") : t("fusionSolarConnectButton")}
                 </a>
               </div>
             </div>
 
             <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
-              <p className="text-xs text-slate-400">
-                To connect FusionSolar, authorize Voltessa from your
-                FusionSolar account. After authorization, FusionSolar will
-                redirect you back to Voltessa.
-              </p>
+              <p className="text-xs text-slate-400">{t("fusionSolarInstructions")}</p>
             </div>
 
             {fusionSolarSuccess && (
               <p className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-300">
-                FusionSolar OAuth authorization completed successfully.
+                {t("fusionSolarSuccess")}
               </p>
             )}
 
             {params.fusionsolar && !fusionSolarSuccess && (
               <p className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-xs text-red-300">
-                FusionSolar connection failed:{" "}
-                {params.reason ?? params.fusionsolar}
+                {t("fusionSolarFailedPrefix")} {params.reason ?? params.fusionsolar}
               </p>
             )}
           </div>
 
           <div className="mt-5 border-t border-white/10 pt-5">
             <div className="flex items-center justify-between gap-4">
-              <h3 className="text-sm font-medium text-white">Plants</h3>
+              <h3 className="text-sm font-medium text-white">{t("plantsListTitle")}</h3>
 
               <Link
                 href="/plants/new"
                 className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-blue-500"
               >
-                Add Plant
+                {t("addPlantButton")}
               </Link>
             </div>
 
             {plants.length === 0 ? (
-              <p className="mt-3 text-xs text-slate-500">No plants yet.</p>
+              <p className="mt-3 text-xs text-slate-500">{t("noPlantsYet")}</p>
             ) : (
               <ul className="mt-3 space-y-2">
                 {plants.map((plant) => (
@@ -308,7 +301,7 @@ export default async function SettingsPage({
                       href={`/plants/${plant.id}/edit`}
                       className="shrink-0 text-xs text-slate-500 transition hover:text-white"
                     >
-                      Edit
+                      {t("editPlantLink")}
                     </Link>
                   </li>
                 ))}

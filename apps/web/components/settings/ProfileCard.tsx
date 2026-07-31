@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import { updateProfile, type ActionResult } from "@/app/[locale]/(platform)/settings/actions";
@@ -24,6 +25,8 @@ export function ProfileCard({
   phone,
   isGoogleConnected,
 }: ProfileCardProps) {
+  const t = useTranslations("settings.profile");
+  const tActions = useTranslations("shared.actions");
   const [result, formAction, isPending] = useActionState<ActionResult, FormData>(
     updateProfile,
     null,
@@ -31,13 +34,13 @@ export function ProfileCard({
 
   return (
     <SettingsCard
-      title="Profile"
-      description="Your personal account details."
+      title={t("title")}
+      description={t("description")}
       headerAccessory={
         isGoogleConnected ? (
           <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Connected with Google
+            {t("connectedWithGoogle")}
           </span>
         ) : undefined
       }
@@ -45,13 +48,13 @@ export function ProfileCard({
       <form action={formAction} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
-            label="First name"
+            label={t("firstNameLabel")}
             name="firstName"
             defaultValue={firstName}
             autoComplete="given-name"
           />
           <FormField
-            label="Last name"
+            label={t("lastNameLabel")}
             name="lastName"
             defaultValue={lastName}
             autoComplete="family-name"
@@ -59,7 +62,7 @@ export function ProfileCard({
         </div>
 
         <FormField
-          label="Email"
+          label={t("emailLabel")}
           name="email"
           type="email"
           defaultValue={email}
@@ -67,7 +70,7 @@ export function ProfileCard({
         />
 
         <FormField
-          label="Phone"
+          label={t("phoneLabel")}
           name="phone"
           type="tel"
           defaultValue={phone}
@@ -75,7 +78,7 @@ export function ProfileCard({
         />
 
         <div className="flex justify-end pt-1">
-          <SubmitButton isPending={isPending} label="Save" />
+          <SubmitButton isPending={isPending} label={tActions("save")} />
         </div>
       </form>
 

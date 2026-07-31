@@ -1,3 +1,5 @@
+import { getTranslations } from "next-intl/server";
+
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { MarketPriceOptimizationCard } from "@/components/automations/MarketPriceOptimizationCard";
 import { MarketPriceOptimizationSummaryCard } from "@/components/automations/MarketPriceOptimizationSummaryCard";
@@ -16,7 +18,6 @@ import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
-export { pageHeading } from "./heading";
 
 /**
  * Trader Self-Service Onboarding milestone. `readOnly` is true only for
@@ -55,14 +56,12 @@ async function renderAutomations(organizationId: string | null, readOnly: boolea
   // replaces them instead of two cards that would otherwise silently
   // configure nothing.
   const plantContext = await resolvePlantContext(organizationId);
+  const t = await getTranslations("automations.page");
 
   if (!plantContext) {
     return (
       <PageContainer className="space-y-3">
-        <EmptyState
-          title="No plant connected"
-          description="Connect a power plant to see live operational data, energy flow, and inverter status."
-        >
+        <EmptyState title={t("emptyStateTitle")} description={t("emptyStateDescription")}>
           {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       </PageContainer>
@@ -75,11 +74,7 @@ async function renderAutomations(organizationId: string | null, readOnly: boolea
 
   return (
     <PageContainer className="space-y-3">
-      <p className="text-white/60">
-        {readOnly
-          ? "Automated rules configured for this plant."
-          : "Configure automated rules for this plant."}
-      </p>
+      <p className="text-white/60">{readOnly ? t("introReadOnly") : t("intro")}</p>
 
       <div className="space-y-5">
         {readOnly ? (

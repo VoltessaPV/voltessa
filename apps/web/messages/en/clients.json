@@ -1,1 +1,31 @@
-{}
+{
+  "page": {
+    "searchPlaceholder": "Search clients...",
+    "searchButton": "Search",
+    "gridViewButton": "Grid",
+    "listViewButton": "List",
+    "noSearchResultsTitle": "No clients match your search",
+    "noSearchResultsDescription": "Try a different search term.",
+    "noClientsTitle": "No clients assigned yet",
+    "noClientsDescription": "A Platform Administrator will assign you to one or more client organizations. They'll show up here as soon as that happens."
+  },
+  "card": {
+    "plantSingular": "plant",
+    "plantPlural": "plants",
+    "connectedBadge": "Connected",
+    "noPlantBadge": "No plant",
+    "viewButton": "View"
+  },
+  "table": {
+    "plantsHeader": "Plants",
+    "statusHeader": "Status",
+    "viewButton": "View"
+  },
+  "switchClientLink": "Switch client",
+  "header": {
+    "viewing": "Viewing:",
+    "noClientSelected": "No client selected",
+    "portfolioCountSingular": "{count} client in portfolio",
+    "portfolioCountPlural": "{count} clients in portfolio"
+  }
+}

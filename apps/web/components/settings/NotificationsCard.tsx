@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import {
@@ -21,45 +22,44 @@ type NotificationsCardProps = {
 };
 
 export function NotificationsCard(props: NotificationsCardProps) {
+  const t = useTranslations("settings.notifications");
+  const tActions = useTranslations("shared.actions");
   const [result, formAction, isPending] = useActionState<ActionResult, FormData>(
     updateNotificationPreferences,
     null,
   );
 
   return (
-    <SettingsCard
-      title="Notifications"
-      description="Choose which events you want to be notified about."
-    >
+    <SettingsCard title={t("title")} description={t("description")}>
       <form action={formAction} className="space-y-3">
         <CheckboxField
-          label="Automation changes"
+          label={t("automationChanges")}
           name="automationChanges"
           defaultChecked={props.automationChanges}
         />
         <CheckboxField
-          label="Export failures"
+          label={t("exportFailures")}
           name="exportFailures"
           defaultChecked={props.exportFailures}
         />
         <CheckboxField
-          label="Price alerts"
+          label={t("priceAlerts")}
           name="priceAlerts"
           defaultChecked={props.priceAlerts}
         />
         <CheckboxField
-          label="Daily summary"
+          label={t("dailySummary")}
           name="dailySummary"
           defaultChecked={props.dailySummary}
         />
         <CheckboxField
-          label="Weekly summary"
+          label={t("weeklySummary")}
           name="weeklySummary"
           defaultChecked={props.weeklySummary}
         />
 
         <div className="flex justify-end pt-1">
-          <SubmitButton isPending={isPending} label="Save" />
+          <SubmitButton isPending={isPending} label={tActions("save")} />
         </div>
       </form>
 

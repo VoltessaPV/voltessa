@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import { updateEnergyMarket, type ActionResult } from "@/app/[locale]/(platform)/settings/actions";
@@ -35,6 +36,9 @@ const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
  * only the `id` is ever stored.
  */
 export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCardProps) {
+  const t = useTranslations("settings.energyMarket");
+  const tActions = useTranslations("shared.actions");
+  const tMarketInfo = useTranslations("market.info");
   const [result, formAction, isPending] = useActionState<ActionResult, FormData>(
     updateEnergyMarket,
     null,
@@ -47,30 +51,27 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
   const operators = getBulgarianDistributionOperators();
 
   return (
-    <SettingsCard
-      title="Energy Market"
-      description="Country, electricity supplier, and distribution network operator for this organization."
-    >
+    <SettingsCard title={t("title")} description={t("description")}>
       <form action={formAction} className="space-y-4">
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-slate-500">
-            Country
+            {t("countryLabel")}
           </span>
           <select name="country" defaultValue={country} className={selectClassName}>
-            <option value="Bulgaria" style={optionStyle}>Bulgaria</option>
+            <option value="Bulgaria" style={optionStyle}>{tMarketInfo("countryName")}</option>
           </select>
         </label>
 
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-slate-500">
-            Electricity supplier
+            {t("supplierLabel")}
           </span>
           <select
             name="supplierId"
             defaultValue={supplierId ?? ""}
             className={selectClassName}
           >
-            <option value="" style={optionStyle}>Not selected</option>
+            <option value="" style={optionStyle}>{t("notSelected")}</option>
 
             {regularSuppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id} style={optionStyle}>
@@ -92,14 +93,14 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
 
         <label className="block">
           <span className="mb-1.5 block text-xs font-medium text-slate-500">
-            Distribution Network Operator
+            {t("dsoLabel")}
           </span>
           <select
             name="dsoId"
             defaultValue={dsoId ?? ""}
             className={selectClassName}
           >
-            <option value="" style={optionStyle}>Not selected</option>
+            <option value="" style={optionStyle}>{t("notSelected")}</option>
 
             {operators.map((operator) => (
               <option key={operator.id} value={operator.id} style={optionStyle}>
@@ -110,7 +111,7 @@ export function EnergyMarketCard({ country, supplierId, dsoId }: EnergyMarketCar
         </label>
 
         <div className="flex justify-end pt-1">
-          <SubmitButton isPending={isPending} label="Save" />
+          <SubmitButton isPending={isPending} label={tActions("save")} />
         </div>
       </form>
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/lib/i18n/navigation";
 import { useActionState } from "react";
 
 import { AuthField } from "@/components/auth/AuthField";
@@ -11,6 +12,8 @@ import { routes } from "@/lib/routes";
 import { continueWithGoogle, registerWithPassword, type RegisterResult } from "./actions";
 
 export function RegisterForm() {
+  const t = useTranslations("auth.register");
+  const tErrors = useTranslations("auth.errors");
   const [result, formAction, isPending] = useActionState<RegisterResult, FormData>(
     registerWithPassword,
     null,
@@ -20,27 +23,27 @@ export function RegisterForm() {
     <div className="space-y-6">
       <form action={continueWithGoogle}>
         <button type="submit" className={buttonClassName("secondary", "w-full text-center")}>
-          Continue with Google
+          {t("googleButton")}
         </button>
       </form>
 
       <div className="flex items-center gap-3 text-xs uppercase tracking-wider text-slate-500">
         <span className="h-px flex-1 bg-white/10" />
-        or
+        {t("orDivider")}
         <span className="h-px flex-1 bg-white/10" />
       </div>
 
       <form action={formAction} className="space-y-4">
-        <AuthField label="Email" name="email" type="email" autoComplete="email" required />
+        <AuthField label={t("emailLabel")} name="email" type="email" autoComplete="email" required />
         <AuthField
-          label="Password"
+          label={t("passwordLabel")}
           name="password"
           type="password"
           autoComplete="new-password"
           required
         />
         <AuthField
-          label="Confirm password"
+          label={t("confirmPasswordLabel")}
           name="confirmPassword"
           type="password"
           autoComplete="new-password"
@@ -48,7 +51,7 @@ export function RegisterForm() {
         />
 
         {result && !isPending && !result.success && (
-          <p className="text-sm text-red-400">{result.message}</p>
+          <p className="text-sm text-red-400">{tErrors(result.code as never, result.params as never)}</p>
         )}
 
         <button
@@ -60,14 +63,14 @@ export function RegisterForm() {
           )}
         >
           {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-          {isPending ? "Creating account..." : "Create Account"}
+          {isPending ? t("submittingButton") : t("submitButton")}
         </button>
       </form>
 
       <p className="text-center text-sm text-slate-400">
-        Already have an account?{" "}
+        {t("loginPrompt")}{" "}
         <Link href={routes.login} className="font-medium text-blue-400 transition hover:text-blue-300">
-          Log in
+          {t("loginLink")}
         </Link>
       </p>
     </div>

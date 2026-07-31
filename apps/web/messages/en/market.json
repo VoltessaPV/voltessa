@@ -1,1 +1,88 @@
-{}
+{
+  "noMarketData": {
+    "title": "No market data available for {date}",
+    "description": "Nothing has been imported from ENTSO-E for this day yet. Use the date picker above to choose a different day."
+  },
+  "priceExport": {
+    "titlePlatformWide": "Price & Export",
+    "subtitlePlatformWide": "Platform-wide day-ahead electricity price - select a client to see their export revenue and automation status alongside it.",
+    "title": "Price & Export",
+    "subtitle": "Electricity price and recommended export windows"
+  },
+  "emptyState": {
+    "title": "No plant connected",
+    "description": "Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
+  },
+  "partialImportNotice": "Today's import is partial — some intervals are missing from ENTSO-E and are shown as gaps, never fabricated.",
+  "summary": {
+    "revenueToday": "Today's Revenue",
+    "revenue": "Revenue",
+    "currentPrice": "Current Price",
+    "currentExport": "Current Export",
+    "configuredMode": "Configured Mode",
+    "currentModeRow": "Current Mode",
+    "disabled": "Disabled",
+    "automationOff": "Automation Off",
+    "enabled": "Enabled",
+    "minimumProfitablePrice": "Minimum profitable price",
+    "healthy": "Healthy",
+    "belowThreshold": "Below threshold",
+    "waitingForProductionTelemetry": "Waiting for production telemetry",
+    "livePriceOnlyToday": "Live price only available for today",
+    "fusionSolarMeterUnavailable": "FusionSolar meter data unavailable",
+    "exportedToday": "Exported today",
+    "averageSellingPrice": "Average selling price"
+  },
+  "toolbar": {
+    "live": "Live",
+    "historical": "Historical",
+    "previousDay": "Previous day",
+    "nextDay": "Next day",
+    "goButton": "Go",
+    "todayButton": "Today",
+    "comingSoon": "Coming soon",
+    "soonBadge": "soon",
+    "todayRange": "Today",
+    "weekRange": "Week",
+    "monthRange": "Month",
+    "yearRange": "Year",
+    "countryLabel": "Country",
+    "resolutionLabel": "Time resolution",
+    "resolution15min": "15 minutes"
+  },
+  "distribution": {
+    "title": "Price Distribution",
+    "high": "High",
+    "mid": "Mid",
+    "low": "Low"
+  },
+  "info": {
+    "title": "Market Info",
+    "country": "Country",
+    "source": "Source",
+    "lastUpdate": "Last update",
+    "countryName": "Bulgaria"
+  },
+  "insights": {
+    "title": "Market Insights",
+    "highestPriceToday": "Highest price today: {price} EUR/MWh at {time}",
+    "lowestPriceToday": "Lowest price today: {price} EUR/MWh at {time}",
+    "priceSpread": "Price spread: {spread} EUR/MWh",
+    "averagePrice": "Average price: {price} EUR/MWh",
+    "hoursAboveThreshold": "Hours above threshold: {hours} h",
+    "hoursBelowThreshold": "Hours below threshold: {hours} h"
+  },
+  "eventLog": {
+    "title": "Event Log (Last 10)",
+    "emptyTitle": "No events yet",
+    "emptyDescription": "Automation decisions will appear here once your first mode change or automation event occurs."
+  },
+  "priceChart": {
+    "electricityPrice": "Electricity price",
+    "exportThreshold": "Export threshold",
+    "exportThresholdLabel": "EXPORT THRESHOLD",
+    "exportedEnergy": "Exported energy",
+    "exportedKwhSuffix": "kWh exported",
+    "noData": "No data"
+  }
+}

@@ -1,3 +1,7 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
 import { selectTraderOrganization } from "@/app/[locale]/(platform)/actions";
 import Card from "@/components/ui/Card";
 import type { TraderClient } from "@/lib/trader/queries";
@@ -9,6 +13,8 @@ type Props = {
 
 /** Card/grid view - the Clients portfolio's default for smaller portfolios (see page.tsx's `GRID_VIEW_MAX_CLIENTS` threshold). */
 export function ClientCardGrid({ clients, redirectTo }: Props) {
+  const t = useTranslations("clients.card");
+
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {clients.map((client) => (
@@ -16,7 +22,7 @@ export function ClientCardGrid({ clients, redirectTo }: Props) {
           <div>
             <h3 className="font-semibold text-white">{client.name}</h3>
             <p className="mt-1 text-xs text-white/50">
-              {client.plantCount} {client.plantCount === 1 ? "plant" : "plants"}
+              {client.plantCount} {client.plantCount === 1 ? t("plantSingular") : t("plantPlural")}
             </p>
             <span
               className={
@@ -25,7 +31,7 @@ export function ClientCardGrid({ clients, redirectTo }: Props) {
                   : "mt-3 inline-block rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/50"
               }
             >
-              {client.connected ? "Connected" : "No plant"}
+              {client.connected ? t("connectedBadge") : t("noPlantBadge")}
             </span>
           </div>
 
@@ -36,7 +42,7 @@ export function ClientCardGrid({ clients, redirectTo }: Props) {
               type="submit"
               className="w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-white/80 transition hover:border-white/20 hover:text-white"
             >
-              View
+              {t("viewButton")}
             </button>
           </form>
         </Card>

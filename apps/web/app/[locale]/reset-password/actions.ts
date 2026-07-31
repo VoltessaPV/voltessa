@@ -6,7 +6,15 @@ import { consumePasswordResetToken } from "@/lib/auth/password-reset";
 import { hashPassword, MINIMUM_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
-export type ResetPasswordResult = { success: false; message: string } | null;
+export type ResetPasswordErrorCode =
+  | "resetFieldsRequired"
+  | "passwordTooShort"
+  | "passwordsDoNotMatch"
+  | "resetLinkExpired"
+  | "resetLinkInvalid";
+export type ResetPasswordResult =
+  | { success: false; code: ResetPasswordErrorCode; params?: { min: number } }
+  | null;
 
 /**
  * Consumes the token (single-use - see `consumePasswordResetToken`), sets
@@ -30,18 +38,19 @@ export async function resetPassword(
     typeof newPassword !== "string" ||
     typeof confirmPassword !== "string"
   ) {
-    return { success: false, message: "New password and confirmation are required" };
+    return { success: false, code: "resetFieldsRequired" };
   }
 
   if (newPassword.length < MINIMUM_PASSWORD_LENGTH) {
     return {
       success: false,
-      message: `Password must be at least ${MINIMUM_PASSWORD_LENGTH} characters`,
+      code: "passwordTooShort",
+      params: { min: MINIMUM_PASSWORD_LENGTH },
     };
   }
 
   if (newPassword !== confirmPassword) {
-    return { success: false, message: "Passwords do not match" };
+    return { success: false, code: "passwordsDoNotMatch" };
   }
 
   const result = await consumePasswordResetToken(token);
@@ -49,10 +58,7 @@ export async function resetPassword(
   if (!result.ok) {
     return {
       success: false,
-      message:
-        result.reason === "expired"
-          ? "This reset link has expired. Request a new one."
-          : "This reset link is invalid or has already been used.",
+      code: result.reason === "expired" ? "resetLinkExpired" : "resetLinkInvalid",
     };
   }
 

@@ -7,7 +7,15 @@ import { sendVerificationEmail } from "@/lib/auth/email-verification";
 import { hashPassword, MINIMUM_PASSWORD_LENGTH } from "@/lib/auth/password";
 import { prisma } from "@/lib/prisma";
 
-export type RegisterResult = { success: false; message: string } | null;
+export type RegisterErrorCode =
+  | "registrationFieldsRequired"
+  | "passwordTooShort"
+  | "passwordsDoNotMatch"
+  | "accountExistsWithPassword"
+  | "accountExistsWithGoogle";
+export type RegisterResult =
+  | { success: false; code: RegisterErrorCode; params?: { min: number } }
+  | null;
 
 /** Same call as /login's - Google sign-in and sign-up are the same OAuth exchange; PrismaAdapter auto-provisions the User on first sign-in. */
 export async function continueWithGoogle(): Promise<void> {
@@ -35,18 +43,19 @@ export async function registerWithPassword(
     typeof confirmPassword !== "string" ||
     !email
   ) {
-    return { success: false, message: "Email, password, and confirmation are required" };
+    return { success: false, code: "registrationFieldsRequired" };
   }
 
   if (password.length < MINIMUM_PASSWORD_LENGTH) {
     return {
       success: false,
-      message: `Password must be at least ${MINIMUM_PASSWORD_LENGTH} characters`,
+      code: "passwordTooShort",
+      params: { min: MINIMUM_PASSWORD_LENGTH },
     };
   }
 
   if (password !== confirmPassword) {
-    return { success: false, message: "Passwords do not match" };
+    return { success: false, code: "passwordsDoNotMatch" };
   }
 
   const existing = await prisma.user.findUnique({
@@ -56,12 +65,8 @@ export async function registerWithPassword(
 
   if (existing) {
     return existing.passwordHash
-      ? { success: false, message: "An account with this email already exists. Log in instead." }
-      : {
-          success: false,
-          message:
-            "This email already has a Voltessa account via Google. Log in with Google instead.",
-        };
+      ? { success: false, code: "accountExistsWithPassword" }
+      : { success: false, code: "accountExistsWithGoogle" };
   }
 
   const passwordHash = await hashPassword(password);

@@ -1,1 +1,31 @@
-{}
+{
+  "page": {
+    "searchPlaceholder": "Търсене на клиенти...",
+    "searchButton": "Търси",
+    "gridViewButton": "Мрежа",
+    "listViewButton": "Списък",
+    "noSearchResultsTitle": "Няма клиенти, отговарящи на търсенето",
+    "noSearchResultsDescription": "Опитайте с друг термин за търсене.",
+    "noClientsTitle": "Все още няма назначени клиенти",
+    "noClientsDescription": "Администратор на платформата ще ви назначи към една или повече клиентски организации. Те ще се появят тук веднага щом това се случи."
+  },
+  "card": {
+    "plantSingular": "централа",
+    "plantPlural": "централи",
+    "connectedBadge": "Свързана",
+    "noPlantBadge": "Няма централа",
+    "viewButton": "Преглед"
+  },
+  "table": {
+    "plantsHeader": "Централи",
+    "statusHeader": "Статус",
+    "viewButton": "Преглед"
+  },
+  "switchClientLink": "Смени клиент",
+  "header": {
+    "viewing": "Преглед на:",
+    "noClientSelected": "Няма избран клиент",
+    "portfolioCountSingular": "{count} клиент в портфолиото",
+    "portfolioCountPlural": "{count} клиента в портфолиото"
+  }
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/lib/i18n/navigation";
 
 /**
@@ -15,13 +16,14 @@ import { Link, usePathname } from "@/lib/i18n/navigation";
  */
 export function ClientSwitchLink() {
   const pathname = usePathname();
+  const t = useTranslations("clients");
 
   return (
     <Link
       href={`/clients?returnTo=${encodeURIComponent(pathname)}`}
       className="text-xs font-medium text-blue-400 transition hover:text-blue-300"
     >
-      Switch client
+      {t("switchClientLink")}
     </Link>
   );
 }

@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { auth } from "@/auth";
 import { resolveTraderOnboardingStage } from "@/lib/auth/trader-onboarding";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
@@ -18,14 +20,19 @@ const selectClassName =
   "mt-2 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-white outline-none transition focus:border-blue-500 [color-scheme:dark]";
 const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
 
-const ERROR_MESSAGES: Record<string, string> = {
-  missing_fields: "All fields are required.",
-  invalid_distribution_company: "Select a valid distribution company.",
+const ERROR_CODES: Record<string, string> = {
+  missing_fields: "missingFields",
+  invalid_distribution_company: "invalidDistributionCompany",
 };
 
 type Props = {
   searchParams: Promise<{ error?: string }>;
 };
+
+export async function generateMetadata() {
+  const t = await getTranslations("onboarding.traderProfile");
+  return { title: t("title") };
+}
 
 export default async function TraderProfileOnboardingPage({ searchParams }: Props) {
   const session = await auth();
@@ -66,93 +73,101 @@ export default async function TraderProfileOnboardingPage({ searchParams }: Prop
 
   const { error } = await searchParams;
   const operators = getBulgarianDistributionOperators();
+  const t = await getTranslations("onboarding.traderProfile");
+  const tErrors = await getTranslations("onboarding.traderProfile.errors");
+  const errorCode = error ? ERROR_CODES[error] : undefined;
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#050816] px-6 py-12 text-white">
-      <div className="w-full max-w-lg rounded-2xl border border-white/10 bg-white/5 p-8">
-        <h1 className="text-2xl font-semibold">Complete your Trader Profile</h1>
+      <div className="w-full max-w-lg">
+        <div className="mb-4 flex justify-end">
+          <LanguageSwitcher />
+        </div>
 
-        <p className="mt-2 text-sm text-white/60">
-          A Platform Administrator will review your profile and assign you to one or more
-          organizations. All fields are required.
-        </p>
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-8">
+          <h1 className="text-2xl font-semibold">{t("title")}</h1>
 
-        {error && (
-          <div className="mt-6 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">
-            {ERROR_MESSAGES[error] ?? "Something went wrong."}
-          </div>
-        )}
+          <p className="mt-2 text-sm text-white/60">{t("subtitle")}</p>
 
-        <form action={completeTraderOnboarding} className="mt-8 space-y-6">
-          <div className="grid gap-6 sm:grid-cols-2">
-            <label>
-              <span className="text-sm font-medium text-white/80">First name</span>
+          {error && (
+            <div className="mt-6 rounded-xl border border-red-400/30 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+              {errorCode ? tErrors(errorCode as never) : tErrors("generic")}
+            </div>
+          )}
+
+          <form action={completeTraderOnboarding} className="mt-8 space-y-6">
+            <div className="grid gap-6 sm:grid-cols-2">
+              <label>
+                <span className="text-sm font-medium text-white/80">{t("firstNameLabel")}</span>
+                <input
+                  name="firstName"
+                  required
+                  defaultValue={user.firstName ?? ""}
+                  className={inputClassName}
+                />
+              </label>
+
+              <label>
+                <span className="text-sm font-medium text-white/80">{t("lastNameLabel")}</span>
+                <input
+                  name="lastName"
+                  required
+                  defaultValue={user.lastName ?? ""}
+                  className={inputClassName}
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="text-sm font-medium text-white/80">{t("phoneLabel")}</span>
               <input
-                name="firstName"
+                name="phone"
+                type="tel"
                 required
-                defaultValue={user.firstName ?? ""}
+                defaultValue={user.phone ?? ""}
                 className={inputClassName}
               />
             </label>
 
-            <label>
-              <span className="text-sm font-medium text-white/80">Last name</span>
+            <label className="block">
+              <span className="text-sm font-medium text-white/80">{t("companyNameLabel")}</span>
               <input
-                name="lastName"
+                name="companyName"
                 required
-                defaultValue={user.lastName ?? ""}
+                defaultValue={user.traderProfile?.companyName ?? ""}
                 className={inputClassName}
               />
             </label>
-          </div>
 
-          <label className="block">
-            <span className="text-sm font-medium text-white/80">Phone</span>
-            <input
-              name="phone"
-              type="tel"
-              required
-              defaultValue={user.phone ?? ""}
-              className={inputClassName}
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-white/80">Company name</span>
-            <input
-              name="companyName"
-              required
-              defaultValue={user.traderProfile?.companyName ?? ""}
-              className={inputClassName}
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm font-medium text-white/80">Distribution company</span>
-            <select
-              name="distributionCompanyId"
-              required
-              defaultValue={user.traderProfile?.distributionCompanyId ?? ""}
-              className={selectClassName}
-            >
-              <option value="" disabled style={optionStyle}>
-                Select a distribution company…
-              </option>
-              {operators.map((operator) => (
-                <option key={operator.id} value={operator.id} style={optionStyle}>
-                  {operator.officialBulgarianName}
+            <label className="block">
+              <span className="text-sm font-medium text-white/80">
+                {t("distributionCompanyLabel")}
+              </span>
+              <select
+                name="distributionCompanyId"
+                required
+                defaultValue={user.traderProfile?.distributionCompanyId ?? ""}
+                className={selectClassName}
+              >
+                <option value="" disabled style={optionStyle}>
+                  {t("distributionCompanyPlaceholder")}
                 </option>
-              ))}
-            </select>
-          </label>
+                {operators.map((operator) => (
+                  <option key={operator.id} value={operator.id} style={optionStyle}>
+                    {operator.officialBulgarianName}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <button
-            type="submit"
-            className="w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold transition hover:bg-blue-500"
-          >
-            Submit Profile
-          </button>
-        </form>
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-blue-600 px-4 py-3 font-semibold transition hover:bg-blue-500"
+            >
+              {t("submitButton")}
+            </button>
+          </form>
+        </div>
       </div>
     </main>
   );

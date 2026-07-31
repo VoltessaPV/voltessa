@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
@@ -25,7 +26,6 @@ import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { getMarketPageData } from "./market-data";
 import { getProductionPageData } from "./production-data";
 
-export { pageHeading } from "./heading";
 
 type Trend = "up" | "down" | "flat";
 
@@ -59,6 +59,8 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
 function configuredModeStatus(
   automationEnabled: boolean,
   currentExportMode: string | null,
+  t: Awaited<ReturnType<typeof getTranslations<"market.summary">>>,
+  tTerm: Awaited<ReturnType<typeof getTranslations<"terminology">>>,
 ): {
   automationLabel: string;
   automationColorClass?: string;
@@ -67,8 +69,8 @@ function configuredModeStatus(
 } {
   if (!automationEnabled) {
     return {
-      automationLabel: "Disabled",
-      modeLabel: "Automation Off",
+      automationLabel: t("disabled"),
+      modeLabel: t("automationOff"),
       modeColorClass: "text-slate-400",
     };
   }
@@ -76,9 +78,9 @@ function configuredModeStatus(
   const isZeroExport = currentExportMode === "Zero Export";
 
   return {
-    automationLabel: "Enabled",
+    automationLabel: t("enabled"),
     automationColorClass: "text-emerald-400",
-    modeLabel: isZeroExport ? "Zero Export" : "No Limit",
+    modeLabel: isZeroExport ? tTerm("zeroExport") : tTerm("noLimit"),
     modeColorClass: isZeroExport ? "text-amber-400" : "text-emerald-400",
   };
 }
@@ -106,11 +108,14 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // rather than rendering the full page with those fields permanently
   // "unavailable".
   if (organizationId === null) {
-    const data = await getMarketPageData({
-      organizationId: null,
-      selectedDateParam: params.date,
-      automationSettings: null,
-    });
+    const [data, t] = await Promise.all([
+      getMarketPageData({
+        organizationId: null,
+        selectedDateParam: params.date,
+        automationSettings: null,
+      }),
+      getTranslations("market"),
+    ]);
 
     return (
       <PageContainer className="space-y-3">
@@ -124,21 +129,17 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
         {!data.dataAvailable ? (
           <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
             <p className="text-sm font-medium text-white">
-              No market data available for {data.selectedDate}
+              {t("noMarketData.title", { date: data.selectedDate })}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Nothing has been imported from ENTSO-E for this day yet. Use the
-              date picker above to choose a different day.
-            </p>
+            <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
           </section>
         ) : (
           <>
             <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <div>
-                <h2 className="text-sm font-semibold text-white">Price &amp; Export</h2>
+                <h2 className="text-sm font-semibold text-white">{t("priceExport.titlePlatformWide")}</h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Platform-wide day-ahead electricity price - select a client to see their
-                  export revenue and automation status alongside it.
+                  {t("priceExport.subtitlePlatformWide")}
                 </p>
               </div>
 
@@ -172,12 +173,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const plantContext = await resolvePlantContext(organizationId);
 
   if (!plantContext) {
+    const tEmpty = await getTranslations("market.emptyState");
+
     return (
       <PageContainer className="space-y-3">
-        <EmptyState
-          title="No plant connected"
-          description="Market features - live pricing, export revenue, and automation status - become available after connecting a plant."
-        >
+        <EmptyState title={tEmpty("title")} description={tEmpty("description")}>
           {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       </PageContainer>
@@ -200,7 +200,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
 
   // Two completely independent data sources, composed only here — see
   // market-data.ts / production-data.ts module doc comments.
-  const [data, production, currentExportMode] = await Promise.all([
+  const [data, production, currentExportMode, t, tSummary, tTerm] = await Promise.all([
     getMarketPageData({
       organizationId,
       selectedDateParam: params.date,
@@ -208,18 +208,23 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     }),
     getProductionPageData(organizationId, params.date),
     getStoredExportMode(organizationId),
+    getTranslations("market"),
+    getTranslations("market.summary"),
+    getTranslations("terminology"),
   ]);
 
   const configuredMode = configuredModeStatus(
     automationSettings?.automationEnabled ?? false,
     currentExportMode,
+    tSummary,
+    tTerm,
   );
 
   const revenue: RevenueSummary = data.dataAvailable
     ? computeExportRevenue(data.series, production.settlementEnergySeries)
     : { available: false };
   const revenueEyebrow =
-    data.dataAvailable && data.isToday ? "Today's Revenue" : "Revenue";
+    data.dataAvailable && data.isToday ? t("summary.revenueToday") : t("summary.revenue");
 
   const currentPriceTrend =
     data.dataAvailable && data.summary.currentPrice
@@ -233,8 +238,8 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const thresholdStatusDot =
     data.dataAvailable && data.summary.currentPrice !== null
       ? data.summary.currentPrice.value >= data.threshold.minimumExportPrice
-        ? { colorClass: "bg-emerald-400", label: "Healthy" }
-        : { colorClass: "bg-amber-400", label: "Below threshold" }
+        ? { colorClass: "bg-emerald-400", label: tSummary("healthy") }
+        : { colorClass: "bg-amber-400", label: tSummary("belowThreshold") }
       : undefined;
 
   // Grid direction is derived once here so the chart's NOW annotation
@@ -288,19 +293,15 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
       {!data.dataAvailable ? (
         <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-10 text-center">
           <p className="text-sm font-medium text-white">
-            No market data available for {data.selectedDate}
+            {t("noMarketData.title", { date: data.selectedDate })}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Nothing has been imported from ENTSO-E for this day yet. Use the
-            date picker above to choose a different day.
-          </p>
+          <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
         </section>
       ) : (
         <>
           {data.isPartialImport && (
             <p className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
-              Today&apos;s import is partial — some intervals are missing from
-              ENTSO-E and are shown as gaps, never fabricated.
+              {t("partialImportNotice")}
             </p>
           )}
 
@@ -311,16 +312,16 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 revenue.available ? revenue.revenueEur.toFixed(2) : undefined
               }
               valueUnit={revenue.available ? "EUR" : undefined}
-              unavailableNote="Waiting for production telemetry"
+              unavailableNote={tSummary("waitingForProductionTelemetry")}
               rows={
                 revenue.available
                   ? [
                       {
-                        label: "Exported today",
+                        label: tSummary("exportedToday"),
                         value: `${revenue.exportedKwh.toFixed(2)} kWh`,
                       },
                       {
-                        label: "Average selling price",
+                        label: tSummary("averageSellingPrice"),
                         value:
                           revenue.averagePriceEurPerMwh !== null
                             ? `${revenue.averagePriceEurPerMwh.toFixed(2)} EUR/MWh`
@@ -332,35 +333,35 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
 
             <MarketSummaryCard
-              eyebrow="Current Price"
+              eyebrow={tSummary("currentPrice")}
               value={data.summary.currentPrice?.value.toString()}
               valueUnit={data.summary.currentPrice ? "EUR/MWh" : undefined}
               caption={data.summary.currentPrice?.intervalLabel}
-              unavailableNote="Live price only available for today"
+              unavailableNote={tSummary("livePriceOnlyToday")}
               trend={currentPriceTrend}
             />
 
             <MarketSummaryCard
-              eyebrow="Current Export"
+              eyebrow={tSummary("currentExport")}
               value={
                 production.currentExport.available
                   ? production.currentExport.kw.toString()
                   : undefined
               }
               valueUnit={production.currentExport.available ? "kW" : undefined}
-              unavailableNote="FusionSolar meter data unavailable"
+              unavailableNote={tSummary("fusionSolarMeterUnavailable")}
             />
 
             <MarketSummaryCard
-              eyebrow="Configured Mode"
+              eyebrow={tSummary("configuredMode")}
               rows={[
                 {
-                  label: "Automation",
+                  label: tTerm("automation"),
                   value: configuredMode.automationLabel,
                   valueColorClass: configuredMode.automationColorClass,
                 },
                 {
-                  label: "Current Mode",
+                  label: tSummary("currentModeRow"),
                   value: configuredMode.modeLabel,
                   valueColorClass: configuredMode.modeColorClass,
                 },
@@ -368,10 +369,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             />
 
             <MarketSummaryCard
-              eyebrow="Threshold"
+              eyebrow={tTerm("threshold")}
               value={data.threshold.minimumExportPrice.toString()}
               valueUnit={`${data.threshold.currency}/MWh`}
-              caption="Minimum profitable price"
+              caption={tSummary("minimumProfitablePrice")}
               statusDot={thresholdStatusDot}
             />
           </section>
@@ -380,10 +381,10 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-white">
-                  Price &amp; Export
+                  {t("priceExport.title")}
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Electricity price and recommended export windows
+                  {t("priceExport.subtitle")}
                 </p>
               </div>
             </div>

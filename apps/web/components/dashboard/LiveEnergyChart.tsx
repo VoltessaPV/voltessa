@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { Line, ReferenceLine } from "recharts";
 
 import type { EnergyFlowPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
@@ -65,15 +66,17 @@ function ChartTooltip({
   payload?: Array<{ value: number | null; dataKey: string; color: string }>;
   label?: number;
 }) {
+  const t = useTranslations("dashboard.liveEnergy");
+
   if (!active || !payload || payload.length === 0 || label === undefined) {
     return null;
   }
 
-  const rows: Array<{ key: string; text: string }> = [
-    { key: "pvKw", text: "PV Output" },
-    { key: "consumptionKw", text: "Total Consumption" },
-    { key: "gridImportNegKw", text: "Import from Grid" },
-    { key: "gridExportKw", text: "Fed to Grid" },
+  const rows: Array<{ key: string; textKey: string }> = [
+    { key: "pvKw", textKey: "pvOutput" },
+    { key: "consumptionKw", textKey: "totalConsumption" },
+    { key: "gridImportNegKw", textKey: "importFromGrid" },
+    { key: "gridExportKw", textKey: "fedToGrid" },
   ];
 
   const hasAnything = rows.some((row) => {
@@ -85,7 +88,7 @@ function ChartTooltip({
     <div className={CHART_TOOLTIP_CLASSNAME}>
       <p className="font-medium text-slate-300">{formatSofiaTime(label)}</p>
 
-      {rows.map(({ key, text }) => {
+      {rows.map(({ key, textKey }) => {
         const entry = payload.find((p) => p.dataKey === key);
 
         if (!entry || entry.value === null || entry.value === undefined) {
@@ -95,17 +98,18 @@ function ChartTooltip({
         return (
           <p key={key} className="mt-1 flex items-center gap-1.5" style={{ color: entry.color }}>
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: entry.color }} />
-            {Math.abs(entry.value).toFixed(2)} kW {text}
+            {Math.abs(entry.value).toFixed(2)} kW {t(textKey as never)}
           </p>
         );
       })}
 
-      {!hasAnything && <p className="mt-1 text-slate-500">No data</p>}
+      {!hasAnything && <p className="mt-1 text-slate-500">{t("noData")}</p>}
     </div>
   );
 }
 
 export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
+  const t = useTranslations("dashboard.liveEnergy");
   const now = Date.now();
   const domainStart = data[0]?.time;
   const domainEnd = data[data.length - 1]?.time;
@@ -131,19 +135,19 @@ export function LiveEnergyChart({ data, nowAnnotation }: LiveEnergyChartProps) {
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-1 text-xs">
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-emerald-400" />
-          PV Output
+          {t("pvOutput")}
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-amber-400" />
-          Total Consumption
+          {t("totalConsumption")}
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-orange-400" />
-          Import from Grid
+          {t("importFromGrid")}
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
           <span className="h-0.5 w-3 rounded-full bg-blue-400" />
-          Fed to Grid
+          {t("fedToGrid")}
         </span>
       </div>
 

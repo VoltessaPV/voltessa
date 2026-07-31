@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import { buttonClassName } from "@/components/ui/Button";
@@ -18,6 +19,9 @@ type ResendFormProps = {
  * reason about.
  */
 export function ResendForm({ email }: ResendFormProps) {
+  const t = useTranslations("auth.resend");
+  const tErrors = useTranslations("auth.errors");
+  const tSuccess = useTranslations("auth.success");
   const [result, formAction, isPending] = useActionState<ResendResult, FormData>(
     resendVerificationEmail,
     null,
@@ -29,7 +33,9 @@ export function ResendForm({ email }: ResendFormProps) {
 
       {result && !isPending && (
         <p className={`text-sm ${result.success ? "text-emerald-400" : "text-red-400"}`}>
-          {result.message}
+          {result.success
+            ? tSuccess(result.code as never)
+            : tErrors(result.code as never, result.params as never)}
         </p>
       )}
 
@@ -42,7 +48,7 @@ export function ResendForm({ email }: ResendFormProps) {
         )}
       >
         {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isPending ? "Sending..." : "Resend verification email"}
+        {isPending ? t("submittingButton") : t("submitButton")}
       </button>
     </form>
   );

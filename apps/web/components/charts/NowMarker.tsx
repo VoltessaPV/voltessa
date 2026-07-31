@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 /**
  * The "NOW" reference-line label — a small pill badge with a pulsing dot,
  * like a live terminal cursor. Extracted from `MarketPriceChart` (the
@@ -12,6 +14,7 @@ export function NowLabel(props: {
   viewBox?: { x?: number; y?: number };
   annotation?: string;
 }) {
+  const t = useTranslations("charts.nowMarker");
   const { viewBox, annotation } = props;
   if (!viewBox || viewBox.x === undefined || viewBox.y === undefined) {
     return null;
@@ -30,7 +33,7 @@ export function NowLabel(props: {
           />
         </circle>
         <text x={4} y={-4} textAnchor="middle" fontSize={9} fontWeight={700} fill="#ecfeff">
-          NOW
+          {t("label")}
         </text>
       </g>
     );
@@ -57,7 +60,7 @@ export function NowLabel(props: {
         />
       </circle>
       <text x={-pillWidth / 2 + 18} y={14} fontSize={9} fontWeight={700} fill="#ecfeff">
-        NOW
+        {t("label")}
       </text>
       <text x={0} y={24} textAnchor="middle" fontSize={9} fill="#cffafe">
         {annotation}

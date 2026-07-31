@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import { Link } from "@/lib/i18n/navigation";
 
 import { auth } from "@/auth";
 import { AuthCard } from "@/components/auth/AuthCard";
@@ -7,9 +8,10 @@ import { routes } from "@/lib/routes";
 
 import { ResendForm } from "./ResendForm";
 
-export const metadata = {
-  title: "Verify Your Email",
-};
+export async function generateMetadata() {
+  const t = await getTranslations("auth.verifyEmail");
+  return { title: t("title") };
+}
 
 type VerifyEmailPageProps = {
   searchParams: Promise<{ email?: string; status?: string }>;
@@ -26,18 +28,19 @@ type VerifyEmailPageProps = {
  */
 export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageProps) {
   const { email, status } = await searchParams;
+  const t = await getTranslations("auth.verifyEmail");
 
   if (status === "success") {
     const session = await auth();
     const isAuthenticated = Boolean(session?.user?.email);
 
     return (
-      <AuthCard title="Email verified successfully" subtitle="Your account is now active.">
+      <AuthCard title={t("successTitle")} subtitle={t("successSubtitle")}>
         <Link
           href={isAuthenticated ? routes.dashboard : routes.login}
           className={buttonClassName("primary", "block w-full text-center")}
         >
-          {isAuthenticated ? "Go to Dashboard" : "Log In"}
+          {isAuthenticated ? t("goToDashboardButton") : t("logInButton")}
         </Link>
       </AuthCard>
     );
@@ -45,10 +48,7 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
 
   if (status === "expired") {
     return (
-      <AuthCard
-        title="Verification link expired"
-        subtitle="That link is no longer valid, but we can send you a new one."
-      >
+      <AuthCard title={t("expiredTitle")} subtitle={t("expiredSubtitle")}>
         {email ? (
           <ResendForm email={email} />
         ) : (
@@ -56,7 +56,7 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
             href={routes.createAccount}
             className={buttonClassName("primary", "block w-full text-center")}
           >
-            Create an account
+            {t("createAccountButton")}
           </Link>
         )}
       </AuthCard>
@@ -65,22 +65,19 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
 
   if (status === "invalid") {
     return (
-      <AuthCard
-        title="Invalid verification link"
-        subtitle="This link is invalid or has already been used."
-      >
+      <AuthCard title={t("invalidTitle")} subtitle={t("invalidSubtitle")}>
         <div className="space-y-3">
           <Link
             href={routes.login}
             className={buttonClassName("primary", "block w-full text-center")}
           >
-            Log In
+            {t("logInButton")}
           </Link>
           <Link
             href={routes.createAccount}
             className="block text-center text-sm text-slate-400 transition hover:text-white"
           >
-            Create an account
+            {t("createAccountButton")}
           </Link>
         </div>
       </AuthCard>
@@ -89,12 +86,8 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
 
   return (
     <AuthCard
-      title="Verify your email"
-      subtitle={
-        email
-          ? `We've sent a verification email to ${email}. Please verify your email before signing in.`
-          : "We've sent you a verification email. Please verify your email before signing in."
-      }
+      title={t("title")}
+      subtitle={email ? t("subtitleWithEmail", { email }) : t("subtitleGeneric")}
     >
       <div className="space-y-4">
         {email && <ResendForm email={email} />}
@@ -104,10 +97,10 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
             href={routes.createAccount}
             className="block text-blue-400 transition hover:text-blue-300"
           >
-            Change email address
+            {t("changeEmailLink")}
           </Link>
           <Link href={routes.login} className="block text-slate-400 transition hover:text-white">
-            Back to Login
+            {t("backToLoginLink")}
           </Link>
         </div>
       </div>

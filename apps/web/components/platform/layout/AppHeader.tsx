@@ -1,3 +1,7 @@
+import { getTranslations } from "next-intl/server";
+
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
+
 import { ClientSwitchLink } from "./ClientSwitchLink";
 import { PageHeading } from "./PageHeading";
 import { UserMenu } from "./UserMenu";
@@ -24,18 +28,22 @@ function displayRole(role: string): string {
  * trader is assigned to in total - so the trader never has to guess either
  * from a page's content alone, no matter how large their portfolio is.
  */
-function ClientContextIndicator({ trader }: { trader: TraderShellContext }) {
-  const clientCountLabel = `${trader.assignedClientCount} ${trader.assignedClientCount === 1 ? "client" : "clients"} in portfolio`;
+async function ClientContextIndicator({ trader }: { trader: TraderShellContext }) {
+  const t = await getTranslations("clients.header");
+  const clientCountLabel =
+    trader.assignedClientCount === 1
+      ? t("portfolioCountSingular", { count: trader.assignedClientCount })
+      : t("portfolioCountPlural", { count: trader.assignedClientCount });
 
   return (
     <div className="flex items-center gap-3 text-sm text-white/70">
       <span className="hidden sm:inline">
         {trader.currentClientName ? (
           <>
-            Viewing: <span className="font-medium text-white">{trader.currentClientName}</span>
+            {t("viewing")} <span className="font-medium text-white">{trader.currentClientName}</span>
           </>
         ) : (
-          "No client selected"
+          t("noClientSelected")
         )}
         <span className="text-white/30"> · </span>
         {clientCountLabel}
@@ -46,7 +54,7 @@ function ClientContextIndicator({ trader }: { trader: TraderShellContext }) {
   );
 }
 
-export function AppHeader({ user, trader }: AppHeaderProps) {
+export async function AppHeader({ user, trader }: AppHeaderProps) {
   return (
     <header className="flex h-16 items-center justify-between gap-3 border-b border-white/10 pl-16 pr-4 lg:px-6">
       <div className="min-w-0 flex-1">
@@ -54,6 +62,10 @@ export function AppHeader({ user, trader }: AppHeaderProps) {
       </div>
 
       {trader && <ClientContextIndicator trader={trader} />}
+
+      <div className="hidden sm:block">
+        <LanguageSwitcher />
+      </div>
 
       <UserMenu name={user.name ?? user.email ?? "User"} role={displayRole(user.role)} />
     </header>

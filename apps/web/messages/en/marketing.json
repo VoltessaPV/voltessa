@@ -86,5 +86,37 @@
     "emailLabel": "Email",
     "locationLabel": "Location",
     "location": "Sofia, Bulgaria"
+  },
+  "cta": {
+    "requestDemo": "Request Demo",
+    "talkToUs": "Talk to Us"
+  },
+  "contactModal": {
+    "title": "Talk to Us",
+    "ariaLabel": "Talk to us",
+    "closeLabel": "Close",
+    "thankYouTitle": "Thank you.",
+    "thankYouDescription": "We will contact you shortly.",
+    "fullNameLabel": "Full Name *",
+    "fullNamePlaceholder": "Jane Doe",
+    "companyLabel": "Company *",
+    "companyPlaceholder": "Acme Renewables",
+    "emailLabel": "Email *",
+    "emailPlaceholder": "jane@acme.com",
+    "phoneLabel": "Phone (optional)",
+    "phonePlaceholder": "+1 555 000 0000",
+    "countryLabel": "Country",
+    "countryPlaceholder": "Bulgaria",
+    "messageLabel": "Message *",
+    "messagePlaceholder": "Tell us about your plant(s) and what you're looking for.",
+    "sendButton": "Send Message",
+    "sendingButton": "Sending...",
+    "errors": {
+      "fullNameRequired": "Full name is required.",
+      "companyRequired": "Company is required.",
+      "emailRequired": "Email is required.",
+      "emailInvalid": "Enter a valid email address.",
+      "messageRequired": "Message is required."
+    }
   }
 }

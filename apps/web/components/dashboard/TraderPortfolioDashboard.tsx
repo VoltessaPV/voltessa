@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import { Link } from "@/lib/i18n/navigation";
 
 import { ClientCardGrid } from "@/components/clients/ClientCardGrid";
@@ -27,41 +28,42 @@ type Props = {
  * dedicated "recently viewed"/"pinned" concept - that's a deliberate,
  * explicit scope cut for this milestone, not an oversight.
  */
-export function TraderPortfolioDashboard({ summary, quickAccessClients }: Props) {
+export async function TraderPortfolioDashboard({ summary, quickAccessClients }: Props) {
   const hasClients = summary.assignedClientCount > 0;
+  const t = await getTranslations("dashboard.trader");
 
   return (
     <PageContainer className="space-y-3">
       <section className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
-        <MarketSummaryCard eyebrow="Assigned Clients" value={summary.assignedClientCount.toString()} />
+        <MarketSummaryCard eyebrow={t("assignedClients")} value={summary.assignedClientCount.toString()} />
 
-        <MarketSummaryCard eyebrow="Total Plants" value={summary.totalPlantCount.toString()} />
+        <MarketSummaryCard eyebrow={t("totalPlants")} value={summary.totalPlantCount.toString()} />
 
         <MarketSummaryCard
-          eyebrow="Portfolio Production"
+          eyebrow={t("portfolioProduction")}
           value={hasClients ? summary.portfolioProductionKwh.toFixed(1) : undefined}
           valueUnit={hasClients ? "kWh" : undefined}
-          unavailableNote="No clients assigned yet"
+          unavailableNote={t("noClientsAssigned")}
         />
 
         <MarketSummaryCard
-          eyebrow="Portfolio Revenue"
+          eyebrow={t("portfolioRevenue")}
           value={hasClients ? summary.portfolioRevenueEur.toFixed(2) : undefined}
           valueUnit={hasClients ? "EUR" : undefined}
-          unavailableNote="No clients assigned yet"
+          unavailableNote={t("noClientsAssigned")}
         />
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-white">Quick access</h2>
-            <p className="mt-0.5 text-xs text-slate-500">Jump straight into a client</p>
+            <h2 className="text-sm font-semibold text-white">{t("quickAccessTitle")}</h2>
+            <p className="mt-0.5 text-xs text-slate-500">{t("quickAccessSubtitle")}</p>
           </div>
 
           {hasClients && (
             <Link href="/clients" className="text-xs font-medium text-blue-400 hover:text-blue-300">
-              View all clients
+              {t("viewAllClientsLink")}
             </Link>
           )}
         </div>
@@ -73,10 +75,7 @@ export function TraderPortfolioDashboard({ summary, quickAccessClients }: Props)
               redirectTo="/dashboard"
             />
           ) : (
-            <p className="text-sm text-white/60">
-              You&apos;re all set. Clients you&apos;re assigned to will show up here for quick
-              access - a Platform Administrator will assign you shortly.
-            </p>
+            <p className="text-sm text-white/60">{t("noClientsMessage")}</p>
           )}
         </div>
       </section>

@@ -1,1 +1,88 @@
-{}
+{
+  "noMarketData": {
+    "title": "Няма налични пазарни данни за {date}",
+    "description": "Все още няма импортирани данни от ENTSO-E за този ден. Използвайте избора на дата по-горе, за да изберете друг ден."
+  },
+  "priceExport": {
+    "titlePlatformWide": "Цена и износ",
+    "subtitlePlatformWide": "Платформена цена ден напред - изберете клиент, за да видите неговия приход от износ и статус на автоматизацията.",
+    "title": "Цена и износ",
+    "subtitle": "Цена на електроенергията и препоръчани прозорци за износ"
+  },
+  "emptyState": {
+    "title": "Няма свързана централа",
+    "description": "Пазарните функции - цени на живо, приход от износ и статус на автоматизацията - стават достъпни след свързване на централа."
+  },
+  "partialImportNotice": "Днешният импорт е частичен — някои интервали липсват от ENTSO-E и се показват като празнини, никога не се измислят.",
+  "summary": {
+    "revenueToday": "Приход днес",
+    "revenue": "Приход",
+    "currentPrice": "Текуща цена",
+    "currentExport": "Текущ износ",
+    "configuredMode": "Конфигуриран режим",
+    "currentModeRow": "Текущ режим",
+    "disabled": "Изключена",
+    "automationOff": "Автоматизацията е изключена",
+    "enabled": "Включена",
+    "minimumProfitablePrice": "Минимална рентабилна цена",
+    "healthy": "Наред",
+    "belowThreshold": "Под прага",
+    "waitingForProductionTelemetry": "Изчакване на телеметрия за производството",
+    "livePriceOnlyToday": "Цена на живо е налична само за днес",
+    "fusionSolarMeterUnavailable": "Данните от измервателния уред на FusionSolar не са налични",
+    "exportedToday": "Изнесено днес",
+    "averageSellingPrice": "Средна продажна цена"
+  },
+  "toolbar": {
+    "live": "На живо",
+    "historical": "Исторически",
+    "previousDay": "Предишен ден",
+    "nextDay": "Следващ ден",
+    "goButton": "Иди",
+    "todayButton": "Днес",
+    "comingSoon": "Очаквайте скоро",
+    "soonBadge": "скоро",
+    "todayRange": "Днес",
+    "weekRange": "Седмица",
+    "monthRange": "Месец",
+    "yearRange": "Година",
+    "countryLabel": "Държава",
+    "resolutionLabel": "Времева разделителна способност",
+    "resolution15min": "15 минути"
+  },
+  "distribution": {
+    "title": "Разпределение на цената",
+    "high": "Високо",
+    "mid": "Средно",
+    "low": "Ниско"
+  },
+  "info": {
+    "title": "Пазарна информация",
+    "country": "Държава",
+    "source": "Източник",
+    "lastUpdate": "Последна актуализация",
+    "countryName": "България"
+  },
+  "insights": {
+    "title": "Пазарни прозрения",
+    "highestPriceToday": "Най-висока цена днес: {price} EUR/MWh в {time}",
+    "lowestPriceToday": "Най-ниска цена днес: {price} EUR/MWh в {time}",
+    "priceSpread": "Ценови диапазон: {spread} EUR/MWh",
+    "averagePrice": "Средна цена: {price} EUR/MWh",
+    "hoursAboveThreshold": "Часове над прага: {hours} ч",
+    "hoursBelowThreshold": "Часове под прага: {hours} ч"
+  },
+  "eventLog": {
+    "title": "Дневник на събитията (последните 10)",
+    "emptyTitle": "Все още няма събития",
+    "emptyDescription": "Автоматизационните решения ще се появят тук след първата промяна на режим или автоматизационно събитие."
+  },
+  "priceChart": {
+    "electricityPrice": "Цена на електроенергията",
+    "exportThreshold": "Праг за износ",
+    "exportThresholdLabel": "ПРАГ ЗА ИЗНОС",
+    "exportedEnergy": "Изнесена енергия",
+    "exportedKwhSuffix": "kWh изнесени",
+    "noData": "Няма данни"
+  }
+}

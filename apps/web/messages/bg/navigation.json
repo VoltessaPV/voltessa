@@ -7,5 +7,21 @@
     "signOutLink": "Изход",
     "openMenuLabel": "Отвори навигационното меню",
     "closeMenuLabel": "Затвори навигационното меню"
+  },
+  "userMenu": {
+    "signOutLink": "Изход"
+  },
+  "pageHeadings": {
+    "dashboard": { "eyebrow": "Работа на централата на живо" },
+    "market": { "eyebrow": "Български пазар ден напред" },
+    "automations": { "eyebrow": "Автоматично управление на износа", "title": "Автоматизации" },
+    "alerts": { "eyebrow": "Оперативни аларми", "title": "Аларми" },
+    "bess": { "eyebrow": "Съхранение на енергия в батерии", "title": "Батерии" },
+    "clients": { "eyebrow": "Портфолио от клиенти", "title": "Клиенти" },
+    "settings": { "eyebrow": "Системна конфигурация" },
+    "plants": { "eyebrow": "Централи", "title": "Централи" },
+    "plantsNew": { "eyebrow": "Централи", "title": "Добави централа" },
+    "plantDetails": { "eyebrow": "Детайли за централата", "title": "Детайли за централата" },
+    "plantEdit": { "eyebrow": "Централи", "title": "Редактирай централа" }
   }
 }

@@ -86,5 +86,37 @@
     "emailLabel": "Имейл",
     "locationLabel": "Локация",
     "location": "София, България"
+  },
+  "cta": {
+    "requestDemo": "Заяви демонстрация",
+    "talkToUs": "Свържете се с нас"
+  },
+  "contactModal": {
+    "title": "Свържете се с нас",
+    "ariaLabel": "Свържете се с нас",
+    "closeLabel": "Затвори",
+    "thankYouTitle": "Благодарим Ви.",
+    "thankYouDescription": "Ще се свържем с Вас скоро.",
+    "fullNameLabel": "Пълно име *",
+    "fullNamePlaceholder": "Иван Иванов",
+    "companyLabel": "Фирма *",
+    "companyPlaceholder": "Acme Renewables",
+    "emailLabel": "Имейл *",
+    "emailPlaceholder": "ivan@acme.com",
+    "phoneLabel": "Телефон (незадължително)",
+    "phonePlaceholder": "+359 88 000 0000",
+    "countryLabel": "Държава",
+    "countryPlaceholder": "България",
+    "messageLabel": "Съобщение *",
+    "messagePlaceholder": "Разкажете ни за Вашата централа(и) и какво търсите.",
+    "sendButton": "Изпрати съобщение",
+    "sendingButton": "Изпращане...",
+    "errors": {
+      "fullNameRequired": "Пълното име е задължително.",
+      "companyRequired": "Фирмата е задължителна.",
+      "emailRequired": "Имейлът е задължителен.",
+      "emailInvalid": "Въведете валиден имейл адрес.",
+      "messageRequired": "Съобщението е задължително."
+    }
   }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useActionState } from "react";
 
 import { AuthField } from "@/components/auth/AuthField";
@@ -13,6 +14,8 @@ type ResetPasswordFormProps = {
 };
 
 export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
+  const t = useTranslations("auth.resetPassword");
+  const tErrors = useTranslations("auth.errors");
   const [result, formAction, isPending] = useActionState<ResetPasswordResult, FormData>(
     resetPassword,
     null,
@@ -23,14 +26,14 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
       <input type="hidden" name="token" value={token} />
 
       <AuthField
-        label="New password"
+        label={t("newPasswordLabel")}
         name="newPassword"
         type="password"
         autoComplete="new-password"
         required
       />
       <AuthField
-        label="Confirm password"
+        label={t("confirmPasswordLabel")}
         name="confirmPassword"
         type="password"
         autoComplete="new-password"
@@ -38,7 +41,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
       />
 
       {result && !isPending && !result.success && (
-        <p className="text-sm text-red-400">{result.message}</p>
+        <p className="text-sm text-red-400">{tErrors(result.code as never, result.params as never)}</p>
       )}
 
       <button
@@ -50,7 +53,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
         )}
       >
         {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isPending ? "Resetting..." : "Reset Password"}
+        {isPending ? t("submittingButton") : t("submitButton")}
       </button>
     </form>
   );

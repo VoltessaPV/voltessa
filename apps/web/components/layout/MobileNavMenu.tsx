@@ -4,6 +4,8 @@ import { Menu, X } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
+
 import { AuthNavActions } from "./AuthNavActions";
 import { ContactNavLink } from "./ContactNavLink";
 import { SectionNavLink } from "./SectionNavLink";
@@ -56,6 +58,8 @@ export function MobileNavMenu({ isAuthenticated }: MobileNavMenuProps) {
           </nav>
 
           <div className="mt-6 flex flex-col gap-3">
+            <LanguageSwitcher className="inline-flex w-full items-center justify-center gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-1 text-xs" />
+
             <AuthNavActions isAuthenticated={isAuthenticated} className="w-full py-3 text-center text-sm" />
           </div>
         </div>

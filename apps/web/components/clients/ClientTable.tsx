@@ -1,3 +1,7 @@
+"use client";
+
+import { useTranslations } from "next-intl";
+
 import { selectTraderOrganization } from "@/app/[locale]/(platform)/actions";
 import type { TraderClient } from "@/lib/trader/queries";
 
@@ -8,14 +12,18 @@ type Props = {
 
 /** Table view - the Clients portfolio's default once a trader's list grows past `GRID_VIEW_MAX_CLIENTS` (see page.tsx). */
 export function ClientTable({ clients, redirectTo }: Props) {
+  const t = useTranslations("clients.table");
+  const tCard = useTranslations("clients.card");
+  const tTerm = useTranslations("terminology");
+
   return (
     <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-white/10 text-white/50">
           <tr>
-            <th className="px-4 py-3 font-medium">Client</th>
-            <th className="px-4 py-3 font-medium">Plants</th>
-            <th className="px-4 py-3 font-medium">Status</th>
+            <th className="px-4 py-3 font-medium">{tTerm("client")}</th>
+            <th className="px-4 py-3 font-medium">{t("plantsHeader")}</th>
+            <th className="px-4 py-3 font-medium">{t("statusHeader")}</th>
             <th className="px-4 py-3" />
           </tr>
         </thead>
@@ -32,7 +40,7 @@ export function ClientTable({ clients, redirectTo }: Props) {
                       : "rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/50"
                   }
                 >
-                  {client.connected ? "Connected" : "No plant"}
+                  {client.connected ? tCard("connectedBadge") : tCard("noPlantBadge")}
                 </span>
               </td>
               <td className="px-4 py-3 text-right">
@@ -43,7 +51,7 @@ export function ClientTable({ clients, redirectTo }: Props) {
                     type="submit"
                     className="rounded-lg border border-white/10 px-3 py-1.5 text-xs font-medium text-white/80 transition hover:border-white/20 hover:text-white"
                   >
-                    View
+                    {t("viewButton")}
                   </button>
                 </form>
               </td>

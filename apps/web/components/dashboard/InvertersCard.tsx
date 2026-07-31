@@ -1,4 +1,5 @@
 import { Cpu } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import type { InverterStatusResult } from "@/lib/fusionsolar/get-plant-inverter-status";
 
@@ -25,18 +26,21 @@ const STATUS_DOT_CLASS: Record<string, string> = {
  * label next to it repeated the same fact twice.
  */
 export function InvertersCard({ inverters, zeroExportActive }: InvertersCardProps) {
+  const t = useTranslations("dashboard.inverters");
+  const tTerm = useTranslations("terminology");
+
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
       <div className="flex items-center justify-between gap-2">
         <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-slate-500">
           <Cpu className="h-3.5 w-3.5" />
-          Inverters
+          {t("title")}
         </p>
 
         {zeroExportActive && (
           <span className="flex items-center gap-1 text-[10px] text-amber-400">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-            Zero Export
+            {tTerm("zeroExport")}
           </span>
         )}
       </div>
@@ -44,10 +48,10 @@ export function InvertersCard({ inverters, zeroExportActive }: InvertersCardProp
       {!inverters.available ? (
         <p className="mt-4 text-xs text-slate-500">
           {inverters.reason === "no_inverter_devices"
-            ? "No inverter devices configured"
+            ? t("noInverterDevices")
             : inverters.reason === "historical_day"
-              ? "Historical inverter status is not available"
-              : "FusionSolar data unavailable"}
+              ? t("historicalUnavailable")
+              : t("dataUnavailable")}
         </p>
       ) : (
         <ul className="mt-3 divide-y divide-white/5">

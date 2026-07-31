@@ -32,19 +32,6 @@ export type WeatherConditionKey =
   | "snow"
   | "fog";
 
-export const WEATHER_CONDITION_LABELS: Record<WeatherConditionKey, string> = {
-  clear: "Clear",
-  mostlyClear: "Mostly Clear",
-  partlyCloudy: "Partly Cloudy",
-  cloudy: "Cloudy",
-  overcast: "Overcast",
-  rain: "Rain",
-  showers: "Showers",
-  thunderstorm: "Thunderstorm",
-  snow: "Snow",
-  fog: "Fog",
-};
-
 /**
  * One muted, natural tone per condition (yellow sun, light gray cloud, blue
  * rain, near-white snow, ...) — deliberately single-hue per icon rather than

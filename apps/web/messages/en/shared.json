@@ -10,6 +10,7 @@
   },
   "actions": {
     "save": "Save",
+    "saving": "Saving...",
     "cancel": "Cancel",
     "close": "Close",
     "loading": "Loading…",
@@ -17,5 +18,10 @@
     "edit": "Edit",
     "delete": "Delete",
     "back": "Back"
-  }
+  },
+  "noClientAssigned": {
+    "title": "No client selected",
+    "description": "Select a client from the Clients page to see their data here."
+  },
+  "connectPlantButton": "Connect Plant"
 }

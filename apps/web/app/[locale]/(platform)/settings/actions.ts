@@ -9,7 +9,27 @@ import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg"
 import { getBulgarianElectricitySuppliers } from "@/lib/market/suppliers/bg";
 import { prisma } from "@/lib/prisma";
 
-export type ActionResult = { success: boolean; message: string } | null;
+export type ActionResultCode =
+  | "profileUpdated"
+  | "passwordAlreadyExists"
+  | "passwordFieldsRequired"
+  | "passwordTooShort"
+  | "passwordsDoNotMatch"
+  | "passwordCreated"
+  | "noPasswordExists"
+  | "allPasswordFieldsRequired"
+  | "currentPasswordIncorrect"
+  | "newPasswordsDoNotMatch"
+  | "passwordChanged"
+  | "billingSaved"
+  | "unknownSupplier"
+  | "unknownDso"
+  | "energyMarketSaved"
+  | "notificationPreferencesSaved";
+
+export type ActionResult =
+  | { success: boolean; code: ActionResultCode; params?: { min: number } }
+  | null;
 
 /** Trims a FormData field; empty string becomes `null` (never stored as `""`). */
 function readOptionalString(formData: FormData, key: string): string | null {
@@ -53,7 +73,7 @@ export async function updateProfile(
 
   revalidatePath("/settings");
 
-  return { success: true, message: "Profile updated" };
+  return { success: true, code: "profileUpdated" };
 }
 
 /**
@@ -74,25 +94,26 @@ export async function createPassword(
   });
 
   if (existing?.passwordHash) {
-    return { success: false, message: "A password already exists for this account" };
+    return { success: false, code: "passwordAlreadyExists" };
   }
 
   const newPassword = formData.get("newPassword");
   const confirmPassword = formData.get("confirmPassword");
 
   if (typeof newPassword !== "string" || typeof confirmPassword !== "string") {
-    return { success: false, message: "New password and confirmation are required" };
+    return { success: false, code: "passwordFieldsRequired" };
   }
 
   if (newPassword.length < MINIMUM_PASSWORD_LENGTH) {
     return {
       success: false,
-      message: `Password must be at least ${MINIMUM_PASSWORD_LENGTH} characters`,
+      code: "passwordTooShort",
+      params: { min: MINIMUM_PASSWORD_LENGTH },
     };
   }
 
   if (newPassword !== confirmPassword) {
-    return { success: false, message: "Passwords do not match" };
+    return { success: false, code: "passwordsDoNotMatch" };
   }
 
   const passwordHash = await hashPassword(newPassword);
@@ -104,7 +125,7 @@ export async function createPassword(
 
   revalidatePath("/settings");
 
-  return { success: true, message: "Password created" };
+  return { success: true, code: "passwordCreated" };
 }
 
 /**
@@ -124,7 +145,7 @@ export async function changePassword(
   });
 
   if (!existing?.passwordHash) {
-    return { success: false, message: "No password exists for this account yet" };
+    return { success: false, code: "noPasswordExists" };
   }
 
   const currentPassword = formData.get("currentPassword");
@@ -136,7 +157,7 @@ export async function changePassword(
     typeof newPassword !== "string" ||
     typeof confirmPassword !== "string"
   ) {
-    return { success: false, message: "All password fields are required" };
+    return { success: false, code: "allPasswordFieldsRequired" };
   }
 
   const currentPasswordValid = await verifyPassword(
@@ -145,18 +166,19 @@ export async function changePassword(
   );
 
   if (!currentPasswordValid) {
-    return { success: false, message: "Current password is incorrect" };
+    return { success: false, code: "currentPasswordIncorrect" };
   }
 
   if (newPassword.length < MINIMUM_PASSWORD_LENGTH) {
     return {
       success: false,
-      message: `Password must be at least ${MINIMUM_PASSWORD_LENGTH} characters`,
+      code: "passwordTooShort",
+      params: { min: MINIMUM_PASSWORD_LENGTH },
     };
   }
 
   if (newPassword !== confirmPassword) {
-    return { success: false, message: "New passwords do not match" };
+    return { success: false, code: "newPasswordsDoNotMatch" };
   }
 
   const passwordHash = await hashPassword(newPassword);
@@ -166,7 +188,7 @@ export async function changePassword(
     data: { passwordHash },
   });
 
-  return { success: true, message: "Password changed" };
+  return { success: true, code: "passwordChanged" };
 }
 
 /** Settings > Billing Information — one row per organization, upserted (a first save has no existing row yet). */
@@ -195,7 +217,7 @@ export async function updateBilling(
 
   revalidatePath("/settings");
 
-  return { success: true, message: "Billing information saved" };
+  return { success: true, code: "billingSaved" };
 }
 
 /**
@@ -217,14 +239,14 @@ export async function updateEnergyMarket(
     supplierId !== null &&
     !getBulgarianElectricitySuppliers().some((supplier) => supplier.id === supplierId)
   ) {
-    return { success: false, message: "Unknown electricity supplier" };
+    return { success: false, code: "unknownSupplier" };
   }
 
   if (
     dsoId !== null &&
     !getBulgarianDistributionOperators().some((operator) => operator.id === dsoId)
   ) {
-    return { success: false, message: "Unknown distribution network operator" };
+    return { success: false, code: "unknownDso" };
   }
 
   await prisma.energyMarketSettings.upsert({
@@ -235,7 +257,7 @@ export async function updateEnergyMarket(
 
   revalidatePath("/settings");
 
-  return { success: true, message: "Energy market settings saved" };
+  return { success: true, code: "energyMarketSaved" };
 }
 
 /**
@@ -266,7 +288,7 @@ export async function updateNotificationPreferences(
 
   revalidatePath("/settings");
 
-  return { success: true, message: "Notification preferences saved" };
+  return { success: true, code: "notificationPreferencesSaved" };
 }
 
 /**

@@ -2,6 +2,7 @@ import Image from "next/image";
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/lib/i18n/navigation";
 
+import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
 import { getCurrentUser } from "@/lib/auth/session";
 import { routes } from "@/lib/routes";
 
@@ -49,7 +50,9 @@ export default async function Navbar() {
         {/* Auth CTAs + mobile menu */}
 
         <div className="flex shrink-0 items-center gap-2">
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="hidden items-center gap-3 md:flex">
+            <LanguageSwitcher />
+
             <AuthNavActions
               isAuthenticated={isAuthenticated}
               className="px-3 py-1.5 text-xs md:px-4 md:py-2 lg:px-6 lg:py-3 lg:text-sm"

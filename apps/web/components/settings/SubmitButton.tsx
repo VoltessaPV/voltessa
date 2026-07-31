@@ -1,3 +1,5 @@
+import { useTranslations } from "next-intl";
+
 type SubmitButtonProps = {
   isPending: boolean;
   label: string;
@@ -12,6 +14,8 @@ export function SubmitButton({
   pendingLabel,
   variant = "primary",
 }: SubmitButtonProps) {
+  const tActions = useTranslations("shared.actions");
+
   return (
     <button
       type="submit"
@@ -22,7 +26,7 @@ export function SubmitButton({
           : "bg-blue-600 hover:bg-blue-500 disabled:hover:bg-blue-600"
       }`}
     >
-      {isPending ? (pendingLabel ?? "Saving...") : label}
+      {isPending ? (pendingLabel ?? tActions("saving")) : label}
     </button>
   );
 }

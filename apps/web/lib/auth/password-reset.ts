@@ -41,7 +41,7 @@ export async function sendPasswordResetEmail(userId: string, email: string): Pro
     console.log(`[Password Reset] Reset URL for ${email}: ${resetUrl}`);
   }
 
-  await deliverPasswordResetEmail(email, resetUrl);
+  await deliverPasswordResetEmail(email, resetUrl, userId);
 }
 
 export type ConsumeResetTokenResult =

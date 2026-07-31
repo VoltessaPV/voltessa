@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 
 import { auth } from "@/auth";
 import { AuthCard } from "@/components/auth/AuthCard";
@@ -6,9 +7,10 @@ import { QueryToast } from "@/components/ui/QueryToast";
 
 import { LoginForm } from "./LoginForm";
 
-export const metadata = {
-  title: "Log In",
-};
+export async function generateMetadata() {
+  const t = await getTranslations("auth.login");
+  return { title: t("title") };
+}
 
 export default async function LoginPage() {
   const session = await auth();
@@ -17,9 +19,11 @@ export default async function LoginPage() {
     redirect("/dashboard");
   }
 
+  const t = await getTranslations("auth.login");
+
   return (
     <>
-      <AuthCard title="Log in to Voltessa" subtitle="Welcome back.">
+      <AuthCard title={t("title")} subtitle={t("subtitle")}>
         <LoginForm />
       </AuthCard>
 
