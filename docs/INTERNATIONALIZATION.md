@@ -18,17 +18,54 @@ root layout (`app/admin/layout.tsx`), physically outside the `app/[locale]/` tre
 diagnostic consoles) is excluded the same way, for the same underlying reason (not customer-facing),
 via its own `app/dev/layout.tsx`.
 
+## Production rollout status
+
+**The internationalization infrastructure is complete and every customer-facing surface has been
+migrated to it (English + Bulgarian both fully translated — see the rest of this document). Bulgarian
+is nonetheless intentionally disabled in production right now**, pending a full manual QA pass across
+every translated screen. This is a deliberate rollout decision, not a gap in the work: nothing was
+reverted, deleted, or left half-migrated to get here.
+
+Concretely, while Bulgarian is disabled:
+
+- English is the only publicly reachable locale. `/en/...` is the only prefix `routing.locales`
+  (see below) actually contains, so it's the only one next-intl's middleware, `generateStaticParams`,
+  and the sitemap/`hreflang` output ever produce.
+- The language switcher (`components/i18n/LanguageSwitcher.tsx`) renders nothing anywhere it's
+  mounted — it hides itself once there's only one locale to switch between, rather than each of its
+  ~10 call sites needing its own conditional.
+- Visiting a Bulgarian URL directly (`/bg/...`) 308-redirects permanently to its exact English
+  equivalent (`proxy.ts`), rather than 404ing or serving a partially-translated page.
+- A user who already has `User.locale = "bg"` or a `voltessa-locale` cookie of `"bg"` (set before
+  this rollout decision) is served English and nothing about their stored preference is touched —
+  see `lib/i18n/locale-sync.ts`'s and `lib/email/locale.ts`'s own doc comments for exactly how
+  that distinction (`LOCALES`, the full known set, vs. `routing.locales`, the enabled subset) is kept.
+- `messages/bg/*.json` is untouched, still complete, and still validated by `i18n:validate`/
+  `i18n:check-terminology` in CI exactly as before — nothing about the translation content or
+  tooling depends on whether Bulgarian is enabled.
+
+**Re-enabling Bulgarian is a one-line change**: add `"bg"` back to `lib/i18n/routing.ts`'s
+`ENABLED_LOCALES` array. Every piece of behavior above is derived from that one array (directly, or
+via `routing.locales`, which next-intl builds from it) — not from a scattered set of feature flags —
+so there is no second migration project to do later, no code to un-revert, and no translations to
+re-write. The moment that line changes, `/bg/...` routes become reachable again, the switcher
+reappears everywhere, static generation/sitemaps include Bulgarian again, and any user whose stored
+preference was already `"bg"` sees Bulgarian again immediately, with no re-selection needed.
+
 ## Architecture summary
 
 - **Framework**: [next-intl](https://next-intl.dev) — chosen for first-class Next.js App Router/RSC
   support, an official routing/middleware integration, typed message keys, and built-in
   `Intl`-backed formatting. See the approved architecture proposal for the full evaluation against
   next-i18next/i18next/alternatives.
-- **Routing**: explicit locale prefixes for every locale, including English (`/en/...`, `/bg/...`)
+- **Routing**: explicit locale prefixes for every *enabled* locale, including English (`/en/...`)
   — `lib/i18n/routing.ts`'s `localePrefix: "always"`. No hidden default locale. Route *slugs* never
   change per locale (`/dashboard`, `/settings`, `/market`, ... are identical across every language)
   — only UI text is translated. `proxy.ts` composes next-intl's middleware with the existing
-  NextAuth logic; `/admin` and `/dev` are excluded from its matcher entirely.
+  NextAuth logic; `/admin` and `/dev` are excluded from its matcher entirely. `routing.locales` is
+  driven by `ENABLED_LOCALES`, a deliberately separate, smaller array than the full `LOCALES` this
+  codebase has translations for — see "Production rollout status" above; `/bg/...` is real,
+  complete, and currently disabled, not unbuilt.
 - **User language resolution order**: `User.locale` → the `voltessa-locale` cookie →
   `Accept-Language` → English. `User.locale` is only ever read/written from Node.js Server Actions
   (sign-in, explicit language switch — see `lib/i18n/locale-sync.ts` and `lib/i18n/actions.ts`),
