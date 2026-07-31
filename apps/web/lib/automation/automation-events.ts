@@ -96,8 +96,11 @@ export async function createAutomationEvent(
 export type RecentAutomationEvent = {
   createdAt: Date;
   type: AutomationEventType;
+  /** Stored audit text — kept for completeness, but the UI regenerates real display text from `type`/`newMode`/`reason` via `lib/automation/automation-event-i18n.ts` instead of showing this directly. See `AutomationEvent.summary`'s schema comment. */
   summary: string;
+  /** For `mode_changed`, an `ExportDecisionReasonCode` (translated via `translateDecisionReason`); for `automation_service_failed`, raw diagnostic text (shown as-is, out of the i18n fix's scope). See `AutomationEvent.reason`'s schema comment. */
   reason: string;
+  newMode: string | null;
 };
 
 /**
@@ -130,7 +133,7 @@ export async function getRecentAutomationEvents(
     where: { organizationId, type: { in: USER_FACING_EVENT_TYPES } },
     orderBy: { createdAt: "desc" },
     take: limit,
-    select: { createdAt: true, type: true, summary: true, reason: true },
+    select: { createdAt: true, type: true, summary: true, reason: true, newMode: true },
   });
 
   return events.map((event) => ({
@@ -138,5 +141,6 @@ export async function getRecentAutomationEvents(
     type: event.type as AutomationEventType,
     summary: event.summary,
     reason: event.reason,
+    newMode: event.newMode,
   }));
 }

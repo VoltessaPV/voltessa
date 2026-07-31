@@ -66,5 +66,11 @@ jobs:
       - name: Type check
         run: pnpm exec turbo check-types
 
+      - name: i18n validate (missing keys, placeholder consistency, structural parity)
+        run: pnpm --filter web run i18n:validate
+
+      - name: i18n check terminology (no duplicate canonical-term translations)
+        run: pnpm --filter web run i18n:check-terminology
+
       - name: Build
         run: pnpm exec turbo build

@@ -3,7 +3,7 @@ import { History } from "lucide-react";
 import {
   BULGARIA_TIMEZONE,
   type MarketEventLogEntry,
-} from "@/app/(platform)/market/market-data";
+} from "@/app/[locale]/(platform)/market/market-data";
 
 type MarketEventLogProps = {
   entries: MarketEventLogEntry[];

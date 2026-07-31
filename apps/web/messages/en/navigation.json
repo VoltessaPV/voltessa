@@ -1,0 +1,11 @@
+{
+  "sidebar": {
+    "bessLink": "BESS",
+    "automationsLink": "Automations",
+    "alertsLink": "Alerts",
+    "clientsLink": "Clients",
+    "signOutLink": "Sign Out",
+    "openMenuLabel": "Open navigation menu",
+    "closeMenuLabel": "Close navigation menu"
+  }
+}

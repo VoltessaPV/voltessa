@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "title": "Voltessa",
+    "description": "AI platform for solar parks, battery storage and renewable energy operations."
+  },
+  "nav": {
+    "platformLink": "Platform",
+    "solutionsLink": "Solutions",
+    "aboutLink": "About",
+    "contactLink": "Contact",
+    "logInLink": "Log In"
+  },
+  "hero": {
+    "badge": "AI-powered Renewable Operations",
+    "titleLine1": "AI Platform",
+    "titleLine2": "for Solar & Battery",
+    "titleLine3": "Operations",
+    "description": "Voltessa continuously monitors solar plants, battery systems, weather forecasts and electricity markets to automate operations and maximize revenue.",
+    "goToVoltessaLink": "Go to My Voltessa",
+    "createAccountLink": "Create Account",
+    "tagline": "SOLAR • BESS • MARKET • AI AUTOMATION"
+  },
+  "solutions": {
+    "heading": "Solutions",
+    "subheading": "Built for modern renewable energy operations.",
+    "utilityScaleSolar": {
+      "title": "Utility-Scale Solar",
+      "description": "Operate utility-scale photovoltaic plants with real-time monitoring, automated export control and operational visibility.",
+      "highlights": ["Live telemetry", "Export control", "Plant analytics", "Operational events"]
+    },
+    "electricityMarkets": {
+      "title": "Electricity Markets",
+      "description": "Use day-ahead electricity prices to make better operational decisions and maximize revenue.",
+      "highlights": ["ENTSO-E prices", "Revenue insights", "Export recommendations", "Market awareness"]
+    },
+    "renewablePortfolios": {
+      "title": "Renewable Portfolios",
+      "description": "Manage multiple renewable assets from a single operational platform.",
+      "highlights": ["Fleet overview", "Centralized monitoring", "Unified alerts", "Cross-site analytics"]
+    },
+    "batteryEnergyStorage": {
+      "title": "Battery Energy Storage",
+      "description": "Battery optimization capabilities currently under development.",
+      "highlights": ["State of Charge", "Peak shaving", "Market arbitrage", "Grid services"]
+    }
+  },
+  "about": {
+    "heading": "Why Voltessa",
+    "paragraphs": [
+      "Renewable energy operations have become significantly more complex. Plant monitoring, electricity markets, grid requirements and operational decisions are often handled across disconnected systems.",
+      "Voltessa brings these workflows together into one platform, giving operators a clear operational view and the tools to make faster, better-informed decisions.",
+      "We believe renewable assets should be managed with the same level of operational intelligence expected from any modern industrial infrastructure."
+    ],
+    "capabilities": {
+      "solarOperations": {
+        "title": "Solar Operations",
+        "description": "Real-time monitoring and operational awareness."
+      },
+      "electricityMarkets": {
+        "title": "Electricity Markets",
+        "description": "Integrated market intelligence and revenue optimization."
+      },
+      "fleetManagement": {
+        "title": "Fleet Management",
+        "description": "Operate multiple renewable assets from one platform."
+      },
+      "aiAutomation": {
+        "title": "AI Automation",
+        "description": "Intelligent workflows designed to reduce manual operations."
+      }
+    }
+  },
+  "roadmap": {
+    "heading": "Platform Roadmap",
+    "steps": [
+      "Solar Operations",
+      "Battery Energy Storage",
+      "Virtual Power Plants",
+      "Autonomous Energy Management"
+    ]
+  },
+  "contact": {
+    "badge": "Contact",
+    "heading": "Let's discuss your solar portfolio.",
+    "description": "Whether you're operating one utility-scale plant or an entire fleet, we'd love to show you how Voltessa can automate your operations.",
+    "emailLabel": "Email",
+    "locationLabel": "Location",
+    "location": "Sofia, Bulgaria"
+  }
+}

@@ -2,7 +2,7 @@
 
 import { Bar, Line, ReferenceLine } from "recharts";
 
-import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
+import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
 import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaTime } from "@/components/charts/chart-style";
 import { NowLabel } from "@/components/charts/NowMarker";

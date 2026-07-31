@@ -11,9 +11,9 @@
  * no Prisma, no Huawei, no ENTSO-E, no function calls that perform I/O.
  */
 
-import type { DashboardPageData } from "@/app/(platform)/dashboard/dashboard-data";
-import type { MarketEventLogEntry, MarketPageResult } from "@/app/(platform)/market/market-data";
-import type { ProductionPageData } from "@/app/(platform)/market/production-data";
+import type { DashboardPageData } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
+import type { MarketEventLogEntry, MarketPageResult } from "@/app/[locale]/(platform)/market/market-data";
+import type { ProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
 
 /**
  * Illustrative Event Log entries — hand-written, not part of the frozen

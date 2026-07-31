@@ -96,6 +96,21 @@ model User {
   /// its identifying link - see `ConsentLog` below.
   consentLogs ConsentLog[]
 
+  /// Full Internationalization milestone. The signed-in user's stored
+  /// language preference - `null` means "not yet decided" (a real, distinct
+  /// state, same convention as `AutomationState.currentExportMode`), not an
+  /// error. Resolution order (lib/i18n/locale-resolution.ts): this field,
+  /// then the `voltessa-locale` cookie, then `Accept-Language`, then
+  /// English. Kept in sync with the cookie at sign-in and on every explicit
+  /// language switch - see `lib/auth/config.ts`'s `signIn` event and
+  /// `lib/i18n/actions.ts`'s `setLocale` - so a preference follows the
+  /// person across devices/browsers, not just the one that set it. A plain
+  /// `String?`, not the `AppLocale` union (`lib/i18n/routing.ts`), since
+  /// Prisma enums can't easily grow alongside `routing.ts`'s locale list as
+  /// languages are added in later milestones - validated against
+  /// `AppLocale` at every read/write call site instead.
+  locale String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -659,13 +674,33 @@ model AutomationEvent {
   /// small closed-but-growable vocabulary (see MarketPrice.source).
   type String
 
-  /// Short human-readable label - e.g. "Switched to Zero Export",
-  /// "Automation Service failed".
+  /// Full Internationalization milestone: for `mode_changed`/
+  /// `automation_service_failed` (the two USER_FACING_EVENT_TYPES,
+  /// lib/automation/automation-events.ts), this is now a fixed, canonical
+  /// value derivable from `type`+`newMode` alone ("switched" / "failed") -
+  /// kept purely as a redundant, human-readable audit convenience, never
+  /// read back for display. The actual UI/notification text is regenerated
+  /// from `type`/`previousMode`/`newMode` via i18n at render time (see
+  /// `lib/automation/automation-event-i18n.ts`) - this column is NOT
+  /// re-displayed to end users directly. Previously held literal
+  /// pre-rendered English prose ("Switched to Zero Export") shown as-is
+  /// regardless of viewer locale - a real backend/presentation-layer
+  /// violation this milestone fixed. Reconciliation event types are
+  /// unaffected (internal/admin diagnostic text, out of this fix's scope).
   summary String
 
-  /// Longer explanation - the business decision reason (e.g. "Price below
-  /// low band", "Forecast indicates further price decline") for
-  /// mode-change events, or the raw error for reconciliation failures.
+  /// Full Internationalization milestone: for `mode_changed` events, this
+  /// is now `ExportDecisionReasonCode` (lib/automation/export-decision.ts)
+  /// - a stable canonical code, e.g. "price_below_low_band" - never English
+  /// prose. Translated at render/notification time via
+  /// `lib/automation/automation-event-i18n.ts`'s `decisionReasons.*`
+  /// mapping (`automations.json`), never stored pre-rendered. Previously
+  /// held literal English sentences ("Price below low band") directly -
+  /// the same violation `summary` above documents. For
+  /// `automation_service_failed`, and for reconciliation event types, this
+  /// remains free-form diagnostic text (the real transport/access error),
+  /// out of this fix's scope - see `errorMessage` below for the
+  /// user-facing failure-notification counterpart.
   reason String
 
   /// The real Automation Service/transport error, kept separate from

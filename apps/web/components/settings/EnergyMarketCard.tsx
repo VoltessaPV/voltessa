@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 
-import { updateEnergyMarket, type ActionResult } from "@/app/(platform)/settings/actions";
+import { updateEnergyMarket, type ActionResult } from "@/app/[locale]/(platform)/settings/actions";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { getBulgarianElectricitySuppliers } from "@/lib/market/suppliers/bg";
 

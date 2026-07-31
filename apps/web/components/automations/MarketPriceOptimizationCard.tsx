@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 
-import { updateMarketPriceAutomation } from "@/app/(platform)/automations/actions";
+import { updateMarketPriceAutomation } from "@/app/[locale]/(platform)/automations/actions";
 import CardHeader from "@/components/dashboard/CardHeader";
 import Card from "@/components/ui/Card";
 

@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 
-import { submitContactRequest } from "@/app/(marketing)/actions";
+import { submitContactRequest } from "@/app/[locale]/(marketing)/actions";
 import { useBodyScrollLock } from "@/lib/hooks/useBodyScrollLock";
 
 import { buttonClassName } from "./Button";

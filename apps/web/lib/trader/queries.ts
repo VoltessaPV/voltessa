@@ -1,5 +1,5 @@
-import { getMarketPageData } from "@/app/(platform)/market/market-data";
-import { getProductionPageData } from "@/app/(platform)/market/production-data";
+import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
+import { getProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { computeExportRevenue } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";

@@ -3,6 +3,7 @@ import { after } from "next/server";
 import Google from "next-auth/providers/google";
 
 import { synchronizeFusionSolarConnection } from "@/lib/fusionsolar/telemetry-sync-service";
+import { syncUserLocale } from "@/lib/i18n/locale-sync";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -96,6 +97,11 @@ export const authConfig = {
       if (!user.id) {
         return;
       }
+
+      // Synchronous, unlike triggerLoginSync below — must land on this
+      // response's own Set-Cookie header. See syncUserLocale's own doc
+      // comment for why this can't be deferred via after().
+      await syncUserLocale(user.id);
 
       await triggerLoginSync(user.id);
     },

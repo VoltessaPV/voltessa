@@ -1,4 +1,5 @@
-import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { Link } from "@/lib/i18n/navigation";
 
 import { routes } from "@/lib/routes";
 
@@ -20,10 +21,13 @@ type AuthNavActionsProps = {
  * here; both pages reuse the existing auth mechanisms.
  */
 export function AuthNavActions({ isAuthenticated, className }: AuthNavActionsProps) {
+  const tNav = useTranslations("marketing.nav");
+  const tHero = useTranslations("marketing.hero");
+
   if (isAuthenticated) {
     return (
       <Link href={routes.dashboard} className={buttonClassName("primary", className)}>
-        Go to My Voltessa
+        {tHero("goToVoltessaLink")}
       </Link>
     );
   }
@@ -31,11 +35,11 @@ export function AuthNavActions({ isAuthenticated, className }: AuthNavActionsPro
   return (
     <>
       <Link href={routes.login} className={buttonClassName("secondary", className)}>
-        Log In
+        {tNav("logInLink")}
       </Link>
 
       <Link href={routes.createAccount} className={buttonClassName("primary", className)}>
-        Create Account
+        {tHero("createAccountLink")}
       </Link>
     </>
   );

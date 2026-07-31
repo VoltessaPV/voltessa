@@ -5,7 +5,7 @@ import { useActionState } from "react";
 import {
   updateNotificationPreferences,
   type ActionResult,
-} from "@/app/(platform)/settings/actions";
+} from "@/app/[locale]/(platform)/settings/actions";
 
 import { ActionToast } from "./ActionToast";
 import { CheckboxField } from "./CheckboxField";

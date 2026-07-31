@@ -1,0 +1,18 @@
+{
+  "eventLog": {
+    "modeChangedSummary": "Switched to {mode}",
+    "automationServiceFailedSummary": "Export mode change failed",
+    "decisionReasons": {
+      "already_zero_export_low_band": "Already {zeroExport}; price at or below low band.",
+      "price_below_low_band": "Price below low band",
+      "already_no_limit_high_band": "Already {noLimit}; price at or above high band.",
+      "price_above_high_band": "Price above high band",
+      "already_zero_export_below_threshold": "Already {zeroExport}; price between low band and threshold.",
+      "forecast_indicates_decline": "Forecast indicates further price decline",
+      "below_threshold_no_decline_forecast": "Price between low band and threshold; forecast does not indicate further decline.",
+      "already_no_limit_above_threshold": "Already {noLimit}; price between threshold and high band.",
+      "forecast_indicates_recovery": "Forecast indicates market recovery",
+      "above_threshold_no_recovery_forecast": "Price between threshold and high band; forecast does not indicate recovery."
+    }
+  }
+}

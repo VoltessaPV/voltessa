@@ -1,0 +1,21 @@
+{
+  "trader": "Търговец",
+  "client": "Клиент",
+  "organization": "Организация",
+  "plantOwner": "Собственик на централа",
+  "portfolio": "Портфолио",
+  "market": "Пазар",
+  "supplier": "Доставчик",
+  "dso": "DSO",
+  "automation": "Автоматизация",
+  "alert": "Аларма",
+  "forecast": "Прогноза",
+  "battery": "Батерия",
+  "plant": "Централа",
+  "dashboard": "Табло",
+  "settings": "Настройки",
+  "exportMode": "Режим на износ",
+  "zeroExport": "Нулев износ",
+  "noLimit": "Без ограничение",
+  "threshold": "Праг"
+}

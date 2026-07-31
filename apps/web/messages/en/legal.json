@@ -1,0 +1,203 @@
+{
+  "shell": {
+    "lastUpdatedLabel": "Last updated"
+  },
+  "privacyPolicy": {
+    "pageTitle": "Privacy Policy",
+    "lastUpdated": "31 July 2026",
+    "cookiePolicyLink": "Read our full Cookie Policy",
+    "sections": {
+      "whoWeAre": {
+        "heading": "Who we are",
+        "paragraphs": [
+          "Voltessa is operated by Consensu EOOD (trading as \"Voltessa\"), registered in Sofia, Bulgaria (EIK 207238821, registered address: Pozitano Str. 14, 1301 Sofia, Bulgaria). We are the data controller for the personal data described in this policy.",
+          "Voltessa is an AI-powered platform that operates solar (and, in the future, other renewable) energy assets on behalf of their owners — including automatic export stop/resume decisions driven by electricity market prices — rather than only providing a monitoring dashboard."
+        ]
+      },
+      "dataWeCollect": {
+        "heading": "Data we collect",
+        "paragraphs": [
+          "Account and profile data: your name, email address, profile image, phone number, and (if you sign in with a password) a securely hashed password. If you sign in with Google, we receive your name, email, and profile picture from Google.",
+          "Organization data: your organization's name, and — if you are a Plant Owner — billing/invoicing details (company name, tax identification number, address, invoice email) and energy market settings (country, electricity supplier, distribution network operator).",
+          "Plant and device data: if you connect a solar plant via Huawei FusionSolar, we retrieve and store plant/device telemetry (production, consumption, export/import readings) and daily production/consumption figures, so we can display them to you and, where you enable it, make automated export-mode decisions.",
+          "Energy Trader data: if you register as an Energy Trader, we collect your trader profile (company name, distribution operator) and which Plant Owner organizations you are assigned to view, on a read-only basis.",
+          "Administrative and security data: if you interact with a Platform Administrator (our own staff), actions taken on your account are recorded in an internal audit log, and any support access to your account (\"impersonation\") is logged with a timestamp and the admin who performed it.",
+          "Cookie and consent data: which cookie categories you have consented to, and a history of that choice — see \"Cookies\" below and our Cookie Policy."
+        ]
+      },
+      "whyWeProcess": {
+        "heading": "Why we process your data",
+        "paragraphs": [
+          "To provide the service to you (performance of a contract): creating your account, operating your connected plants, running automation you've enabled, and Energy Trader read-only access you've been assigned.",
+          "To comply with a legal obligation: for example, retaining certain financial/accounting records for the period required by Bulgarian law, or demonstrating that a cookie consent decision was validly obtained.",
+          "For our legitimate interests: keeping the platform secure, maintaining an audit trail of administrative and automated actions so they remain explainable, and improving the service — always balanced against your rights and expectations.",
+          "With your consent: non-essential cookies (Functional, Analytics, Marketing) — see \"Cookies\" below. You can withdraw this consent at any time with no effect on the service itself."
+        ]
+      },
+      "cookies": {
+        "heading": "Cookies",
+        "paragraphs": [
+          "Voltessa uses strictly necessary cookies to keep the platform working (signing in, remembering security state), and — only with your consent — a small number of functional cookies for an embedded scheduling widget. We do not currently use analytics or marketing cookies. The full list of cookies, what each one does, and how to change your choice at any time is in our Cookie Policy."
+        ]
+      },
+      "yourRights": {
+        "heading": "Your rights",
+        "paragraphs": [
+          "Under the GDPR, you have the right to access the personal data we hold about you, request its correction, request its erasure, request that we restrict or object to certain processing, and request a portable copy of it. You can exercise any of these rights by contacting us at privacy@voltessa.ai — as of this version of the policy, these requests are handled manually rather than through a self-service tool, and we aim to respond within one month.",
+          "You can update your own profile information (name, phone) at any time from Settings, and delete your own account at any time from Settings → Danger Zone — see \"Deleting your account\" below.",
+          "You have the right to lodge a complaint with a supervisory authority. As we are registered in Bulgaria, the competent authority is the Commission for Personal Data Protection (CPDP), www.cpdp.bg."
+        ]
+      },
+      "deletingYourAccount": {
+        "heading": "Deleting your account",
+        "paragraphs": [
+          "When you delete your account (Settings → Danger Zone), your account and profile data, sign-in credentials, and per-user preferences are permanently deleted. We separately record that a deletion happened, in a form that contains no personal data at all — no name, email, phone, address, IP address, browser information, or any profile field — so that we can demonstrate deletion requests are honored without keeping the very data we deleted. This record cannot be used to identify who was deleted.",
+          "Deleting your own account does not delete your organization or its plant/telemetry/automation data, since that data belongs to the organization (which may have other members), not to any one account."
+        ]
+      },
+      "dataSecurity": {
+        "heading": "Data security",
+        "paragraphs": [
+          "We apply industry-standard safeguards to protect your data, including encrypted connections, hashed passwords, and access controls that limit which staff can view or act on your account and organization data."
+        ]
+      },
+      "childrensPrivacy": {
+        "heading": "Children's privacy",
+        "paragraphs": [
+          "Voltessa is a business-to-business service directed at plant owners and energy professionals. It is not directed at, and we do not knowingly collect personal data from, children."
+        ]
+      },
+      "changes": {
+        "heading": "Changes to this policy",
+        "paragraphs": [
+          "If we make a material change to this policy (for example, adding a new category of processing or a new sub-processor), we will update the \"Last updated\" date above and, where the change affects cookie consent, treat any previously recorded consent as expired so you're asked again under the new terms."
+        ]
+      },
+      "contact": {
+        "heading": "Contact",
+        "paragraphs": [
+          "Questions about this policy, or requests regarding your personal data, can be sent to privacy@voltessa.ai."
+        ]
+      }
+    },
+    "retention": {
+      "heading": "How long we keep your data",
+      "categoryColumn": "Data category",
+      "periodColumn": "Retention period",
+      "basisColumn": "Legal basis",
+      "footer": "See our full Data Retention Policy for the complete schedule and rationale."
+    },
+    "subProcessors": {
+      "heading": "Who we share your data with",
+      "intro": "We use the following providers to operate Voltessa. Each is contractually bound to process data only as we instruct."
+    },
+    "transfers": {
+      "heading": "International transfers",
+      "body": "Some of the providers listed above may process data outside Bulgaria. Where that happens, the transfer is covered by the safeguards required under Chapter V of the GDPR (such as Standard Contractual Clauses or an applicable adequacy decision), as provided in our agreement with that provider."
+    }
+  },
+  "termsOfService": {
+    "pageTitle": "Terms of Service",
+    "lastUpdated": "31 July 2026",
+    "sections": {
+      "acceptance": {
+        "heading": "Acceptance of these terms",
+        "paragraphs": [
+          "These Terms of Service govern your use of Voltessa, operated by Consensu EOOD (trading as \"Voltessa\"), registered in Sofia, Bulgaria (EIK 207238821). By creating an account or otherwise using Voltessa, you agree to these terms."
+        ]
+      },
+      "theService": {
+        "heading": "The service",
+        "paragraphs": [
+          "Voltessa is an AI-powered platform that operates solar (and, in the future, other renewable) energy assets on behalf of their owners. This includes monitoring plant/device telemetry, and — where you enable it — automatically stopping or resuming electricity export based on market prices and thresholds you configure.",
+          "This is not only a monitoring dashboard: automation you enable results in real commands sent to your connected plant, which can have real operational and financial consequences. You should treat every threshold and automation setting as a real operational decision, not a cosmetic preference."
+        ]
+      },
+      "accounts": {
+        "heading": "Accounts and organizations",
+        "paragraphs": [
+          "Voltessa accounts belong to one of two roles: a Plant Owner, who registers an organization and connects and operates plants, or an Energy Trader, who may be granted read-only access to a Plant Owner's data if that Plant Owner (or Voltessa on their behalf) assigns them.",
+          "An Energy Trader's access is read-only: it never includes the ability to change plant settings, automation thresholds, or export mode on a Plant Owner's behalf."
+        ]
+      },
+      "yourResponsibilities": {
+        "heading": "Your responsibilities",
+        "paragraphs": [
+          "You are responsible for keeping your sign-in credentials secure, for the accuracy of the information you provide (including billing and energy market settings), and for ensuring you are authorized to connect any plant or FusionSolar account you connect to Voltessa.",
+          "You are responsible for the automation thresholds and settings you configure. Voltessa executes the settings you choose; it does not guarantee any particular financial outcome, and you remain responsible for reviewing whether your configuration matches your own operational and commercial intentions."
+        ]
+      },
+      "fees": {
+        "heading": "Fees",
+        "paragraphs": [
+          "Any fees for using Voltessa are as agreed separately between you and Voltessa (for example, in an order form or commercial agreement). These Terms of Service do not themselves set a price."
+        ]
+      },
+      "accountDeletion": {
+        "heading": "Ending your account",
+        "paragraphs": [
+          "You may delete your own account at any time from Settings → Danger Zone. As described in our Privacy Policy, this permanently deletes your account and profile data; it does not delete your organization or its plant/telemetry/automation data, which belongs to the organization rather than to any one account.",
+          "We may suspend or terminate an account that violates these terms, is used without authorization to connect a plant, or where required by law."
+        ]
+      },
+      "liability": {
+        "heading": "Limitation of liability",
+        "paragraphs": [
+          "Voltessa is provided on an \"as available\" basis. To the fullest extent permitted by Bulgarian law, Voltessa is not liable for indirect, incidental, or consequential losses, including lost revenue from automated export-mode decisions made using the thresholds and settings you configured."
+        ]
+      },
+      "governingLaw": {
+        "heading": "Governing law",
+        "paragraphs": [
+          "These terms are governed by the laws of Bulgaria. Any dispute arising from these terms or your use of Voltessa is subject to the jurisdiction of the competent Bulgarian courts, without prejudice to any mandatory consumer-protection or data-protection rights you may have under EU law."
+        ]
+      },
+      "changes": {
+        "heading": "Changes to these terms",
+        "paragraphs": [
+          "We may update these terms from time to time. If we make a material change, we will update the \"Last updated\" date above."
+        ]
+      },
+      "contact": {
+        "heading": "Contact",
+        "paragraphs": [
+          "Questions about these terms can be sent to support@voltessa.ai."
+        ]
+      }
+    }
+  },
+  "cookiePolicy": {
+    "pageTitle": "Cookie Policy",
+    "lastUpdated": "31 July 2026",
+    "intro1": "This Cookie Policy explains every cookie Voltessa actually sets — what it does, who sets it, and how long it lasts — and how to change your choice at any time. It should be read together with our Privacy Policy.",
+    "intro2": "\"Strictly Necessary\" cookies don't require your consent and can't be switched off, because Voltessa can't function without them. Everything else is off by default and only set if you consent to it.",
+    "manage": {
+      "heading": "Manage your preferences",
+      "body": "You can change your cookie choices at any time — this opens the same preferences panel shown on your first visit.",
+      "button": "Open Cookie Settings"
+    },
+    "table": {
+      "cookieColumn": "Cookie",
+      "providerColumn": "Set by",
+      "purposeColumn": "Purpose",
+      "durationColumn": "Duration",
+      "noneToday": "No cookies in this category are set today."
+    }
+  },
+  "companyInformation": {
+    "pageTitle": "Company Information",
+    "lastUpdated": "31 July 2026",
+    "intro": "Voltessa is operated by the legal entity below. This page is provided for transparency, in line with Bulgarian and EU disclosure requirements for online services.",
+    "fields": {
+      "legalName": "Legal name",
+      "tradingName": "Trading as",
+      "registrationNumber": "Company registration number (EIK)",
+      "registeredAddress": "Registered address",
+      "privacyEmail": "Privacy contact",
+      "supportEmail": "Support contact",
+      "website": "Website",
+      "governingLaw": "Governing law",
+      "supervisoryAuthority": "Data protection supervisory authority"
+    }
+  }
+}

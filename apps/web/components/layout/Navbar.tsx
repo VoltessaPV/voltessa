@@ -1,5 +1,6 @@
 import Image from "next/image";
-import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import { Link } from "@/lib/i18n/navigation";
 
 import { getCurrentUser } from "@/lib/auth/session";
 import { routes } from "@/lib/routes";
@@ -10,7 +11,7 @@ import { MobileNavMenu } from "./MobileNavMenu";
 import { SectionNavLink } from "./SectionNavLink";
 
 export default async function Navbar() {
-  const user = await getCurrentUser();
+  const [user, t] = await Promise.all([getCurrentUser(), getTranslations("marketing.nav")]);
   const isAuthenticated = user !== null;
 
   return (
@@ -36,11 +37,11 @@ export default async function Navbar() {
         {/* Navigation */}
 
         <nav className="hidden items-center gap-10 text-sm text-slate-300 md:flex">
-          <SectionNavLink id="hero" label="Platform" />
+          <SectionNavLink id="hero" label={t("platformLink")} />
 
-          <SectionNavLink id="solutions" label="Solutions" />
+          <SectionNavLink id="solutions" label={t("solutionsLink")} />
 
-          <SectionNavLink id="about" label="About" />
+          <SectionNavLink id="about" label={t("aboutLink")} />
 
           <ContactNavLink />
         </nav>

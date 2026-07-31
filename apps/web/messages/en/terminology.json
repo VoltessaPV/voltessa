@@ -1,0 +1,21 @@
+{
+  "trader": "Trader",
+  "client": "Client",
+  "organization": "Organization",
+  "plantOwner": "Plant Owner",
+  "portfolio": "Portfolio",
+  "market": "Market",
+  "supplier": "Supplier",
+  "dso": "DSO",
+  "automation": "Automation",
+  "alert": "Alert",
+  "forecast": "Forecast",
+  "battery": "Battery",
+  "plant": "Plant",
+  "dashboard": "Dashboard",
+  "settings": "Settings",
+  "exportMode": "Export Mode",
+  "zeroExport": "Zero Export",
+  "noLimit": "No Limit",
+  "threshold": "Threshold"
+}

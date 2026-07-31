@@ -1,4 +1,4 @@
-import type { DistributionBucket } from "@/app/(platform)/market/market-data";
+import type { DistributionBucket } from "@/app/[locale]/(platform)/market/market-data";
 
 type MarketDistributionProps = {
   buckets: DistributionBucket[];

@@ -1,7 +1,28 @@
+import { createTranslator } from "next-intl";
+
+import { translateDecisionReason } from "@/lib/automation/automation-event-i18n";
+import enMessages from "@/messages/en/index";
+
 import { ntfyNotificationProvider } from "./providers/ntfy";
 import type { Notification, NotificationProvider } from "./provider";
 
 const ATLANTA_PLANT_NAME = "Atlanta";
+
+/**
+ * Full Internationalization milestone: ntfy notifications go to a single
+ * shared topic per plant (`lib/notifications/providers/ntfy.ts`), not a
+ * specific user — there is no one "recipient locale" to render in, unlike
+ * email (`User.locale`). Deliberately, explicitly English, using next-intl's
+ * `createTranslator` (the non-request-scoped API, exactly for usage outside
+ * the React tree) purely so the decision-reason CODE
+ * (`lib/automation/export-decision.ts`'s `ExportDecisionReasonCode` —
+ * `AutomationEvent.reason` now stores a code, not prose) renders as a real
+ * sentence here instead of the raw code string.
+ */
+const englishTranslator = createTranslator({ locale: "en", messages: enMessages });
+const tDecisionReasons = (key: string, values?: Record<string, string>) =>
+  englishTranslator(`automations.eventLog.decisionReasons.${key}` as never, values as never);
+const tTerminology = (key: string) => englishTranslator(`terminology.${key}` as never);
 
 /**
  * Every currently-active provider. A future Email/WhatsApp/SMS provider is
@@ -83,7 +104,7 @@ function buildNotification(input: AutomationNotificationInput): Notification | n
           threshold,
           "",
           "Reason",
-          input.reason,
+          translateDecisionReason(tDecisionReasons, tTerminology, input.reason),
           "",
           "Time",
           time,

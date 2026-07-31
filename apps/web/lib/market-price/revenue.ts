@@ -1,4 +1,4 @@
-import type { MarketPricePoint } from "@/app/(platform)/market/market-data";
+import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 export type RevenueSummary =

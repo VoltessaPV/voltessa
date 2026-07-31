@@ -1,0 +1,42 @@
+{
+  "banner": {
+    "heading": "We value your privacy",
+    "body": "We use cookies to run Voltessa securely and, with your consent, to understand how the platform is used. You can change your choice at any time from “Cookie Settings” in the footer.",
+    "acceptAllButton": "Accept All",
+    "rejectAllButton": "Reject All",
+    "customizeButton": "Customize"
+  },
+  "modal": {
+    "title": "Cookie Preferences",
+    "description": "Strictly necessary cookies are always on because Voltessa can't function without them. You choose everything else.",
+    "saveButton": "Save Preferences",
+    "acceptAllButton": "Accept All",
+    "rejectAllButton": "Reject All",
+    "closeButton": "Close",
+    "categories": {
+      "necessary": {
+        "title": "Strictly Necessary",
+        "description": "Required for sign-in, security, and core functionality.",
+        "alwaysOnBadge": "Always On"
+      },
+      "functional": {
+        "title": "Functional",
+        "description": "Enables optional features, such as our Calendly scheduling widget."
+      },
+      "analytics": {
+        "title": "Analytics & Performance",
+        "description": "Would help us understand how Voltessa is used, so we can improve it. Not currently in use — no analytics cookies are set today."
+      },
+      "marketing": {
+        "title": "Marketing",
+        "description": "Would support advertising measurement. Not currently in use — no marketing cookies are set today."
+      }
+    }
+  },
+  "calendlyGate": {
+    "title": "Functional cookies required",
+    "description": "Scheduling a call uses Calendly, a third-party widget that sets its own cookies. Enable Functional cookies in Cookie Settings to continue.",
+    "openSettingsButton": "Open Cookie Settings",
+    "closeButton": "Close"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "footer": {
+    "copyright": "© {year} Voltessa. Всички права запазени.",
+    "privacyLink": "Поверителност",
+    "cookiePolicyLink": "Политика за бисквитки",
+    "termsLink": "Общи условия",
+    "companyInformationLink": "Информация за дружеството",
+    "cookieSettingsLink": "Настройки за бисквитки",
+    "contactLink": "Контакт"
+  },
+  "actions": {
+    "save": "Запази",
+    "cancel": "Отказ",
+    "close": "Затвори",
+    "loading": "Зареждане…",
+    "confirm": "Потвърди",
+    "edit": "Редактирай",
+    "delete": "Изтрий",
+    "back": "Назад"
+  }
+}

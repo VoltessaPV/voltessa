@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, LogOut, Settings } from "lucide-react";
-import Link from "next/link";
+import { Link } from "@/lib/i18n/navigation";
 import { useEffect, useRef, useState } from "react";
 
 import { signOutAction } from "@/lib/auth/actions";
