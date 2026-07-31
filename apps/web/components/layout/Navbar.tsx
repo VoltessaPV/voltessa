@@ -1,6 +1,8 @@
 import Image from "next/image";
+import Link from "next/link";
 
 import { getCurrentUser } from "@/lib/auth/session";
+import { routes } from "@/lib/routes";
 
 import { AuthNavActions } from "./AuthNavActions";
 import { ContactNavLink } from "./ContactNavLink";
@@ -17,7 +19,7 @@ export default async function Navbar() {
 
         {/* Logo */}
 
-        <div className="flex min-w-0 shrink items-center gap-3">
+        <Link href={routes.home} className="flex min-w-0 shrink items-center gap-3">
           <Image
             src="/logo/voltessa-mark.png"
             alt="Voltessa"
@@ -29,7 +31,7 @@ export default async function Navbar() {
           <span className="truncate text-lg font-semibold tracking-tight text-white sm:text-2xl">
             Voltessa
           </span>
-        </div>
+        </Link>
 
         {/* Navigation */}
 
