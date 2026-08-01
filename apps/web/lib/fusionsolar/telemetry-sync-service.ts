@@ -4,6 +4,9 @@ import { importDeviceTelemetry } from "@/lib/fusionsolar/import-device-telemetry
 import { importPlantDailyKpi } from "@/lib/fusionsolar/import-plant-daily-kpi";
 import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { recordImporterRun } from "@/lib/admin/importer-run";
+
+const IMPORTER_TYPE = "huawei_telemetry_sync";
 
 /**
  * Database-First Telemetry Architecture milestone. The single
@@ -188,7 +191,7 @@ export type SynchronizeFusionSolarConnectionResult =
  * diagnostic) — normal page rendering and the scheduler both call this
  * without `force`, going through the identical freshness gate.
  */
-export async function synchronizeFusionSolarConnection(
+async function performFusionSolarConnectionSync(
   connectionId: string,
   options: { force?: boolean } = {},
 ): Promise<SynchronizeFusionSolarConnectionResult> {
@@ -291,6 +294,60 @@ export async function synchronizeFusionSolarConnection(
       data: { telemetrySyncStatus: "IDLE" },
     });
   }
+}
+
+/**
+ * Platform Health & Operations Center milestone (Section 10, Import
+ * Health). Thin wrapper around `performFusionSolarConnectionSync` — every
+ * caller keeps calling `synchronizeFusionSolarConnection` exactly as
+ * before, but every invocation (scheduled or on-demand) now also records
+ * one `ImporterRun` row via the single shared write path
+ * (`lib/admin/importer-run.ts`), without touching the delicate lease/claim
+ * logic above at all. `organizationId` is resolved separately (a single
+ * indexed lookup) since none of `SynchronizeFusionSolarConnectionResult`'s
+ * branches carry it directly.
+ */
+export async function synchronizeFusionSolarConnection(
+  connectionId: string,
+  options: { force?: boolean } = {},
+): Promise<SynchronizeFusionSolarConnectionResult> {
+  const startedAt = new Date();
+  const outcome = await performFusionSolarConnectionSync(connectionId, options);
+
+  const connectionForLog = await prisma.fusionSolarConnection.findUnique({
+    where: { id: connectionId },
+    select: { organizationId: true },
+  });
+
+  const base = {
+    importerType: IMPORTER_TYPE,
+    organizationId: connectionForLog?.organizationId ?? null,
+    connectionId,
+    startedAt,
+  };
+
+  switch (outcome.status) {
+    case "skipped_fresh":
+    case "skipped_already_running":
+    case "connection_not_found":
+      await recordImporterRun({ ...base, status: "SKIPPED", details: { reason: outcome.status } });
+      break;
+    case "synced":
+      await recordImporterRun({
+        ...base,
+        status: "SUCCESS",
+        rowsImported: outcome.samplesInserted + outcome.dailyKpisUpserted,
+        rowsSkipped: outcome.duplicatesSkipped,
+        rowsFailed: outcome.errors.length + outcome.dailyKpiErrors.length,
+        details: outcome,
+      });
+      break;
+    case "failed":
+      await recordImporterRun({ ...base, status: "FAILED", errorMessage: outcome.reason });
+      break;
+  }
+
+  return outcome;
 }
 
 export type TelemetryFreshnessResult = "fresh" | "synced" | "failed" | "already_running";

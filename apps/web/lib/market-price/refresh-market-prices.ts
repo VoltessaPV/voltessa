@@ -29,6 +29,9 @@ import {
   localDayBoundsUtc,
 } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { recordImporterRun } from "@/lib/admin/importer-run";
+
+const IMPORTER_TYPE = "entsoe_market_price";
 
 export type MarketPriceRefreshResult = {
   biddingZone: string;
@@ -59,6 +62,7 @@ export type MarketPriceRefreshResult = {
 export async function refreshMarketPrices(
   referenceDate = new Date(),
 ): Promise<MarketPriceRefreshResult> {
+  const startedAt = new Date();
   const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
     referenceDate,
     ENTSOE_MARKET_TIMEZONE,
@@ -83,6 +87,14 @@ export async function refreshMarketPrices(
         reason: error.message,
       });
 
+      await recordImporterRun({
+        importerType: IMPORTER_TYPE,
+        organizationId: null,
+        startedAt,
+        status: "SKIPPED",
+        details: { targetDeliveryDay, reason: error.message },
+      });
+
       return {
         biddingZone: DEFAULT_BIDDING_ZONE,
         periodStart,
@@ -96,6 +108,15 @@ export async function refreshMarketPrices(
         unavailable: true,
       };
     }
+
+    await recordImporterRun({
+      importerType: IMPORTER_TYPE,
+      organizationId: null,
+      startedAt,
+      status: "FAILED",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      details: { targetDeliveryDay },
+    });
 
     throw error;
   }
@@ -175,6 +196,17 @@ export async function refreshMarketPrices(
     duplicatesSkipped,
     missingIntervals: series.missingTimestamps.length,
     isPartial: series.isPartial,
+  });
+
+  await recordImporterRun({
+    importerType: IMPORTER_TYPE,
+    organizationId: null,
+    startedAt,
+    status: "SUCCESS",
+    rowsImported: recordsInserted,
+    rowsSkipped: duplicatesSkipped,
+    rowsFailed: series.missingTimestamps.length,
+    details: { targetDeliveryDay, isPartial: series.isPartial },
   });
 
   return {

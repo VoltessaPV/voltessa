@@ -6,6 +6,9 @@ import {
   backfillMarketPrices,
   refreshMarketPrices,
 } from "@/lib/market-price/refresh-market-prices";
+import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
+
+const SCHEDULER_NAME = "market_price_refresh";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -111,6 +114,13 @@ async function handleRefresh(request: Request) {
       ...result,
     });
 
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: "SUCCESS",
+      summary: result,
+    });
+
     return NextResponse.json({
       ok: true,
       ...result,
@@ -120,6 +130,13 @@ async function handleRefresh(request: Request) {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
       error,
+    });
+
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: "FAILED",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
     });
 
     return NextResponse.json(

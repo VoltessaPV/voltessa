@@ -4,6 +4,9 @@ import { importPlantDailyKpiRange } from "@/lib/fusionsolar/import-plant-daily-k
 import { ensureMarketPricesForBulgariaDays } from "@/lib/market-price/refresh-market-prices";
 import { formatDateInZone, localDayBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { recordImporterRun } from "@/lib/admin/importer-run";
+
+const IMPORTER_TYPE = "historical_range";
 
 /**
  * Historical Data Auto-Import / Historical Data Coverage milestones. The
@@ -95,10 +98,17 @@ const BULGARIA_TIMEZONE = "Europe/Sofia";
  */
 const DEFAULT_TIME_BUDGET_MS = 45_000;
 
-type DayBounds = { start: Date; end: Date; dateStr: string };
+export type DayBounds = { start: Date; end: Date; dateStr: string };
 
-/** Every Bulgaria-local calendar day in `[rangeStart, rangeEnd)` that isn't today or the future. */
-function enumerateApplicableDays(rangeStart: Date, rangeEnd: Date): DayBounds[] {
+/**
+ * Every Bulgaria-local calendar day in `[rangeStart, rangeEnd)` that isn't
+ * today or the future. Exported for the Platform Health & Operations Center
+ * milestone (Section 13, Historical Coverage calendar) — the calendar view
+ * reuses this exact day-enumeration + the `bulk*Days` read-only lookups
+ * below rather than re-deriving its own, so "what counts as an applicable
+ * historical day" stays defined in exactly one place.
+ */
+export function enumerateApplicableDays(rangeStart: Date, rangeEnd: Date): DayBounds[] {
   const days: DayBounds[] = [];
   const now = Date.now();
   let cursor = localDayBoundsUtc(rangeStart, BULGARIA_TIMEZONE);
@@ -151,7 +161,8 @@ function groupContiguousRuns(
   return runs;
 }
 
-async function bulkDeviceTelemetryDays(
+/** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
+export async function bulkDeviceTelemetryDays(
   organizationId: string,
   start: Date,
   end: Date,
@@ -163,7 +174,8 @@ async function bulkDeviceTelemetryDays(
   return new Set(rows.map((row) => localDayBoundsUtc(row.timestamp, BULGARIA_TIMEZONE).start.getTime()));
 }
 
-async function bulkPlantDailyKpiDays(organizationId: string, start: Date, end: Date): Promise<Set<number>> {
+/** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
+export async function bulkPlantDailyKpiDays(organizationId: string, start: Date, end: Date): Promise<Set<number>> {
   const rows = await prisma.plantDailyKpi.findMany({
     where: { organizationId, localDate: { gte: start, lt: end } },
     select: { localDate: true },
@@ -171,7 +183,8 @@ async function bulkPlantDailyKpiDays(organizationId: string, start: Date, end: D
   return new Set(rows.map((row) => row.localDate.getTime()));
 }
 
-async function bulkMarketPriceDays(start: Date, end: Date): Promise<Set<number>> {
+/** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
+export async function bulkMarketPriceDays(start: Date, end: Date): Promise<Set<number>> {
   const rows = await prisma.marketPrice.findMany({
     where: { timestamp: { gte: start, lt: end } },
     select: { timestamp: true },
@@ -194,9 +207,17 @@ export async function ensureHistoricalRangeAvailable(params: {
   timeBudgetMs?: number;
 }): Promise<HistoricalRangeAvailability> {
   const { organizationId, start, end, timeBudgetMs = DEFAULT_TIME_BUDGET_MS } = params;
+  const startedAt = new Date();
   const days = enumerateApplicableDays(start, end);
 
   if (days.length === 0) {
+    await recordImporterRun({
+      importerType: IMPORTER_TYPE,
+      organizationId,
+      startedAt,
+      status: "SKIPPED",
+      details: { reason: "no_applicable_days" },
+    });
     return { start, end, fullyAvailable: true, days: [] };
   }
 
@@ -359,6 +380,25 @@ export async function ensureHistoricalRangeAvailable(params: {
       ? day.marketPriceAvailable
       : day.telemetryAvailable && day.dailyKpiAvailable && day.marketPriceAvailable,
   );
+
+  const daysAvailable = result.filter((day) =>
+    organizationId === null
+      ? day.marketPriceAvailable
+      : day.telemetryAvailable && day.dailyKpiAvailable && day.marketPriceAvailable,
+  ).length;
+
+  await recordImporterRun({
+    importerType: IMPORTER_TYPE,
+    organizationId,
+    startedAt,
+    status: fullyAvailable ? "SUCCESS" : "FAILED",
+    rowsImported: daysAvailable,
+    rowsFailed: result.length - daysAvailable,
+    errorMessage: fullyAvailable
+      ? undefined
+      : "One or more days in the requested range could not be fully imported within the time budget",
+    details: { daysRequested: result.length, daysAvailable },
+  });
 
   return { start, end, fullyAvailable, days: result };
 }

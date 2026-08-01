@@ -21,7 +21,10 @@
   "EMAIL_FROM",
   "NODE_ENV",
   "VERCEL_REGION",
-  "CI"
+  "CI",
+  "VERCEL_API_TOKEN",
+  "VERCEL_PROJECT_ID",
+  "VERCEL_TEAM_ID"
 ],
   
   "tasks": {
