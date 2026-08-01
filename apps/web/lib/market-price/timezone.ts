@@ -104,11 +104,19 @@ export function localDayBoundsUtc(
   const { year, month, day } = dateParts(referenceInstant, timeZone);
   const start = zonedTimeToUtc(year, month, day, 0, 0, timeZone);
 
-  // Deriving "the next calendar day" from a nominal +24h jump is always
-  // safe (no DST shift is anywhere near 24h); its own local midnight is
-  // then computed independently so the DST transition (if any) is
-  // handled correctly regardless of which side of it `start` falls on.
-  const nextDayGuess = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  // Deriving "the next calendar day" needs a guess guaranteed to land
+  // inside the FOLLOWING local day, not still inside today's. A +24h guess
+  // is NOT safe: on a DST fall-back day (this local day is 25 hours long),
+  // +24h lands only 24 hours into a 25-hour day - still today - so
+  // `nextDayParts` resolves back to the same date and `end` ends up equal
+  // to `start` (confirmed reproducibly for Sofia's 2026-10-25 fall-back:
+  // an infinite loop for any caller walking days one at a time across it,
+  // e.g. a Year range). +25h is always enough regardless of DST direction
+  // (this function's own contract: a local day is at most 25 hours long),
+  // and the real boundary is still re-derived independently below, so
+  // this is only ever used to identify which calendar date is "next," not
+  // as the boundary itself.
+  const nextDayGuess = new Date(start.getTime() + 25 * 60 * 60 * 1000);
   const nextDayParts = dateParts(nextDayGuess, timeZone);
   const end = zonedTimeToUtc(
     nextDayParts.year,
