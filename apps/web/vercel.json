@@ -10,6 +10,12 @@
     "app/dev/fusionsolar_atlanta/page.tsx": {
       "regions": ["fra1"],
       "maxDuration": 300
+    },
+    "app/[locale]/(platform)/dashboard/page.tsx": {
+      "maxDuration": 60
+    },
+    "app/[locale]/(platform)/market/page.tsx": {
+      "maxDuration": 60
     }
   }
 }

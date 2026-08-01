@@ -277,9 +277,17 @@ export async function backfillMarketPrices(
  * without this dedup nothing would ever be double-imported - this exists
  * purely to bound the number of real ENTSO-E requests for a large range
  * (e.g. a full year).
+ *
+ * `deadline` (optional, an absolute `Date.now()`-comparable timestamp) is
+ * the same wall-clock safety budget `ensureHistoricalRangeAvailable`
+ * applies to its own Huawei imports - checked before each `refreshMarketPrices`
+ * call, in chronological order, so a request that runs out of time simply
+ * stops and leaves the remaining days to the next call (idempotent, so
+ * nothing is lost or duplicated by stopping early).
  */
 export async function ensureMarketPricesForBulgariaDays(
   dayStarts: Date[],
+  deadline?: number,
 ): Promise<{ imported: boolean; errors: string[] }> {
   const cetReferenceInstants = new Map<number, Date>();
 
@@ -297,6 +305,10 @@ export async function ensureMarketPricesForBulgariaDays(
   let imported = true;
 
   for (const referenceInstant of cetReferenceInstants.values()) {
+    if (deadline !== undefined && Date.now() >= deadline) {
+      break;
+    }
+
     try {
       const result = await refreshMarketPrices(referenceInstant);
       if (result.unavailable) {

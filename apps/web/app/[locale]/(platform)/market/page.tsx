@@ -4,12 +4,12 @@ import { getTranslations } from "next-intl/server";
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
-import { ensureHistoricalDayAvailable } from "@/lib/historical-data/ensure-day-available";
+import { ensureHistoricalRangeAvailable } from "@/lib/historical-data/ensure-day-available";
 import {
   computeExportRevenue,
   type RevenueSummary,
 } from "@/lib/market-price/revenue";
-import { formatDateInZone, type CalendarPeriod } from "@/lib/market-price/timezone";
+import { formatDateInZone, periodBoundsUtc, type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
@@ -276,20 +276,29 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
-  // Historical Data Auto-Import milestone: a single selected day in the
-  // past must never render "no market data" just because ENTSO-E/
-  // FusionSolar haven't been imported for it yet - exactly the same
-  // principle, and the exact same shared service, as `dashboard/page.tsx`.
-  // Runs for both branches below (including the Trader-with-no-client
-  // view, where `organizationId` is `null` - see that service's own doc
-  // comment for why ENTSO-E import still applies there).
+  // Historical Data Coverage milestone: the selected period - a single
+  // past day, or a Week/Month/Year range - must never render "no market
+  // data" just because ENTSO-E/FusionSolar haven't been imported for it
+  // yet - exactly the same principle, and the exact same shared service,
+  // as `dashboard/page.tsx`. `ensureHistoricalRangeAvailable` itself
+  // no-ops for a range entirely today/future, so this one call correctly
+  // covers every period. Runs for both branches below (including the
+  // Trader-with-no-client view, where `organizationId` is `null` - see
+  // that service's own doc comment for why ENTSO-E import still applies
+  // there).
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDateStr =
     params.date && isValidDateString(params.date) ? params.date : todayDateStr;
-  const historicalAvailability =
-    period === "today" && selectedDateStr !== todayDateStr
-      ? await ensureHistoricalDayAvailable({ organizationId, dateStr: selectedDateStr })
-      : null;
+  const referenceInstant = new Date(`${selectedDateStr}T12:00:00Z`);
+  const { start: periodStart, end: periodEnd } = periodBoundsUtc(period, referenceInstant, BULGARIA_TIMEZONE);
+
+  const historicalRange = await ensureHistoricalRangeAvailable({
+    organizationId,
+    start: periodStart,
+    end: periodEnd,
+  });
+  const historicalMarketPriceError = historicalRange.days.find((day) => day.marketPriceError)?.marketPriceError ?? null;
+  const historicalTelemetryImportFailed = historicalRange.days.some((day) => day.telemetryError !== null);
 
   // Trader Workspace milestone: market data is global (`MarketPrice` has no
   // `organizationId` at all - see prisma/schema.prisma), so a Trader with
@@ -327,7 +336,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               {t("noMarketData.title", { date: data.selectedDate })}
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              {historicalAvailability?.marketPriceError
+              {historicalMarketPriceError
                 ? t("noMarketData.importFailedDescription")
                 : t("noMarketData.description")}
             </p>
@@ -524,7 +533,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             {t("noMarketData.title", { date: data.selectedDate })}
           </p>
           <p className="mt-1 text-xs text-slate-500">
-            {historicalAvailability?.marketPriceError
+            {historicalMarketPriceError
               ? t("noMarketData.importFailedDescription")
               : t("noMarketData.description")}
           </p>
@@ -545,7 +554,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
               }
               valueUnit={revenue.available ? "EUR" : undefined}
               unavailableNote={
-                historicalAvailability?.telemetryError
+                historicalTelemetryImportFailed
                   ? tSummary("historicalImportFailed")
                   : tSummary("waitingForProductionTelemetry")
               }
