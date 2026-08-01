@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import { runDailyReconciliation } from "@/lib/automation/daily-reconciliation";
+import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
+
+const SCHEDULER_NAME = "automation_reconciliation";
 
 /**
  * The Scaleway systemd timer's HTTP entry point for the Market Price
@@ -80,12 +83,26 @@ async function handleReconciliation(request: Request) {
       outcomes,
     });
 
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: "SUCCESS",
+      summary: { outcomes },
+    });
+
     return NextResponse.json({ ok: true, outcomes });
   } catch (error) {
     console.error("[Automation Daily Reconciliation] Failed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
       error,
+    });
+
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: "FAILED",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
     });
 
     return NextResponse.json(

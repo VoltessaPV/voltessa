@@ -7,6 +7,9 @@ import {
   synchronizeFusionSolarConnection,
   type SynchronizeFusionSolarConnectionResult,
 } from "@/lib/fusionsolar/telemetry-sync-service";
+import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
+
+const SCHEDULER_NAME = "telemetry_ingestion";
 
 /**
  * The Scaleway systemd timer's HTTP entry point (`voltessa-telemetry-
@@ -119,6 +122,17 @@ async function handleBootstrap(request: Request) {
       results,
     });
 
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: failures.length === 0 ? "SUCCESS" : "FAILED",
+      errorMessage:
+        failures.length > 0
+          ? failures.map((f) => (f.status === "failed" ? f.reason : "")).join("; ")
+          : undefined,
+      summary: { connectionsProcessed: results.length, results },
+    });
+
     return NextResponse.json({
       ok: failures.length === 0,
       connectionsProcessed: results.length,
@@ -129,6 +143,13 @@ async function handleBootstrap(request: Request) {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
       error,
+    });
+
+    await recordSchedulerRun({
+      schedulerName: SCHEDULER_NAME,
+      startedAt,
+      status: "FAILED",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
     });
 
     return NextResponse.json(

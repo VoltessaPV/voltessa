@@ -1093,3 +1093,142 @@ model AccountDeletionRecord {
 
   createdAt DateTime @default(now())
 }
+
+/// Platform Health & Operations Center milestone. Shared across
+/// `SchedulerRun`/`ImporterRun` — a run either fully succeeded, threw/
+/// returned a failure outcome, or was a legitimate no-op (already fresh,
+/// already running, nothing to do). `SKIPPED` is not a failure: Sections 4/5
+/// of the Operations Center must be able to tell "nothing needed doing" from
+/// "something went wrong" without inferring it from prose.
+enum RunStatus {
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+/// Platform Health & Operations Center milestone (Section 5, Scheduler
+/// Health). One row per HTTP invocation of one of the four
+/// `app/api/internal/**` routes the Scaleway systemd timers call
+/// (`voltessa-telemetry-ingestion`, `voltessa-market-price-scheduler`,
+/// `voltessa-automation-execution`, `voltessa-automation-reconciliation` —
+/// see `docs/infrastructure/scaleway-production.md`). `schedulerName` is a
+/// plain string, not an enum, matching this schema's existing convention for
+/// a small closed-but-growable vocabulary (see `AutomationEvent.type`) —
+/// today's four values are `"telemetry_ingestion"`, `"market_price_refresh"`,
+/// `"automation_execution"`, `"automation_reconciliation"`. Written by each
+/// route handler wrapping its own existing logic, not by the schedulers
+/// themselves (the schedulers are just `curl` + `systemd` on the VM and have
+/// no notion of this table) — "enabled", "next execution" and cadence are
+/// derived from the known, documented systemd `OnCalendar` expressions, not
+/// stored here.
+model SchedulerRun {
+  id String @id @default(cuid())
+
+  schedulerName String
+
+  startedAt  DateTime
+  finishedAt DateTime?
+  durationMs Int?
+
+  status RunStatus
+
+  errorMessage String?
+
+  /// Small, run-specific outcome summary (e.g. connections processed,
+  /// outcomes array) — same flexible-payload convention as
+  /// `AuditLog.metadata`, so a new scheduler's own shape never needs a
+  /// migration.
+  summary Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([schedulerName, startedAt])
+}
+
+/// Platform Health & Operations Center milestone (Sections 4/10, Historical/
+/// Import Health). One row per actual data-import attempt — written from
+/// inside the three existing shared importer entry points
+/// (`synchronizeFusionSolarConnection`, `refreshMarketPrices`,
+/// `ensureHistoricalRangeAvailable`), never from a page or route directly, so
+/// every caller of those functions (scheduled or on-demand) is captured in
+/// exactly one place per importer, with no duplicated logging logic.
+/// `importerType` is a plain string for the same reason `SchedulerRun.schedulerName`
+/// is — today's values are `"huawei_telemetry_sync"` (telemetry + daily KPI,
+/// since `synchronizeFusionSolarConnection` always runs both together),
+/// `"entsoe_market_price"`, and `"historical_range"`. `organizationId` is
+/// null for `"entsoe_market_price"` runs, matching `MarketPrice`'s own
+/// platform-wide (not tenant-scoped) nature.
+model ImporterRun {
+  id String @id @default(cuid())
+
+  importerType String
+
+  organizationId String?
+  connectionId   String?
+
+  startedAt  DateTime
+  finishedAt DateTime?
+  durationMs Int?
+
+  status RunStatus
+
+  rowsImported Int @default(0)
+  rowsSkipped  Int @default(0)
+  rowsFailed   Int @default(0)
+
+  errorMessage String?
+
+  /// Full, importer-specific outcome payload (per-plant counts, per-day
+  /// breakdowns, etc.) — same flexible-payload convention as
+  /// `AuditLog.metadata`/`SchedulerRun.summary`.
+  details Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([importerType, startedAt])
+  @@index([organizationId, startedAt])
+}
+
+/// Platform Health & Operations Center milestone (Section 2, Huawei health).
+/// One row per `callFusionSolarApi` call — the single shared FusionSolar
+/// gateway client every caller in this app already funnels through (live
+/// automation control, telemetry sync, historical backfill alike), so
+/// instrumenting it here captures every real Huawei request with no
+/// duplicated logging at each call site. `connectionId` (not
+/// `organizationId`) — `FusionSolarConnection` is this function's own
+/// parameter type and already carries `id`; resolving `organizationId` would
+/// require widening that shared type for every existing caller, so admin
+/// queries join through `FusionSolarConnection` instead. `retryCount` is
+/// always `0` today (`callFusionSolarApi` does not retry) — recorded
+/// honestly rather than omitted, so this column means something real the day
+/// retry behavior is actually added, instead of being backfilled from
+/// nothing.
+model HuaweiRequestLog {
+  id String @id @default(cuid())
+
+  connectionId String
+
+  apiPath String
+
+  httpStatus Int?
+  success    Boolean
+  failCode   Int?
+
+  /// The JS `Error.name` when the request failed before a response was ever
+  /// received (network failure/abort) — `httpStatus` is null in that case.
+  /// Never fabricated: absent entirely for a normal HTTP response, even an
+  /// error one.
+  errorName    String?
+  errorMessage String?
+
+  durationMs Int
+
+  tokenRefreshed Boolean @default(false)
+  retryCount     Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([connectionId, createdAt])
+  @@index([apiPath, createdAt])
+  @@index([httpStatus, createdAt])
+}

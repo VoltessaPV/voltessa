@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   Battery,
   Bell,
   Bot,
@@ -114,6 +115,11 @@ const adminNavigation = [
     label: "Audit Log",
     href: "/admin/audit-log",
     icon: FileClock,
+  },
+  {
+    label: "Operations",
+    href: "/admin/operations",
+    icon: Activity,
   },
 ];
 
