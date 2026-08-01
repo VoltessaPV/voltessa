@@ -86,10 +86,6 @@
     "totalPlants": "Total Plants",
     "portfolioProduction": "Portfolio Production",
     "portfolioRevenue": "Portfolio Revenue",
-    "noClientsAssigned": "No clients assigned yet",
-    "quickAccessTitle": "Quick access",
-    "quickAccessSubtitle": "Jump straight into a client",
-    "viewAllClientsLink": "View all clients",
-    "noClientsMessage": "You're all set. Clients you're assigned to will show up here for quick access - a Platform Administrator will assign you shortly."
+    "noClientsAssigned": "No clients assigned yet"
   }
 }

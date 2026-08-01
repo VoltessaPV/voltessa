@@ -86,10 +86,6 @@
     "totalPlants": "Общо централи",
     "portfolioProduction": "Производство на портфолиото",
     "portfolioRevenue": "Приход на портфолиото",
-    "noClientsAssigned": "Все още няма назначени клиенти",
-    "quickAccessTitle": "Бърз достъп",
-    "quickAccessSubtitle": "Влезте директно при клиент",
-    "viewAllClientsLink": "Виж всички клиенти",
-    "noClientsMessage": "Всичко е готово. Клиентите, към които сте назначени, ще се появят тук за бърз достъп — администратор на платформата ще ви назначи скоро."
+    "noClientsAssigned": "Все още няма назначени клиенти"
   }
 }

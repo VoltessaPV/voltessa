@@ -2,29 +2,24 @@ import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
-import {
-  requireCurrentUser,
-  requireOnboardedUser,
-  requireTraderOrganizationAccess,
-} from "@/lib/auth/session";
+import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { ensureHistoricalRangeAvailable } from "@/lib/historical-data/ensure-day-available";
 import { type CalendarPeriod, formatDateInZone, periodBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
-import { getTraderPortfolioSummary, listTraderClients } from "@/lib/trader/queries";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
 import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
-import { TraderPortfolioDashboard } from "@/components/dashboard/TraderPortfolioDashboard";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
 import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
 import { EmptyState } from "@/components/platform/EmptyState";
+import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
 import { getDashboardPageData } from "./dashboard-data";
@@ -201,36 +196,27 @@ type DashboardPageProps = {
 export default async function DashboardPage({
   searchParams,
 }: DashboardPageProps) {
-  // Trader Workspace milestone. Dashboard is portfolio-level for a
-  // Trader - always the whole-portfolio view, never a single selected
-  // client's operational data (that's what Market/Automations/Alerts/BESS
-  // already show once a client is selected). This is why Dashboard
-  // deliberately does NOT call `resolveOrganizationViewAccess()` - that
-  // helper resolves one "current" organization, which isn't a concept this
-  // page needs for a Trader at all. The owner path below is completely
-  // unchanged.
-  const identity = await requireCurrentUser();
+  // Trader Workflow Simplification milestone. Dashboard is no longer
+  // portfolio-level for a Trader - that view moved to Clients (see
+  // `TraderPortfolioSummary`). Dashboard now resolves the currently
+  // selected client exactly like Market/BESS/Automations/Alerts already
+  // do, via the same shared helper, and renders the identical Plant Owner
+  // experience below for whichever organization that resolves to - no
+  // special Trader layout, no reduced functionality. `readOnly` suppresses
+  // the "Connect Plant" CTA in the empty state below, same as every other
+  // page that uses this helper. `organizationId` is null only for a Trader
+  // with zero assigned clients - a plain empty state, not a redirect, so
+  // the rest of the workspace (Clients, Market, ...) stays reachable.
+  const { organizationId, readOnly } = await resolveOrganizationViewAccess();
 
-  if (identity.accountType === "ENERGY_TRADER") {
-    // requireTraderOrganizationAccess() is called here for its onboarding-
-    // stage gate alone (redirects to /onboarding/trader-profile if the
-    // trader hasn't completed it yet) - its single-organization resolution
-    // isn't otherwise used, since Dashboard is portfolio-level, never
-    // scoped to one selected client.
-    const access = await requireTraderOrganizationAccess();
-
-    const [summary, quickAccessClients] = await Promise.all([
-      getTraderPortfolioSummary(access.trader.id),
-      listTraderClients(access.trader.id),
-    ]);
-
+  if (organizationId === null) {
     return (
-      <TraderPortfolioDashboard summary={summary} quickAccessClients={quickAccessClients} />
+      <PageContainer className="space-y-3">
+        <NoClientAssignedState />
+      </PageContainer>
     );
   }
 
-  const owner = await requireOnboardedUser();
-  const organizationId = owner.organizationId;
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
@@ -373,7 +359,7 @@ export default async function DashboardPage({
 
       {!data.plantAvailable ? (
         <EmptyState title={t("emptyState.title")} description={t("emptyState.description")}>
-          <ConnectFusionSolarButton />
+          {!readOnly && <ConnectFusionSolarButton />}
         </EmptyState>
       ) : (
         <>

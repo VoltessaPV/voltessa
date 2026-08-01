@@ -66,10 +66,12 @@ export default async function TraderProfileOnboardingPage({ searchParams }: Prop
 
   // Redirect onward if this step is already done - this page is a
   // one-time onboarding step, not a general profile editor (that's
-  // Settings > Profile, for the fields it already covers).
+  // Settings > Profile, for the fields it already covers). Clients, not
+  // Dashboard - Trader Workflow Simplification milestone: Clients is now
+  // the Trader's home.
   const stage = await resolveTraderOnboardingStage(user.id);
   if (stage === "active") {
-    redirect("/dashboard");
+    redirect("/clients");
   }
 
   const { error } = await searchParams;
