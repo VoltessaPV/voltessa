@@ -44,22 +44,25 @@ function buildNavigation(t: ReturnType<typeof useTranslations<"navigation.sideba
 }
 
 /**
- * Trader Workspace milestone. Its own explicit order (Dashboard, Clients,
- * Market, Automations, Alerts, BESS, Settings) - not derived from
- * `buildNavigation` above, since it isn't a subset/reordering of the owner
- * nav anymore (Clients has no owner-side equivalent, and BESS moves
- * relative to Automations/Alerts). Settings is included - a Trader manages
- * their own profile there, same page Plant Owners use for theirs. Plants
- * and Administration stay Plant Owner / Platform Admin only.
+ * Trader Workflow Simplification milestone. Clients is the Trader's home -
+ * the portfolio overview (assigned-client KPIs + the client grid) lives
+ * there now, so it leads the nav. Everything after Dashboard then mirrors
+ * the Plant Owner nav's own order exactly (Market, BESS, Automations,
+ * Alerts, Settings) - Dashboard/Market/BESS/Automations/Alerts all resolve
+ * the same currently-selected client a Trader picked on Clients, matching
+ * `buildNavigation` above item-for-item past the Clients entry. Settings is
+ * included - a Trader manages their own profile there, same page Plant
+ * Owners use for theirs. Plants and Administration stay Plant Owner /
+ * Platform Admin only.
  */
 function buildTraderNavigation(t: ReturnType<typeof useTranslations<"navigation.sidebar">>, tTerm: ReturnType<typeof useTranslations<"terminology">>) {
   return [
-    { label: tTerm("dashboard"), href: "/dashboard", icon: LayoutDashboard },
     { label: t("clientsLink"), href: "/clients", icon: Users },
+    { label: tTerm("dashboard"), href: "/dashboard", icon: LayoutDashboard },
     { label: tTerm("market"), href: "/market", icon: LineChart },
+    { label: t("bessLink"), href: "/bess", icon: Battery },
     { label: t("automationsLink"), href: "/automations", icon: Bot },
     { label: t("alertsLink"), href: "/alerts", icon: Bell },
-    { label: t("bessLink"), href: "/bess", icon: Battery },
     { label: tTerm("settings"), href: "/settings", icon: Settings },
   ];
 }

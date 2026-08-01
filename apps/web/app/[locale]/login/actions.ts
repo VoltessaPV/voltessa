@@ -52,6 +52,7 @@ export async function signInWithPassword(
       emailVerified: true,
       deletedAt: true,
       deactivatedAt: true,
+      accountType: true,
     },
   });
 
@@ -82,5 +83,9 @@ export async function signInWithPassword(
   // the same reason lib/auth/config.ts does it for Google.
   await syncUserLocale(user.id);
 
-  redirect("/dashboard");
+  // Trader Workflow Simplification milestone: Clients (the portfolio
+  // overview) is the Trader's home now, not Dashboard - matches the same
+  // branch already applied to the other post-auth/onboarding redirects
+  // (see onboarding/page.tsx, onboarding/trader-profile/page.tsx).
+  redirect(user.accountType === "ENERGY_TRADER" ? "/clients" : "/dashboard");
 }

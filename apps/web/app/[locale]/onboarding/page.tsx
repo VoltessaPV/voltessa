@@ -17,7 +17,9 @@ export async function generateMetadata() {
 
 const TRADER_STAGE_ROUTES = {
   profile: "/onboarding/trader-profile",
-  active: "/dashboard",
+  // Trader Workflow Simplification milestone: Clients is the Trader's
+  // home now (the portfolio overview), not Dashboard.
+  active: "/clients",
 } as const;
 
 /**
