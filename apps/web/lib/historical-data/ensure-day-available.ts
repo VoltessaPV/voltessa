@@ -1,3 +1,4 @@
+import type { FusionSolarConnection } from "@/lib/fusionsolar/api-client";
 import { importDeviceTelemetry } from "@/lib/fusionsolar/import-device-telemetry";
 import { importPlantDailyKpiRange } from "@/lib/fusionsolar/import-plant-daily-kpi";
 import { ensureMarketPricesForBulgariaDays } from "@/lib/market-price/refresh-market-prices";
@@ -36,6 +37,28 @@ import { prisma } from "@/lib/prisma";
  * have nothing to report for a day that hasn't happened yet - today/future
  * days within a requested range are silently skipped (absent from the
  * returned `days` array), not reported as failures.
+ *
+ * ## Time budget (Historical Data Coverage reliability fix)
+ *
+ * A cold Week/Month/Year request can have many missing days, and every
+ * Huawei/ENTSO-E call this file makes is a real, sequential network
+ * round-trip (confirmed against production: a fully-missing week took
+ * 67 seconds - 14 `getDevFiveMinutes` calls, 1 `getKpiStationDay` call, 8
+ * ENTSO-E calls, none rate-limited, purely sequential latency). Dashboard/
+ * Market's page routes have no `maxDuration` override, so an unbounded
+ * import here would eventually exceed Vercel's function timeout and the
+ * request would simply die mid-import.
+ *
+ * `timeBudgetMs` bounds how long this function will keep importing before
+ * returning whatever it has, in-progress or not. This is *not* a
+ * rate-limiting or backoff mechanism - production evidence found no
+ * rate-limiting to react to - it is purely a wall-clock safety cap.
+ * Days already imported are never re-fetched (same idempotent checks as
+ * always), so if the budget runs out, the very next call - the next
+ * page load, or the same one retried - picks up exactly where this one
+ * left off, at zero cost for the days already done. This is the "resume
+ * from the first missing day" behavior, driven by the budget rather than
+ * by any rate-limit signal.
  */
 export type HistoricalDayAvailability = {
   dateStr: string;
@@ -63,6 +86,14 @@ export type HistoricalRangeAvailability = {
 };
 
 const BULGARIA_TIMEZONE = "Europe/Sofia";
+
+/**
+ * Default wall-clock budget for one `ensureHistoricalRangeAvailable` call.
+ * Comfortably under the `maxDuration: 60` set for the Dashboard/Market page
+ * routes (see `vercel.json`), leaving headroom for the rest of the page's
+ * own auth/queries/rendering after this returns.
+ */
+const DEFAULT_TIME_BUDGET_MS = 45_000;
 
 type DayBounds = { start: Date; end: Date; dateStr: string };
 
@@ -160,13 +191,17 @@ export async function ensureHistoricalRangeAvailable(params: {
   organizationId: string | null;
   start: Date;
   end: Date;
+  timeBudgetMs?: number;
 }): Promise<HistoricalRangeAvailability> {
-  const { organizationId, start, end } = params;
+  const { organizationId, start, end, timeBudgetMs = DEFAULT_TIME_BUDGET_MS } = params;
   const days = enumerateApplicableDays(start, end);
 
   if (days.length === 0) {
     return { start, end, fullyAvailable: true, days: [] };
   }
+
+  const deadline = Date.now() + timeBudgetMs;
+  const hasTimeRemaining = () => Date.now() < deadline;
 
   const telemetryDays = organizationId !== null ? await bulkDeviceTelemetryDays(organizationId, start, end) : new Set<number>();
   const dailyKpiDays = organizationId !== null ? await bulkPlantDailyKpiDays(organizationId, start, end) : new Set<number>();
@@ -176,12 +211,23 @@ export async function ensureHistoricalRangeAvailable(params: {
   const dailyKpiErrorsByRun: Array<{ start: Date; end: Date; message: string }> = [];
   let marketPriceError: string | null = null;
 
+  // Ordering matters here and is deliberate: cheap, bounded work first,
+  // the one genuinely unbounded-by-range-size piece (telemetry - one
+  // Huawei call per missing DAY, not per range) last. Confirmed against
+  // production: a naive telemetry-first ordering starved daily-KPI and
+  // market-price of any budget at all, on every retry, for a fully-missing
+  // week - telemetry alone can consume the entire budget while the other
+  // two (1 Huawei call regardless of range length; at most ~days+1 ENTSO-E
+  // calls) would each have comfortably finished if given a turn at all.
+  let connection: FusionSolarConnection | null = null;
+  let plants: Array<{ id: string }> = [];
+
   if (organizationId !== null) {
-    const missingTelemetryRuns = groupContiguousRuns(days, (day) => !telemetryDays.has(day.start.getTime()));
+    const missingTelemetryDays = days.filter((day) => !telemetryDays.has(day.start.getTime()));
     const missingDailyKpiRuns = groupContiguousRuns(days, (day) => !dailyKpiDays.has(day.start.getTime()));
 
-    if (missingTelemetryRuns.length > 0 || missingDailyKpiRuns.length > 0) {
-      const connection = await prisma.fusionSolarConnection.findUnique({
+    if (missingTelemetryDays.length > 0 || missingDailyKpiRuns.length > 0) {
+      connection = await prisma.fusionSolarConnection.findUnique({
         where: { organizationId_provider: { organizationId, provider: "HuaweiFusionSolar" } },
         select: {
           id: true,
@@ -194,32 +240,20 @@ export async function ensureHistoricalRangeAvailable(params: {
       });
 
       if (connection) {
-        const plants = await prisma.plant.findMany({
+        plants = await prisma.plant.findMany({
           where: { organizationId, vendor: "Huawei" },
           select: { id: true },
         });
 
-        for (const run of missingTelemetryRuns) {
-          try {
-            for (const plant of plants) {
-              await importDeviceTelemetry({
-                connection,
-                organizationId,
-                plantId: plant.id,
-                windowStart: run.start,
-                windowEnd: run.end,
-              });
-            }
-          } catch (error) {
-            telemetryErrorsByRun.push({
-              start: run.start,
-              end: run.end,
-              message: error instanceof Error ? error.message : "unknown_error",
-            });
-          }
-        }
-
+        // One call per contiguous run (not per day): `getKpiStationDay`
+        // already fetches a whole calendar month per call, so this is
+        // already bounded, cheap work - runs first, and to completion,
+        // rather than risking starvation behind telemetry.
         for (const run of missingDailyKpiRuns) {
+          if (!hasTimeRemaining()) {
+            break;
+          }
+
           try {
             await importPlantDailyKpiRange(organizationId, connection, { start: run.start, end: run.end });
           } catch (error) {
@@ -234,15 +268,55 @@ export async function ensureHistoricalRangeAvailable(params: {
     }
   }
 
-  const missingMarketPriceDays = days.filter((day) => !marketPriceDays.has(day.start.getTime()));
-  if (missingMarketPriceDays.length > 0) {
-    try {
-      const result = await ensureMarketPricesForBulgariaDays(missingMarketPriceDays.map((day) => day.start));
-      if (result.errors.length > 0) {
-        marketPriceError = result.errors.join("; ");
+  if (hasTimeRemaining()) {
+    const missingMarketPriceDays = days.filter((day) => !marketPriceDays.has(day.start.getTime()));
+    if (missingMarketPriceDays.length > 0) {
+      try {
+        const result = await ensureMarketPricesForBulgariaDays(
+          missingMarketPriceDays.map((day) => day.start),
+          deadline,
+        );
+        if (result.errors.length > 0) {
+          marketPriceError = result.errors.join("; ");
+        }
+      } catch (error) {
+        marketPriceError = error instanceof Error ? error.message : "unknown_error";
       }
-    } catch (error) {
-      marketPriceError = error instanceof Error ? error.message : "unknown_error";
+    }
+  }
+
+  // Telemetry last, one day at a time (not one call per contiguous run) so
+  // the time budget can be checked between days - `importDeviceTelemetry`
+  // already makes exactly one Huawei call per day per device-type group
+  // internally regardless of window size, so this changes nothing about
+  // the number of real requests, only where the loop that makes them
+  // lives (here, instead of inside that function) and when it's allowed
+  // to run out of time.
+  if (organizationId !== null && connection && hasTimeRemaining()) {
+    const missingTelemetryDays = days.filter((day) => !telemetryDays.has(day.start.getTime()));
+
+    for (const day of missingTelemetryDays) {
+      if (!hasTimeRemaining()) {
+        break;
+      }
+
+      try {
+        for (const plant of plants) {
+          await importDeviceTelemetry({
+            connection,
+            organizationId,
+            plantId: plant.id,
+            windowStart: day.start,
+            windowEnd: day.end,
+          });
+        }
+      } catch (error) {
+        telemetryErrorsByRun.push({
+          start: day.start,
+          end: day.end,
+          message: error instanceof Error ? error.message : "unknown_error",
+        });
+      }
     }
   }
 

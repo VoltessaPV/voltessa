@@ -8,8 +8,8 @@ import {
   requireTraderOrganizationAccess,
 } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
-import { ensureHistoricalDayAvailable } from "@/lib/historical-data/ensure-day-available";
-import { type CalendarPeriod, formatDateInZone } from "@/lib/market-price/timezone";
+import { ensureHistoricalRangeAvailable } from "@/lib/historical-data/ensure-day-available";
+import { type CalendarPeriod, formatDateInZone, periodBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { getTraderPortfolioSummary, listTraderClients } from "@/lib/trader/queries";
 
@@ -234,25 +234,29 @@ export default async function DashboardPage({
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
-  // Historical Data Auto-Import milestone: a single selected day in the
-  // past (period "today" + an explicit `date` that isn't today) must never
-  // render "no historical data" just because nothing has been imported for
-  // it yet. Resolved the same way `dashboard-data.ts`'s own
-  // `getDashboardPageData` resolves `selectedDate` - duplicated per this
-  // file's existing date-handling convention, not shared. Awaited here,
+  // Historical Data Coverage milestone: the selected period - a single
+  // past day, or a Week/Month/Year range - must never render "no
+  // historical data" just because nothing has been imported for it yet.
+  // `periodBoundsUtc` resolves the exact same [start, end) Dashboard's own
+  // data layer uses for this period; `ensureHistoricalRangeAvailable`
+  // itself already no-ops for a range that's entirely today/future (e.g.
+  // period "today" on today's own date), so this one call correctly covers
+  // every period without a separate today/historical branch. Awaited here,
   // before any page data is fetched, so `getDashboardPageData` below always
-  // reads a day that's already fully imported; the route has no
-  // `loading.tsx` skeleton wired up separately from this await, so the
-  // Next.js default (blocking navigation) is what the user sees while this
-  // runs - see `app/[locale]/(platform)/dashboard/loading.tsx`.
+  // reads a period that's already fully imported (or has run out of its
+  // own safety time budget - see that function's doc comment); the route's
+  // `loading.tsx` is what the user sees while this runs.
   const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
   const selectedDateStr =
     params.date && isValidDateString(params.date) ? params.date : todayDateStr;
+  const referenceInstant = new Date(`${selectedDateStr}T12:00:00Z`);
+  const { start: periodStart, end: periodEnd } = periodBoundsUtc(period, referenceInstant, BULGARIA_TIMEZONE);
 
-  const historicalAvailability =
-    period === "today" && selectedDateStr !== todayDateStr
-      ? await ensureHistoricalDayAvailable({ organizationId, dateStr: selectedDateStr })
-      : null;
+  const historicalRange = await ensureHistoricalRangeAvailable({
+    organizationId,
+    start: periodStart,
+    end: periodEnd,
+  });
 
   // Transparent Freshness milestone: Dashboard renders telemetry, so it
   // blocks on synchronization instead of showing a possibly-stale snapshot
@@ -341,13 +345,15 @@ export default async function DashboardPage({
       )
     : undefined;
 
-  // Historical Data Auto-Import milestone: only ever true after
-  // `ensureHistoricalDayAvailable` (awaited above) genuinely attempted and
-  // failed to import this specific piece for the selected day - never true
-  // just because a day hasn't been imported yet, since that case is now
-  // always resolved before this render.
-  const dailyKpiImportFailed = Boolean(historicalAvailability?.dailyKpiError);
-  const telemetryImportFailed = Boolean(historicalAvailability?.telemetryError);
+  // Historical Data Coverage milestone: true only if at least one day in
+  // the selected period (awaited above, via `ensureHistoricalRangeAvailable`)
+  // genuinely attempted and failed to import this specific piece - never
+  // true just because a day hasn't been imported yet (that's either
+  // already resolved before this render, or - for a very large range that
+  // ran past its safety time budget - simply not attempted yet this time,
+  // which reports as "not available" with no error, not a failure).
+  const dailyKpiImportFailed = historicalRange.days.some((day) => day.dailyKpiError !== null);
+  const telemetryImportFailed = historicalRange.days.some((day) => day.telemetryError !== null);
 
   return (
     <PageContainer className="space-y-3">
