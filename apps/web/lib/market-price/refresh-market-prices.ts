@@ -258,28 +258,45 @@ export async function backfillMarketPrices(
 }
 
 /**
- * Historical Data Auto-Import milestone. Ensures ENTSO-E prices are
- * imported for one arbitrary, specific past Bulgaria-local day (`[dayStart,
- * dayEnd)`, from `localDayBoundsUtc(date, "Europe/Sofia")`) — the
- * on-demand counterpart to `backfillMarketPrices` above, which always
- * backfills relative to "now." Reuses the exact same
- * `BULGARIA_CET_OVERLAP_DAYS` fact and the same underlying
- * `refreshMarketPrices` this file already exposes — not a new importer,
- * just two calls to the existing one against reference instants that fall
- * in the two CET/CEST calendar days a Bulgaria day always overlaps.
- * Idempotent for the same reason `refreshMarketPrices` already is (upsert
- * on `(biddingZone, timestamp, source)`).
+ * Historical Data Coverage milestone. Ensures ENTSO-E prices are imported
+ * for an arbitrary set of past Bulgaria-local days (each a `dayStart` from
+ * `localDayBoundsUtc(date, "Europe/Sofia")`) — the on-demand counterpart to
+ * `backfillMarketPrices` above, which always backfills relative to "now."
+ * Reuses the exact same `BULGARIA_CET_OVERLAP_DAYS` fact and the same
+ * underlying `refreshMarketPrices` this file already exposes — not a new
+ * importer.
+ *
+ * Every Bulgaria day needs the two CET/CEST calendar days it overlaps
+ * fetched, but adjacent Bulgaria days share one of those two CET days -
+ * deduplicated here (keyed by which CET calendar day a reference instant
+ * falls in) so a run of N consecutive missing days costs N+1
+ * `refreshMarketPrices` calls, not 2N, matching this milestone's
+ * requirement to import "only the missing days," not redundantly re-fetch
+ * shared CET coverage. Idempotent for the same reason `refreshMarketPrices`
+ * already is (upsert on `(biddingZone, timestamp, source)`), so even
+ * without this dedup nothing would ever be double-imported - this exists
+ * purely to bound the number of real ENTSO-E requests for a large range
+ * (e.g. a full year).
  */
-export async function ensureMarketPricesForBulgariaDay(
-  dayStart: Date,
+export async function ensureMarketPricesForBulgariaDays(
+  dayStarts: Date[],
 ): Promise<{ imported: boolean; errors: string[] }> {
-  const leadingHourInstant = new Date(dayStart.getTime() + 30 * 60 * 1000);
-  const restOfDayInstant = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
+  const cetReferenceInstants = new Map<number, Date>();
+
+  for (const dayStart of dayStarts) {
+    const leadingHourInstant = new Date(dayStart.getTime() + 30 * 60 * 1000);
+    const restOfDayInstant = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
+
+    for (const instant of [leadingHourInstant, restOfDayInstant]) {
+      const cetDayStart = localDayBoundsUtc(instant, ENTSOE_MARKET_TIMEZONE).start.getTime();
+      cetReferenceInstants.set(cetDayStart, instant);
+    }
+  }
 
   const errors: string[] = [];
   let imported = true;
 
-  for (const referenceInstant of [leadingHourInstant, restOfDayInstant]) {
+  for (const referenceInstant of cetReferenceInstants.values()) {
     try {
       const result = await refreshMarketPrices(referenceInstant);
       if (result.unavailable) {
