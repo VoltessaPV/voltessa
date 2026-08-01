@@ -4,6 +4,7 @@ import { getTranslations } from "next-intl/server";
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
+import { ensureHistoricalDayAvailable } from "@/lib/historical-data/ensure-day-available";
 import {
   computeExportRevenue,
   type RevenueSummary,
@@ -50,6 +51,13 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
 function parsePeriod(value: string | undefined): CalendarPeriod {
   return value === "week" || value === "month" || value === "year" ? value : "today";
 }
+
+/** Same pattern as `dashboard/page.tsx`'s own `isValidDateString` - duplicated per this codebase's established convention for small, page-local date-handling helpers rather than shared. */
+function isValidDateString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 /**
  * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). ▲/▼ +
@@ -268,6 +276,21 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
+  // Historical Data Auto-Import milestone: a single selected day in the
+  // past must never render "no market data" just because ENTSO-E/
+  // FusionSolar haven't been imported for it yet - exactly the same
+  // principle, and the exact same shared service, as `dashboard/page.tsx`.
+  // Runs for both branches below (including the Trader-with-no-client
+  // view, where `organizationId` is `null` - see that service's own doc
+  // comment for why ENTSO-E import still applies there).
+  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
+  const selectedDateStr =
+    params.date && isValidDateString(params.date) ? params.date : todayDateStr;
+  const historicalAvailability =
+    period === "today" && selectedDateStr !== todayDateStr
+      ? await ensureHistoricalDayAvailable({ organizationId, dateStr: selectedDateStr })
+      : null;
+
   // Trader Workspace milestone: market data is global (`MarketPrice` has no
   // `organizationId` at all - see prisma/schema.prisma), so a Trader with
   // no client selected still gets something real here, unlike
@@ -303,7 +326,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <p className="text-sm font-medium text-white">
               {t("noMarketData.title", { date: data.selectedDate })}
             </p>
-            <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {historicalAvailability?.marketPriceError
+                ? t("noMarketData.importFailedDescription")
+                : t("noMarketData.description")}
+            </p>
           </section>
         ) : (
           <>
@@ -496,7 +523,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           <p className="text-sm font-medium text-white">
             {t("noMarketData.title", { date: data.selectedDate })}
           </p>
-          <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
+          <p className="mt-1 text-xs text-slate-500">
+            {historicalAvailability?.marketPriceError
+              ? t("noMarketData.importFailedDescription")
+              : t("noMarketData.description")}
+          </p>
         </section>
       ) : (
         <>
@@ -513,7 +544,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 revenue.available ? revenue.revenueEur.toFixed(2) : undefined
               }
               valueUnit={revenue.available ? "EUR" : undefined}
-              unavailableNote={tSummary("waitingForProductionTelemetry")}
+              unavailableNote={
+                historicalAvailability?.telemetryError
+                  ? tSummary("historicalImportFailed")
+                  : tSummary("waitingForProductionTelemetry")
+              }
               trend={revenueTrend}
               rows={
                 revenue.available

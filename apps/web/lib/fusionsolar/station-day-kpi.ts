@@ -14,28 +14,61 @@ import {
  * Request/response envelope matches every other `thirdData` endpoint this
  * codebase already calls (`{stationCodes, collectTime}` in,
  * `{success, failCode, message, data}` out, `api-client.ts`'s
- * `callFusionSolarApi` already unwraps that). `collectTime` anchors one
- * calendar day (in the station's own timezone) per call, the same
- * anchor-per-day shape `import-device-telemetry.ts` already uses for
- * `getDevFiveMinutes`.
+ * `callFusionSolarApi` already unwraps that).
  *
- * The exact `dataItemMap` field names are deliberately NOT typed here yet —
- * Huawei's own documentation portal returns empty content to automated
- * fetches in this environment (a known, previously-documented limitation),
- * and no independently-verifiable source lists them. Returns `unknown`,
- * exactly like `getFusionSolarDeviceFiveMinuteHistory` did before its own
- * contract was confirmed against a real response — do not guess a type here
- * before that happens. Once a real production response has been inspected
- * (see the temporary diagnostic route this milestone adds), replace this
- * `unknown` with a real `FusionSolarStationDayKpiItemMap` type derived from
- * that response, documented inline with which fields map to which
- * `PlantDailyKpi` columns.
+ * Confirmed against a real production response (Historical Data Auto-Import
+ * Phase 0 diagnostic, run directly against the Atlanta plant through the
+ * gateway — not from documentation, which was unavailable in this
+ * environment): `collectTime` anchors a whole **calendar month** (any
+ * timestamp within the target month), and `data` contains one entry per day
+ * in that month — NOT one entry per call like `getDevFiveMinutes`. A single
+ * call therefore backfills an entire month of daily KPIs.
+ *
+ * `dataItemMap` field mapping, confirmed against the existing
+ * `PlantDailyKpi` row for the same day (2026-07-30, `pvYieldKwh: 1197.71`,
+ * `consumptionKwh: 904.15`, `exportedEnergyKwh: 397.17`):
+ * - `PVYield` (identical to `inverterYield`/`inverter_power` for this
+ *   plant) -> `PlantDailyKpi.pvYieldKwh` — exact match (1197.71 = 1197.71).
+ * - `ongrid_power` -> `PlantDailyKpi.exportedEnergyKwh` — exact match
+ *   (397.17 = 397.17).
+ * - `use_power` -> `PlantDailyKpi.consumptionKwh` — near-exact
+ *   (905.04 vs. 904.15, ~0.1% diff; this Report-family endpoint appears to
+ *   settle the day slightly differently than `getStationRealKpi`'s live
+ *   running counter — same metric, not a different one).
+ * - `buyPower` (grid import total) and `selfUsePower`/`selfProvide`
+ *   (self-consumption) are also present and could one day back "From Grid"
+ *   /"Consumed from PV" authoritatively, but those cards already work
+ *   correctly off `DeviceTelemetry` — documented here, not wired in.
+ * - `reduction_total_tree`/`reduction_total_co2`/`reduction_total_coal`
+ *   (environmental-impact stats) and `installed_capacity` (returned as `0`
+ *   for this plant) have no current Dashboard purpose.
  */
+export type FusionSolarStationDayKpiItemMap = {
+  PVYield: number | null;
+  ongrid_power: number | null;
+  use_power: number | null;
+  buyPower: number | null;
+  selfUsePower: number | null;
+  selfProvide: number | null;
+  inverter_power: number | null;
+  inverterYield: number | null;
+  installed_capacity: number | null;
+  reduction_total_tree: number | null;
+  reduction_total_co2: number | null;
+  reduction_total_coal: number | null;
+};
+
+export type FusionSolarStationDayKpi = {
+  collectTime: number;
+  stationCode: string;
+  dataItemMap: FusionSolarStationDayKpiItemMap;
+};
+
 export async function getFusionSolarStationDayKpi(
   connection: FusionSolarConnection,
   params: { stationCode: string; collectTime: number },
-): Promise<unknown> {
-  const result = await callFusionSolarApi<unknown>(connection, {
+): Promise<FusionSolarStationDayKpi[]> {
+  const result = await callFusionSolarApi<FusionSolarStationDayKpi[]>(connection, {
     path: "/thirdData/getKpiStationDay",
     body: {
       stationCodes: params.stationCode,

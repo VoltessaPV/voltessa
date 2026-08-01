@@ -1,7 +1,8 @@
 {
   "noMarketData": {
     "title": "Няма налични пазарни данни за {date}",
-    "description": "Все още няма импортирани данни от ENTSO-E за този ден. Използвайте избора на дата по-горе, за да изберете друг ден."
+    "description": "Все още няма импортирани данни от ENTSO-E за този ден. Използвайте избора на дата по-горе, за да изберете друг ден.",
+    "importFailedDescription": "Неуспешно извличане на исторически пазарни цени от ENTSO-E."
   },
   "priceExport": {
     "titlePlatformWide": "Цена и износ",
@@ -28,6 +29,7 @@
     "healthy": "Наред",
     "belowThreshold": "Под прага",
     "waitingForProductionTelemetry": "Изчакване на телеметрия за производството",
+    "historicalImportFailed": "Неуспешно извличане на исторически данни от FusionSolar",
     "livePriceOnlyToday": "Цена на живо е налична само за днес",
     "fusionSolarMeterUnavailable": "Данните от измервателния уред на FusionSolar не са налични",
     "exportedToday": "Изнесено днес",

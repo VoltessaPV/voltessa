@@ -15,7 +15,8 @@
     "waitingForTelemetry": "Waiting for telemetry",
     "notAvailable": "Not available",
     "noHistoricalProductionData": "No historical production data available",
-    "historicalDataNotAvailable": "Historical data not available"
+    "historicalDataNotAvailable": "Historical data not available",
+    "historicalImportFailed": "Unable to retrieve historical telemetry from FusionSolar"
   },
   "comparison": {
     "vsLastWeek": "vs last week",
