@@ -8,7 +8,8 @@ import {
   requireTraderOrganizationAccess,
 } from "@/lib/auth/session";
 import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
-import type { CalendarPeriod } from "@/lib/market-price/timezone";
+import { ensureHistoricalDayAvailable } from "@/lib/historical-data/ensure-day-available";
+import { type CalendarPeriod, formatDateInZone } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { getTraderPortfolioSummary, listTraderClients } from "@/lib/trader/queries";
 
@@ -125,18 +126,40 @@ function mwhValueLabel(kwh: number | null): string | undefined {
   return kwh !== null ? (kwh / 1000).toFixed(1) : undefined;
 }
 
-/** Friendlier, date-aware unavailable wording — `todayNote` only ever applies when the selected day genuinely is today. */
+/**
+ * Friendlier, date-aware unavailable wording — `todayNote` only ever
+ * applies when the selected day genuinely is today. Historical Data
+ * Auto-Import milestone: `importFailed` distinguishes "we tried to import
+ * this day and it genuinely failed" from "nothing to show" - per that
+ * milestone's explicit requirement, the failure message must only ever
+ * appear after a real import attempt failed, never merely because import
+ * hasn't been attempted (which, since `ensureHistoricalDayAvailable` is
+ * always awaited before this page renders, never happens for a past day
+ * anymore).
+ */
 function unavailableNote(
   isToday: boolean,
   todayNote: string,
   historicalNote: string,
+  importFailed = false,
+  importFailedNote?: string,
 ): string {
-  return isToday ? todayNote : historicalNote;
+  if (isToday) {
+    return todayNote;
+  }
+  return importFailed && importFailedNote ? importFailedNote : historicalNote;
 }
 
 function parsePeriod(value: string | undefined): CalendarPeriod {
   return value === "week" || value === "month" || value === "year" ? value : "today";
 }
+
+/** Same pattern as `dashboard-data.ts`'s own `isValidDateString` - duplicated per this codebase's established convention for small, page-local date-handling helpers rather than shared. */
+function isValidDateString(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 type Trend = "up" | "down" | "flat";
 
@@ -210,6 +233,26 @@ export default async function DashboardPage({
   const organizationId = owner.organizationId;
   const params = await searchParams;
   const period = parsePeriod(params.period);
+
+  // Historical Data Auto-Import milestone: a single selected day in the
+  // past (period "today" + an explicit `date` that isn't today) must never
+  // render "no historical data" just because nothing has been imported for
+  // it yet. Resolved the same way `dashboard-data.ts`'s own
+  // `getDashboardPageData` resolves `selectedDate` - duplicated per this
+  // file's existing date-handling convention, not shared. Awaited here,
+  // before any page data is fetched, so `getDashboardPageData` below always
+  // reads a day that's already fully imported; the route has no
+  // `loading.tsx` skeleton wired up separately from this await, so the
+  // Next.js default (blocking navigation) is what the user sees while this
+  // runs - see `app/[locale]/(platform)/dashboard/loading.tsx`.
+  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
+  const selectedDateStr =
+    params.date && isValidDateString(params.date) ? params.date : todayDateStr;
+
+  const historicalAvailability =
+    period === "today" && selectedDateStr !== todayDateStr
+      ? await ensureHistoricalDayAvailable({ organizationId, dateStr: selectedDateStr })
+      : null;
 
   // Transparent Freshness milestone: Dashboard renders telemetry, so it
   // blocks on synchronization instead of showing a possibly-stale snapshot
@@ -298,6 +341,14 @@ export default async function DashboardPage({
       )
     : undefined;
 
+  // Historical Data Auto-Import milestone: only ever true after
+  // `ensureHistoricalDayAvailable` (awaited above) genuinely attempted and
+  // failed to import this specific piece for the selected day - never true
+  // just because a day hasn't been imported yet, since that case is now
+  // always resolved before this render.
+  const dailyKpiImportFailed = Boolean(historicalAvailability?.dailyKpiError);
+  const telemetryImportFailed = Boolean(historicalAvailability?.telemetryError);
+
   return (
     <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
@@ -331,6 +382,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.noHistoricalProductionData"),
+                dailyKpiImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
               trend={producedTrend}
             />
@@ -343,6 +396,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.notAvailable"),
                 t("kpis.historicalDataNotAvailable"),
+                dailyKpiImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
             />
 
@@ -356,6 +411,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
+                dailyKpiImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
               trend={consumedTrend}
             />
@@ -370,6 +427,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
+                dailyKpiImportFailed || telemetryImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
               trend={consumedFromPvTrend}
             />
@@ -384,6 +443,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
+                telemetryImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
               trend={exportedTrend}
             />
@@ -399,6 +460,8 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
+                telemetryImportFailed,
+                t("kpis.historicalImportFailed"),
               )}
             />
           </section>

@@ -15,7 +15,8 @@
     "waitingForTelemetry": "Изчакване на телеметрия",
     "notAvailable": "Не е налично",
     "noHistoricalProductionData": "Няма налични исторически данни за производство",
-    "historicalDataNotAvailable": "Историческите данни не са налични"
+    "historicalDataNotAvailable": "Историческите данни не са налични",
+    "historicalImportFailed": "Неуспешно извличане на исторически данни от FusionSolar"
   },
   "comparison": {
     "vsLastWeek": "спрямо миналата седмица",

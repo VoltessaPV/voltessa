@@ -256,3 +256,40 @@ export async function backfillMarketPrices(
     failures,
   };
 }
+
+/**
+ * Historical Data Auto-Import milestone. Ensures ENTSO-E prices are
+ * imported for one arbitrary, specific past Bulgaria-local day (`[dayStart,
+ * dayEnd)`, from `localDayBoundsUtc(date, "Europe/Sofia")`) — the
+ * on-demand counterpart to `backfillMarketPrices` above, which always
+ * backfills relative to "now." Reuses the exact same
+ * `BULGARIA_CET_OVERLAP_DAYS` fact and the same underlying
+ * `refreshMarketPrices` this file already exposes — not a new importer,
+ * just two calls to the existing one against reference instants that fall
+ * in the two CET/CEST calendar days a Bulgaria day always overlaps.
+ * Idempotent for the same reason `refreshMarketPrices` already is (upsert
+ * on `(biddingZone, timestamp, source)`).
+ */
+export async function ensureMarketPricesForBulgariaDay(
+  dayStart: Date,
+): Promise<{ imported: boolean; errors: string[] }> {
+  const leadingHourInstant = new Date(dayStart.getTime() + 30 * 60 * 1000);
+  const restOfDayInstant = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
+
+  const errors: string[] = [];
+  let imported = true;
+
+  for (const referenceInstant of [leadingHourInstant, restOfDayInstant]) {
+    try {
+      const result = await refreshMarketPrices(referenceInstant);
+      if (result.unavailable) {
+        imported = false;
+      }
+    } catch (error) {
+      imported = false;
+      errors.push(error instanceof Error ? error.message : "unknown_error");
+    }
+  }
+
+  return { imported, errors };
+}

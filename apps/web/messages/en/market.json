@@ -1,7 +1,8 @@
 {
   "noMarketData": {
     "title": "No market data available for {date}",
-    "description": "Nothing has been imported from ENTSO-E for this day yet. Use the date picker above to choose a different day."
+    "description": "Nothing has been imported from ENTSO-E for this day yet. Use the date picker above to choose a different day.",
+    "importFailedDescription": "Unable to retrieve historical market prices from ENTSO-E."
   },
   "priceExport": {
     "titlePlatformWide": "Price & Export",
@@ -28,6 +29,7 @@
     "healthy": "Healthy",
     "belowThreshold": "Below threshold",
     "waitingForProductionTelemetry": "Waiting for production telemetry",
+    "historicalImportFailed": "Unable to retrieve historical telemetry from FusionSolar",
     "livePriceOnlyToday": "Live price only available for today",
     "fusionSolarMeterUnavailable": "FusionSolar meter data unavailable",
     "exportedToday": "Exported today",
