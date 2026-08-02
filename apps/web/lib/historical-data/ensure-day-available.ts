@@ -92,11 +92,24 @@ const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 /**
  * Default wall-clock budget for one `ensureHistoricalRangeAvailable` call.
- * Comfortably under the `maxDuration: 60` set for the Dashboard/Market page
- * routes (see `vercel.json`), leaving headroom for the rest of the page's
- * own auth/queries/rendering after this returns.
+ *
+ * Lowered from 45s (Browser Performance Validation milestone): the 45s
+ * figure was calibrated against "a fully-missing WEEK took 67s" (see above),
+ * not a much larger range with a genuine multi-month gap. Confirmed against
+ * real production: this organization has zero telemetry for Jan-Apr 2026
+ * (the plant wasn't connected yet) - a real-browser measurement of
+ * `/dashboard?period=year` took 56.6s end-to-end (45s budget + ~11.6s of
+ * this function's own non-budget page work), and `/market?period=year` -
+ * which does strictly more per-request work on top - exceeded Vercel's
+ * `maxDuration: 60` outright (confirmed timeout, not merely slow). 25s
+ * leaves comfortable headroom under that 60s ceiling for both pages even
+ * under this worst-case multi-month-gap scenario, at the cost of needing
+ * more page loads to fully backfill a large historical gap from scratch -
+ * an acceptable trade for a request that must always finish, per the
+ * existing "resume from the first missing day" design this budget already
+ * relies on (see this file's own module doc comment).
  */
-const DEFAULT_TIME_BUDGET_MS = 45_000;
+const DEFAULT_TIME_BUDGET_MS = 25_000;
 
 export type DayBounds = { start: Date; end: Date; dateStr: string };
 
