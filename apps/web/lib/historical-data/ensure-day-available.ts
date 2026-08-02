@@ -161,17 +161,39 @@ function groupContiguousRuns(
   return runs;
 }
 
-/** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
+/**
+ * Which Bulgaria-local calendar days already have at least one row —
+ * exported for Section 13's read-only calendar view, see
+ * `enumerateApplicableDays` above.
+ *
+ * Performance investigation (found via real production timing on a fully-
+ * imported July: 38,358 rows -> 33.9s): this used to `findMany` every raw
+ * row and call `localDayBoundsUtc` (4 `Intl.DateTimeFormat` constructions)
+ * per row - 330,672 Intl calls for one month, confirmed the entire cost of
+ * `ensureHistoricalRangeAvailable` for that range, with zero external
+ * requests involved. `DISTINCT ... AT TIME ZONE` pushes the day-bucketing
+ * into Postgres (correct DST handling via its own tzdata, same guarantee
+ * `Intl.DateTimeFormat` gave), returning at most one row per calendar day in
+ * range (≤366) instead of one per telemetry sample (tens of thousands) -
+ * `localDayBoundsUtc` is now called once per distinct day, not once per row.
+ * `to_char(...)` (not the raw `date` column) avoids any driver-specific
+ * timezone-interpretation ambiguity for the returned value - same
+ * `${dateStr}T12:00:00Z` convention `ensureHistoricalDayAvailable` already
+ * uses elsewhere in this file.
+ */
 export async function bulkDeviceTelemetryDays(
   organizationId: string,
   start: Date,
   end: Date,
 ): Promise<Set<number>> {
-  const rows = await prisma.deviceTelemetry.findMany({
-    where: { organizationId, timestamp: { gte: start, lt: end } },
-    select: { timestamp: true },
-  });
-  return new Set(rows.map((row) => localDayBoundsUtc(row.timestamp, BULGARIA_TIMEZONE).start.getTime()));
+  const rows = await prisma.$queryRaw<Array<{ local_date: string }>>`
+    SELECT DISTINCT to_char(timestamp AT TIME ZONE 'Europe/Sofia', 'YYYY-MM-DD') AS local_date
+    FROM "DeviceTelemetry"
+    WHERE "organizationId" = ${organizationId} AND timestamp >= ${start} AND timestamp < ${end}
+  `;
+  return new Set(
+    rows.map((row) => localDayBoundsUtc(new Date(`${row.local_date}T12:00:00Z`), BULGARIA_TIMEZONE).start.getTime()),
+  );
 }
 
 /** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
@@ -183,13 +205,16 @@ export async function bulkPlantDailyKpiDays(organizationId: string, start: Date,
   return new Set(rows.map((row) => row.localDate.getTime()));
 }
 
-/** Exported for Section 13's read-only calendar view — see `enumerateApplicableDays` above. */
+/** Same fix, same reasoning, as `bulkDeviceTelemetryDays` above - see its doc comment. */
 export async function bulkMarketPriceDays(start: Date, end: Date): Promise<Set<number>> {
-  const rows = await prisma.marketPrice.findMany({
-    where: { timestamp: { gte: start, lt: end } },
-    select: { timestamp: true },
-  });
-  return new Set(rows.map((row) => localDayBoundsUtc(row.timestamp, BULGARIA_TIMEZONE).start.getTime()));
+  const rows = await prisma.$queryRaw<Array<{ local_date: string }>>`
+    SELECT DISTINCT to_char(timestamp AT TIME ZONE 'Europe/Sofia', 'YYYY-MM-DD') AS local_date
+    FROM "MarketPrice"
+    WHERE timestamp >= ${start} AND timestamp < ${end}
+  `;
+  return new Set(
+    rows.map((row) => localDayBoundsUtc(new Date(`${row.local_date}T12:00:00Z`), BULGARIA_TIMEZONE).start.getTime()),
+  );
 }
 
 /**
@@ -227,6 +252,49 @@ export async function ensureHistoricalRangeAvailable(params: {
   const telemetryDays = organizationId !== null ? await bulkDeviceTelemetryDays(organizationId, start, end) : new Set<number>();
   const dailyKpiDays = organizationId !== null ? await bulkPlantDailyKpiDays(organizationId, start, end) : new Set<number>();
   const marketPriceDays = await bulkMarketPriceDays(start, end);
+
+  // Performance investigation: if every applicable day is already fully
+  // available, exit here - no connection lookup, no import attempt, no
+  // "final recheck" bulk queries (which used to unconditionally re-run all
+  // three bulk checks a second time even when nothing had been imported).
+  // This is the literal "if range already complete, return immediately"
+  // requirement - the range is genuinely already complete, so the upfront
+  // check above IS the final answer; re-querying it a second time can only
+  // ever reproduce the same result.
+  const isFullyAvailableUpfront = days.every((day) =>
+    organizationId === null
+      ? marketPriceDays.has(day.start.getTime())
+      : telemetryDays.has(day.start.getTime()) &&
+        dailyKpiDays.has(day.start.getTime()) &&
+        marketPriceDays.has(day.start.getTime()),
+  );
+
+  if (isFullyAvailableUpfront) {
+    await recordImporterRun({
+      importerType: IMPORTER_TYPE,
+      organizationId,
+      startedAt,
+      status: "SKIPPED",
+      rowsImported: days.length,
+      details: { reason: "already_complete", daysRequested: days.length },
+    });
+
+    return {
+      start,
+      end,
+      fullyAvailable: true,
+      days: days.map((day) => ({
+        dateStr: day.dateStr,
+        applicable: true,
+        telemetryAvailable: organizationId !== null,
+        dailyKpiAvailable: organizationId !== null,
+        marketPriceAvailable: true,
+        telemetryError: null,
+        dailyKpiError: null,
+        marketPriceError: null,
+      })),
+    };
+  }
 
   const telemetryErrorsByRun: Array<{ start: Date; end: Date; message: string }> = [];
   const dailyKpiErrorsByRun: Array<{ start: Date; end: Date; message: string }> = [];

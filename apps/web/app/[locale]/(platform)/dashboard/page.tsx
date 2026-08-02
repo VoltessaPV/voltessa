@@ -244,18 +244,36 @@ export default async function DashboardPage({
     end: periodEnd,
   });
 
-  // Transparent Freshness milestone: Dashboard renders telemetry, so it
-  // blocks on synchronization instead of showing a possibly-stale snapshot
-  // - see ensureTelemetryFresh's own doc comment for why this, and only
-  // this, decides whether/how a sync runs. No cache invalidation needed
-  // here: this route is fully dynamic (uses cookies() via
-  // requireOnboardedUser/requireTraderOrganizationAccess, confirmed by the
-  // build output showing `ƒ`, not `○`), so it's never in the Full Route
-  // Cache, and the client Router Cache doesn't hold dynamic segments by
-  // default (no staleTimes override in next.config.js) -
+  // Transparent Freshness milestone: Dashboard renders LIVE telemetry only
+  // for the literal "today" period (Category A - System Overview, the
+  // chart's NOW marker, inverter status; see dashboard-data.ts's own
+  // Category A convention) - it blocks on synchronization instead of
+  // showing a possibly-stale snapshot only in that case. See
+  // ensureTelemetryFresh's own doc comment for why this, and only this,
+  // decides whether/how a sync runs.
+  //
+  // Performance investigation: this used to run unconditionally for every
+  // period, including a purely historical Week/Month/Year view that shows
+  // no live data at all - blocking every historical page load on a live
+  // Huawei sync (confirmed in production at up to ~15s per sync) for
+  // freshness information the page never displays. `getDashboardPageData`
+  // already reads Week/Month/Year data straight from PlantDailyKpi/
+  // DeviceTelemetry/MarketPrice, never from a live Huawei read, so a
+  // historical period has nothing to gain from this call.
+  //
+  // No cache invalidation needed here: this route is fully dynamic (uses
+  // cookies() via requireOnboardedUser/requireTraderOrganizationAccess,
+  // confirmed by the build output showing `ƒ`, not `○`), so it's never in
+  // the Full Route Cache, and the client Router Cache doesn't hold dynamic
+  // segments by default (no staleTimes override in next.config.js) -
   // getDashboardPageData below already reads live database state
   // regardless, with nothing cached anywhere to invalidate.
-  await ensureTelemetryFresh(organizationId, { mode: "blocking" });
+  // Matches dashboard-data.ts's own `isToday` exactly (period "today" AND
+  // the literal current date) - period "today" browsed to a past `date=`
+  // is just as historical as Week/Month/Year and must skip this too.
+  if (period === "today" && selectedDateStr === todayDateStr) {
+    await ensureTelemetryFresh(organizationId, { mode: "blocking" });
+  }
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId },
