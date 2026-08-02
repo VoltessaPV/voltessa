@@ -321,6 +321,23 @@ export async function ensureHistoricalRangeAvailable(params: {
   // week - telemetry alone can consume the entire budget while the other
   // two (1 Huawei call regardless of range length; at most ~days+1 ENTSO-E
   // calls) would each have comfortably finished if given a turn at all.
+  //
+  // Root-cause fix (historical gap investigation): the SAME starvation can
+  // happen in the other direction. Real production evidence for a
+  // multi-month gap: individual ENTSO-E calls took 9.7-29s each (against a
+  // 25s total budget), so market-price alone could consume the entire
+  // remaining budget, leaving telemetry zero turns on every single request
+  // - confirmed directly by probing Huawei for those exact "missing" days
+  // (Jan/Feb/Apr 2026): Huawei returned full real data immediately
+  // (2,000+ samples, zero errors) every time. These days were never
+  // "unavailable" - they simply never got a chance to be requested. There
+  // is no evidence from real Huawei/ENTSO-E responses of any day in this
+  // range being permanently unavailable, so nothing here is marked as such;
+  // the fix is fair scheduling, not a persisted "give up" flag. Market-price
+  // now gets at most half of whatever budget remains after daily-KPI,
+  // guaranteeing telemetry a real turn every request regardless of how slow
+  // ENTSO-E is - the same reasoning as the telemetry-starvation fix above,
+  // applied in reverse.
   let connection: FusionSolarConnection | null = null;
   let plants: Array<{ id: string }> = [];
 
@@ -373,10 +390,16 @@ export async function ensureHistoricalRangeAvailable(params: {
   if (hasTimeRemaining()) {
     const missingMarketPriceDays = days.filter((day) => !marketPriceDays.has(day.start.getTime()));
     if (missingMarketPriceDays.length > 0) {
+      // Market-price gets at most half of whatever budget remains here, not
+      // the full shared `deadline` - see the doc comment above this block
+      // for the real production evidence (9.7-29s per ENTSO-E call) that
+      // made this necessary.
+      const marketPriceDeadline = Date.now() + Math.max(0, (deadline - Date.now()) / 2);
+
       try {
         const result = await ensureMarketPricesForBulgariaDays(
           missingMarketPriceDays.map((day) => day.start),
-          deadline,
+          marketPriceDeadline,
         );
         if (result.errors.length > 0) {
           marketPriceError = result.errors.join("; ");
