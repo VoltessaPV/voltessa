@@ -333,6 +333,19 @@ export function parseEntsoeDayAheadPricesXml(
 }
 
 /**
+ * Historical gap investigation: real production evidence found a single
+ * ENTSO-E call taking 9.7-29 seconds (against a 25s total historical-range
+ * budget) with no per-request bound at all - one slow call could consume
+ * the entire budget for every other data source in the same request
+ * (confirmed: this is what was starving telemetry imports for Jan-Apr 2026,
+ * not any real unavailability - see `ensure-day-available.ts`'s
+ * `ensureHistoricalRangeAvailable` doc comment). This timeout makes a single
+ * call fail fast and retryable instead of silently consuming the caller's
+ * whole budget; it does not change whether the day is ultimately available.
+ */
+const ENTSOE_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
  * Fetches day-ahead prices for a single bidding zone and period from the
  * real ENTSO-E API. Requires `ENTSOE_API_TOKEN` to be configured — throws
  * `EntsoeApiError` if it is missing rather than silently returning empty
@@ -361,7 +374,16 @@ export async function fetchEntsoeDayAheadPrices(params: {
   );
   url.searchParams.set("periodEnd", formatEntsoeTimestamp(params.periodEnd));
 
-  const response = await fetch(url.toString());
+  let response: Response;
+
+  try {
+    response = await fetch(url.toString(), { signal: AbortSignal.timeout(ENTSOE_REQUEST_TIMEOUT_MS) });
+  } catch (error) {
+    throw new EntsoeApiError(
+      `ENTSO-E API request timed out or failed before receiving a response: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   const body = await response.text();
 
   if (!response.ok) {
