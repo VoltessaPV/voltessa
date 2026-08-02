@@ -3,13 +3,11 @@ import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
-import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
-import { ensureHistoricalRangeAvailable } from "@/lib/historical-data/ensure-day-available";
 import {
   computeExportRevenue,
   type RevenueSummary,
 } from "@/lib/market-price/revenue";
-import { formatDateInZone, periodBoundsUtc, type CalendarPeriod } from "@/lib/market-price/timezone";
+import { formatDateInZone, type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
@@ -51,13 +49,6 @@ function priceDeltaTrend(delta: number): { direction: Trend; label: string } {
 function parsePeriod(value: string | undefined): CalendarPeriod {
   return value === "week" || value === "month" || value === "year" ? value : "today";
 }
-
-/** Same pattern as `dashboard/page.tsx`'s own `isValidDateString` - duplicated per this codebase's established convention for small, page-local date-handling helpers rather than shared. */
-function isValidDateString(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 /**
  * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). ▲/▼ +
@@ -276,29 +267,13 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
-  // Historical Data Coverage milestone: the selected period - a single
-  // past day, or a Week/Month/Year range - must never render "no market
-  // data" just because ENTSO-E/FusionSolar haven't been imported for it
-  // yet - exactly the same principle, and the exact same shared service,
-  // as `dashboard/page.tsx`. `ensureHistoricalRangeAvailable` itself
-  // no-ops for a range entirely today/future, so this one call correctly
-  // covers every period. Runs for both branches below (including the
-  // Trader-with-no-client view, where `organizationId` is `null` - see
-  // that service's own doc comment for why ENTSO-E import still applies
-  // there).
-  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
-  const selectedDateStr =
-    params.date && isValidDateString(params.date) ? params.date : todayDateStr;
-  const referenceInstant = new Date(`${selectedDateStr}T12:00:00Z`);
-  const { start: periodStart, end: periodEnd } = periodBoundsUtc(period, referenceInstant, BULGARIA_TIMEZONE);
-
-  const historicalRange = await ensureHistoricalRangeAvailable({
-    organizationId,
-    start: periodStart,
-    end: periodEnd,
-  });
-  const historicalMarketPriceError = historicalRange.days.find((day) => day.marketPriceError)?.marketPriceError ?? null;
-  const historicalTelemetryImportFailed = historicalRange.days.some((day) => day.telemetryError !== null);
+  // Database-First Architecture milestone: Market is now a pure read over
+  // MarketPrice/DeviceTelemetry — it never calls Huawei or ENTSO-E, never
+  // triggers or waits on an import, and never checks remote availability.
+  // A period with nothing in the database renders the existing "no market
+  // data" empty state below instead of this page attempting to fill the
+  // gap itself. Historical backfill is a separate, explicit concern now —
+  // see `lib/historical-data/ensure-day-available.ts`'s module doc comment.
 
   // Trader Workspace milestone: market data is global (`MarketPrice` has no
   // `organizationId` at all - see prisma/schema.prisma), so a Trader with
@@ -335,11 +310,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
             <p className="text-sm font-medium text-white">
               {t("noMarketData.title", { date: data.selectedDate })}
             </p>
-            <p className="mt-1 text-xs text-slate-500">
-              {historicalMarketPriceError
-                ? t("noMarketData.importFailedDescription")
-                : t("noMarketData.description")}
-            </p>
+            <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
           </section>
         ) : (
           <>
@@ -394,21 +365,12 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     );
   }
 
-  // Transparent Freshness milestone: Market renders LIVE telemetry (Current
-  // Export, the chart's NOW marker) only for the literal "today" period -
-  // period "today" browsed to a past `date=` is just as historical as
-  // Week/Month/Year (matches production-data.ts's own `isToday` gate) - so
-  // it blocks on synchronization exactly like Dashboard only in that one
-  // case. See ensureTelemetryFresh's own doc comment, and
-  // dashboard/page.tsx's identical gate for the production evidence
-  // (~15s per sync) that motivated restricting this to `isToday`.
-  // No cache invalidation needed here: this route is fully dynamic (see
-  // dashboard/page.tsx's identical comment for why), so
-  // getProductionPageData/getMarketPageData below already read live
-  // database state regardless.
-  if (period === "today" && selectedDateStr === todayDateStr) {
-    await ensureTelemetryFresh(organizationId, { mode: "blocking" });
-  }
+  // Database-First Architecture milestone: Market never blocks on a live
+  // Huawei sync any more, for any period including today - it reads
+  // whatever DeviceTelemetry/MarketPrice already holds. Freshness for
+  // "today" now comes exclusively from the 5-minute telemetry-ingestion
+  // scheduler and the login-triggered sync (`lib/auth/config.ts`), never
+  // from a page render.
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId },
@@ -539,11 +501,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
           <p className="text-sm font-medium text-white">
             {t("noMarketData.title", { date: data.selectedDate })}
           </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {historicalMarketPriceError
-              ? t("noMarketData.importFailedDescription")
-              : t("noMarketData.description")}
-          </p>
+          <p className="mt-1 text-xs text-slate-500">{t("noMarketData.description")}</p>
         </section>
       ) : (
         <>
@@ -560,11 +518,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 revenue.available ? revenue.revenueEur.toFixed(2) : undefined
               }
               valueUnit={revenue.available ? "EUR" : undefined}
-              unavailableNote={
-                historicalTelemetryImportFailed
-                  ? tSummary("historicalImportFailed")
-                  : tSummary("waitingForProductionTelemetry")
-              }
+              unavailableNote={tSummary("waitingForProductionTelemetry")}
               trend={revenueTrend}
               rows={
                 revenue.available

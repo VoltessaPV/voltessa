@@ -3,9 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
-import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
-import { ensureHistoricalRangeAvailable } from "@/lib/historical-data/ensure-day-available";
-import { type CalendarPeriod, formatDateInZone, periodBoundsUtc } from "@/lib/market-price/timezone";
+import { type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
@@ -123,38 +121,21 @@ function mwhValueLabel(kwh: number | null): string | undefined {
 
 /**
  * Friendlier, date-aware unavailable wording — `todayNote` only ever
- * applies when the selected day genuinely is today. Historical Data
- * Auto-Import milestone: `importFailed` distinguishes "we tried to import
- * this day and it genuinely failed" from "nothing to show" - per that
- * milestone's explicit requirement, the failure message must only ever
- * appear after a real import attempt failed, never merely because import
- * hasn't been attempted (which, since `ensureHistoricalDayAvailable` is
- * always awaited before this page renders, never happens for a past day
- * anymore).
+ * applies when the selected day genuinely is today.
+ *
+ * Database-First Architecture milestone: this page no longer attempts an
+ * import before rendering, so there is no "we tried and it failed" state
+ * distinct from "nothing to show" any more — a past day's KPI is `null`
+ * for exactly one reason now (it isn't in the database yet), so
+ * `historicalNote` always applies for a non-today day.
  */
-function unavailableNote(
-  isToday: boolean,
-  todayNote: string,
-  historicalNote: string,
-  importFailed = false,
-  importFailedNote?: string,
-): string {
-  if (isToday) {
-    return todayNote;
-  }
-  return importFailed && importFailedNote ? importFailedNote : historicalNote;
+function unavailableNote(isToday: boolean, todayNote: string, historicalNote: string): string {
+  return isToday ? todayNote : historicalNote;
 }
 
 function parsePeriod(value: string | undefined): CalendarPeriod {
   return value === "week" || value === "month" || value === "year" ? value : "today";
 }
-
-/** Same pattern as `dashboard-data.ts`'s own `isValidDateString` - duplicated per this codebase's established convention for small, page-local date-handling helpers rather than shared. */
-function isValidDateString(value: string): boolean {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 type Trend = "up" | "down" | "flat";
 
@@ -220,61 +201,17 @@ export default async function DashboardPage({
   const params = await searchParams;
   const period = parsePeriod(params.period);
 
-  // Historical Data Coverage milestone: the selected period - a single
-  // past day, or a Week/Month/Year range - must never render "no
-  // historical data" just because nothing has been imported for it yet.
-  // `periodBoundsUtc` resolves the exact same [start, end) Dashboard's own
-  // data layer uses for this period; `ensureHistoricalRangeAvailable`
-  // itself already no-ops for a range that's entirely today/future (e.g.
-  // period "today" on today's own date), so this one call correctly covers
-  // every period without a separate today/historical branch. Awaited here,
-  // before any page data is fetched, so `getDashboardPageData` below always
-  // reads a period that's already fully imported (or has run out of its
-  // own safety time budget - see that function's doc comment); the route's
-  // `loading.tsx` is what the user sees while this runs.
-  const todayDateStr = formatDateInZone(new Date(), BULGARIA_TIMEZONE);
-  const selectedDateStr =
-    params.date && isValidDateString(params.date) ? params.date : todayDateStr;
-  const referenceInstant = new Date(`${selectedDateStr}T12:00:00Z`);
-  const { start: periodStart, end: periodEnd } = periodBoundsUtc(period, referenceInstant, BULGARIA_TIMEZONE);
-
-  const historicalRange = await ensureHistoricalRangeAvailable({
-    organizationId,
-    start: periodStart,
-    end: periodEnd,
-  });
-
-  // Transparent Freshness milestone: Dashboard renders LIVE telemetry only
-  // for the literal "today" period (Category A - System Overview, the
-  // chart's NOW marker, inverter status; see dashboard-data.ts's own
-  // Category A convention) - it blocks on synchronization instead of
-  // showing a possibly-stale snapshot only in that case. See
-  // ensureTelemetryFresh's own doc comment for why this, and only this,
-  // decides whether/how a sync runs.
-  //
-  // Performance investigation: this used to run unconditionally for every
-  // period, including a purely historical Week/Month/Year view that shows
-  // no live data at all - blocking every historical page load on a live
-  // Huawei sync (confirmed in production at up to ~15s per sync) for
-  // freshness information the page never displays. `getDashboardPageData`
-  // already reads Week/Month/Year data straight from PlantDailyKpi/
-  // DeviceTelemetry/MarketPrice, never from a live Huawei read, so a
-  // historical period has nothing to gain from this call.
-  //
-  // No cache invalidation needed here: this route is fully dynamic (uses
-  // cookies() via requireOnboardedUser/requireTraderOrganizationAccess,
-  // confirmed by the build output showing `ƒ`, not `○`), so it's never in
-  // the Full Route Cache, and the client Router Cache doesn't hold dynamic
-  // segments by default (no staleTimes override in next.config.js) -
-  // getDashboardPageData below already reads live database state
-  // regardless, with nothing cached anywhere to invalidate.
-  // Matches dashboard-data.ts's own `isToday` exactly (period "today" AND
-  // the literal current date) - period "today" browsed to a past `date=`
-  // is just as historical as Week/Month/Year and must skip this too.
-  if (period === "today" && selectedDateStr === todayDateStr) {
-    await ensureTelemetryFresh(organizationId, { mode: "blocking" });
-  }
-
+  // Database-First Architecture milestone: Dashboard is now a pure read
+  // over PlantDailyKpi/DeviceTelemetry/MarketPrice — it never calls Huawei
+  // or ENTSO-E, never triggers or waits on an import, and never checks
+  // remote availability. `getDashboardPageData` below reads whatever is
+  // already in the database for the selected period; a day that was never
+  // imported (or a live sync tick hasn't reached yet) simply renders as
+  // "not available" per-field (see `unavailableNote` above) instead of
+  // this page attempting to fill the gap itself. Historical backfill is a
+  // separate, explicit concern now — automatic once at onboarding, and
+  // on-demand via Platform Admin — never part of page rendering. See
+  // `lib/historical-data/ensure-day-available.ts`'s module doc comment.
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId },
     select: { minimumExportPrice: true, currency: true, automationEnabled: true },
@@ -349,16 +286,6 @@ export default async function DashboardPage({
       )
     : undefined;
 
-  // Historical Data Coverage milestone: true only if at least one day in
-  // the selected period (awaited above, via `ensureHistoricalRangeAvailable`)
-  // genuinely attempted and failed to import this specific piece - never
-  // true just because a day hasn't been imported yet (that's either
-  // already resolved before this render, or - for a very large range that
-  // ran past its safety time budget - simply not attempted yet this time,
-  // which reports as "not available" with no error, not a failure).
-  const dailyKpiImportFailed = historicalRange.days.some((day) => day.dailyKpiError !== null);
-  const telemetryImportFailed = historicalRange.days.some((day) => day.telemetryError !== null);
-
   return (
     <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
@@ -392,8 +319,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.noHistoricalProductionData"),
-                dailyKpiImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
               trend={producedTrend}
             />
@@ -406,8 +331,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.notAvailable"),
                 t("kpis.historicalDataNotAvailable"),
-                dailyKpiImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
             />
 
@@ -421,8 +344,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
-                dailyKpiImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
               trend={consumedTrend}
             />
@@ -437,8 +358,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
-                dailyKpiImportFailed || telemetryImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
               trend={consumedFromPvTrend}
             />
@@ -453,8 +372,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
-                telemetryImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
               trend={exportedTrend}
             />
@@ -470,8 +387,6 @@ export default async function DashboardPage({
                 data.isToday,
                 t("kpis.waitingForTelemetry"),
                 t("kpis.historicalDataNotAvailable"),
-                telemetryImportFailed,
-                t("kpis.historicalImportFailed"),
               )}
             />
           </section>

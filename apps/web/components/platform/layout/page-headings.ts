@@ -2,6 +2,7 @@ import { pageHeading as adminDashboard } from "@/app/admin/heading";
 import { pageHeading as adminAssignments } from "@/app/admin/assignments/heading";
 import { pageHeading as adminAuditLog } from "@/app/admin/audit-log/heading";
 import { pageHeading as adminOperations } from "@/app/admin/operations/heading";
+import { pageHeading as adminHistoricalImports } from "@/app/admin/historical-imports/heading";
 import { pageHeading as adminPlantOwners } from "@/app/admin/plant-owners/heading";
 import { pageHeading as adminPlantOwnerDetails } from "@/app/admin/plant-owners/[id]/heading";
 import { pageHeading as adminTraders } from "@/app/admin/traders/heading";
@@ -31,6 +32,7 @@ const ADMIN_STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/admin/assignments": adminAssignments,
   "/admin/audit-log": adminAuditLog,
   "/admin/operations": adminOperations,
+  "/admin/historical-imports": adminHistoricalImports,
 };
 
 export function resolveAdminPageHeading(pathname: string): PageHeadingContent | null {

@@ -6,6 +6,7 @@ import {
   Bell,
   Bot,
   Building2,
+  CalendarClock,
   ClipboardList,
   FileClock,
   LayoutDashboard,
@@ -120,6 +121,11 @@ const adminNavigation = [
     label: "Operations",
     href: "/admin/operations",
     icon: Activity,
+  },
+  {
+    label: "Historical Imports",
+    href: "/admin/historical-imports",
+    icon: CalendarClock,
   },
 ];
 

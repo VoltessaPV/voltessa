@@ -64,6 +64,8 @@ model User {
   auditLogsActed    AuditLog[] @relation("AuditLogsActed")
   auditLogsTargeted AuditLog[] @relation("AuditLogsTargeted")
 
+  historicalImportJobsCreated HistoricalImportJob[]
+
   traderProfile TraderProfile?
 
   /// Settings > Profile. Kept separate from the pre-existing `name` (used by
@@ -337,6 +339,8 @@ model Organization {
 
   billingInformation   BillingInformation?
   energyMarketSettings EnergyMarketSettings?
+
+  historicalImportJobs HistoricalImportJob[]
 }
 
 model Plant {
@@ -1231,4 +1235,54 @@ model HuaweiRequestLog {
   @@index([connectionId, createdAt])
   @@index([apiPath, createdAt])
   @@index([httpStatus, createdAt])
+}
+
+/// Database-First Architecture milestone. Historical import status distinct
+/// from `RunStatus` (used by `SchedulerRun`/`ImporterRun`, both one-shot
+/// records of a single completed invocation) — a `HistoricalImportJob` is a
+/// standing request that can span several invocations (bounded by
+/// `importHistoricalRange`'s own time budget per call), so it needs
+/// `RUNNING`/`PENDING` states those one-shot records never do.
+enum HistoricalImportJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Database-First Architecture milestone. Platform Admin's explicit
+/// historical-import tool (`app/admin/historical-imports`) — the only other
+/// place besides the one-time onboarding import
+/// (`lib/onboarding/historical-import.ts`) allowed to trigger a Huawei/
+/// ENTSO-E historical import; Dashboard/Market never do. One row per
+/// admin-requested range; `importHistoricalRange` is idempotent and
+/// resumable, so re-processing the same job (via the "Continue" action)
+/// simply picks up whatever is still missing at zero cost for what's
+/// already imported. `daysRequested`/`daysAvailable` mirror
+/// `ImporterRun.rowsImported`'s meaning for this importer (days fully
+/// available for every data type, not "days touched this call").
+model HistoricalImportJob {
+  id String @id @default(cuid())
+
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  rangeStart DateTime
+  rangeEnd   DateTime
+
+  status HistoricalImportJobStatus @default(PENDING)
+
+  daysRequested Int @default(0)
+  daysAvailable Int @default(0)
+
+  lastRunAt DateTime?
+  lastError String?
+
+  createdByUserId String
+  createdBy       User   @relation(fields: [createdByUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
 }

@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 
 import { auth } from "@/auth";
+import { runOnboardingHistoricalImport } from "@/lib/onboarding/historical-import";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
 export const preferredRegion = "fra1";
+
+// `maxDuration` for this route is set in vercel.json (240s) - generous
+// relative to the default, since the one-time onboarding historical import
+// below runs inside this same invocation (via `after()`) and a cold
+// multi-week backfill can involve a meaningful number of real Huawei/
+// ENTSO-E calls. Bounded by its own `timeBudgetMs` regardless (see
+// `runOnboardingHistoricalImport`), well under this ceiling.
 
 const FUSIONSOLAR_TOKEN_URL =
   "https://oauth2.fusionsolar.huawei.com/rest/dp/uidm/oauth2/v1/token";
@@ -150,6 +159,23 @@ export async function GET(request: NextRequest) {
       ? new Date(Date.now() + tokenData.expires_in * 1000)
       : null;
 
+  // Database-First Architecture milestone: the one-time onboarding
+  // historical import only ever fires the very first time this
+  // organization gets a FusionSolarConnection - never on a later
+  // reconnect/token-refresh through this same route (e.g. re-authorizing
+  // from Settings after a revoked token). Checked before the upsert below,
+  // which would otherwise make "did this row already exist" unknowable.
+  const existingConnection = await prisma.fusionSolarConnection.findUnique({
+    where: {
+      organizationId_provider: {
+        organizationId: user.organizationId,
+        provider: "HuaweiFusionSolar",
+      },
+    },
+    select: { id: true },
+  });
+  const isFirstConnection = existingConnection === null;
+
   await prisma.fusionSolarConnection.upsert({
     where: {
       organizationId_provider: {
@@ -183,7 +209,20 @@ export async function GET(request: NextRequest) {
     expiresIn: tokenData.expires_in,
     scope: tokenData.scope,
     tokenType: tokenData.token_type,
+    isFirstConnection,
   });
+
+  // Database-First Architecture milestone: the one automatic historical
+  // import, fired exactly once. `after()` (not awaited inline) so the
+  // redirect back to Settings is never blocked on it - see
+  // `runOnboardingHistoricalImport`'s own doc comment for the exact range
+  // and reasoning.
+  if (isFirstConnection) {
+    const organizationId = user.organizationId;
+    after(() => {
+      void runOnboardingHistoricalImport(organizationId, 200_000);
+    });
+  }
 
   const url = new URL("/settings", process.env.AUTH_URL);
 
