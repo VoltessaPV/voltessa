@@ -103,8 +103,18 @@ export async function requireCurrentUser(): Promise<CurrentUser> {
   return user;
 }
 
-export async function requireOnboardedUser(): Promise<CurrentUserWithOrganization> {
-  const user = await requireCurrentUser();
+/**
+ * `identity` lets a caller that already resolved `requireCurrentUser()`
+ * (e.g. `resolveOrganizationViewAccess`) pass it straight through instead
+ * of this function re-running the exact same `auth()` + database lookup a
+ * second time - confirmed in production as a real, measurable cost
+ * (Database-First Architecture milestone's performance validation: this
+ * duplicate fetch was consistently ~40-50% of `resolveOrganizationViewAccess`'s
+ * own cost). Every existing call site with no argument behaves exactly as
+ * before.
+ */
+export async function requireOnboardedUser(identity?: CurrentUser): Promise<CurrentUserWithOrganization> {
+  const user = identity ?? (await requireCurrentUser());
 
   if (!user.organizationId || !user.organization?.onboardingCompletedAt) {
     redirect("/onboarding");
@@ -190,8 +200,9 @@ export type CurrentTraderAccess = {
  * longer valid (e.g. an assignment was removed since the cookie was
  * written).
  */
-export async function requireTraderOrganizationAccess(): Promise<CurrentTraderAccess> {
-  const trader = await requireCurrentUser();
+/** `identity` - see `requireOnboardedUser`'s identical parameter doc comment. */
+export async function requireTraderOrganizationAccess(identity?: CurrentUser): Promise<CurrentTraderAccess> {
+  const trader = identity ?? (await requireCurrentUser());
 
   if (trader.accountType !== "ENERGY_TRADER") {
     redirect("/dashboard");
@@ -267,11 +278,11 @@ export async function resolveOrganizationViewAccess(): Promise<OrganizationViewA
   const identity = await requireCurrentUser();
 
   if (identity.accountType === "ENERGY_TRADER") {
-    const access = await requireTraderOrganizationAccess();
+    const access = await requireTraderOrganizationAccess(identity);
     return { organizationId: access.organizationId, readOnly: true };
   }
 
-  const user = await requireOnboardedUser();
+  const user = await requireOnboardedUser(identity);
   return { organizationId: user.organizationId, readOnly: false };
 }
 
