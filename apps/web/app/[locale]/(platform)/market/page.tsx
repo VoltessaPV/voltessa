@@ -394,14 +394,21 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     );
   }
 
-  // Transparent Freshness milestone: Market renders telemetry (Current
-  // Export, revenue, the price/export chart's settlement overlay), so it
-  // blocks on synchronization exactly like Dashboard - see
-  // ensureTelemetryFresh's own doc comment. No cache invalidation needed
-  // here: this route is fully dynamic (see dashboard/page.tsx's identical
-  // comment for why), so getProductionPageData/getMarketPageData below
-  // already read live database state regardless.
-  await ensureTelemetryFresh(organizationId, { mode: "blocking" });
+  // Transparent Freshness milestone: Market renders LIVE telemetry (Current
+  // Export, the chart's NOW marker) only for the literal "today" period -
+  // period "today" browsed to a past `date=` is just as historical as
+  // Week/Month/Year (matches production-data.ts's own `isToday` gate) - so
+  // it blocks on synchronization exactly like Dashboard only in that one
+  // case. See ensureTelemetryFresh's own doc comment, and
+  // dashboard/page.tsx's identical gate for the production evidence
+  // (~15s per sync) that motivated restricting this to `isToday`.
+  // No cache invalidation needed here: this route is fully dynamic (see
+  // dashboard/page.tsx's identical comment for why), so
+  // getProductionPageData/getMarketPageData below already read live
+  // database state regardless.
+  if (period === "today" && selectedDateStr === todayDateStr) {
+    await ensureTelemetryFresh(organizationId, { mode: "blocking" });
+  }
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId },
