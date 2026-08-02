@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "app/api/auth/fusionsolar/callback/route.ts": {
-      "regions": ["fra1"]
+      "regions": ["fra1"],
+      "maxDuration": 240
     },
     "app/api/diag/fusionsolar-dns/route.ts": {
       "regions": ["fra1"]
@@ -11,11 +12,8 @@
       "regions": ["fra1"],
       "maxDuration": 300
     },
-    "app/[locale]/(platform)/dashboard/page.tsx": {
-      "maxDuration": 60
-    },
-    "app/[locale]/(platform)/market/page.tsx": {
-      "maxDuration": 60
+    "app/admin/historical-imports/page.tsx": {
+      "maxDuration": 280
     }
   }
 }
