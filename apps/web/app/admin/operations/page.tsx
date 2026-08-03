@@ -86,8 +86,21 @@ function Section({
   );
 }
 
+/**
+ * Every timestamp on this page must render in the same timezone (Europe/
+ * Sofia, Voltessa's one operating timezone today — see CLAUDE.md), never
+ * the bare `.toLocaleString()` default, which renders in the server's own
+ * timezone (UTC on Vercel), not the operator's. Same convention already
+ * established by `dashboard/page.tsx` / `market/page.tsx`'s own
+ * `sofiaDateTimeLabel` — duplicated here rather than imported, matching
+ * this codebase's precedent for small, page-local presentation helpers.
+ * Storage is untouched: every underlying `Date`/timestamp column stays UTC;
+ * only this page's own rendering changes.
+ */
+const OPERATIONS_TIMEZONE = "Europe/Sofia";
+
 function formatDate(date: Date | null): string {
-  return date ? date.toLocaleString() : "—";
+  return date ? date.toLocaleString("en-GB", { timeZone: OPERATIONS_TIMEZONE }) : "—";
 }
 
 function WaitingForVercelToken({ label }: { label: string }) {
@@ -254,7 +267,7 @@ export default async function AdminOperationsPage({
             <p className="text-xs font-medium text-white/50">Recent import errors</p>
             {entsoe.recentImportErrors.map((e, i) => (
               <p key={i} className="text-xs text-white/40">
-                {e.occurredAt.toLocaleString()} — {e.message}
+                {formatDate(e.occurredAt)} — {e.message}
               </p>
             ))}
           </div>
@@ -351,7 +364,7 @@ export default async function AdminOperationsPage({
                   <tr key={i} className="border-b border-white/5 last:border-0">
                     <td className="px-4 py-2 text-white/70">{g.message}</td>
                     <td className="px-4 py-2 text-white/70">{g.occurrences}</td>
-                    <td className="px-4 py-2 text-white/70">{g.latestOccurrence.toLocaleString()}</td>
+                    <td className="px-4 py-2 text-white/70">{formatDate(g.latestOccurrence)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -409,7 +422,7 @@ export default async function AdminOperationsPage({
       </Section>
 
       {/* Section 9 — Data Integrity */}
-      <Section title="Data Integrity" description={`Read-only checks, cached — computed ${new Date(dataIntegrity.computedAt).toLocaleString()}. Never modifies data.`}>
+      <Section title="Data Integrity" description={`Read-only checks, cached — computed ${formatDate(new Date(dataIntegrity.computedAt))}. Never modifies data.`}>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
           <Metric label="Duplicate PlantDailyKpi" value={dataIntegrity.duplicates.plantDailyKpi.groupCount} />
           <Metric label="Duplicate DeviceTelemetry" value={dataIntegrity.duplicates.deviceTelemetry.groupCount} />
@@ -636,7 +649,7 @@ export default async function AdminOperationsPage({
             <tbody>
               {logs.map((entry) => (
                 <tr key={entry.id} className="border-b border-white/5 last:border-0">
-                  <td className="px-4 py-2 text-white/70">{entry.occurredAt.toLocaleString()}</td>
+                  <td className="px-4 py-2 text-white/70">{formatDate(entry.occurredAt)}</td>
                   <td className="px-4 py-2 text-white/50">{entry.source}</td>
                   <td className="px-4 py-2 text-white/70">{entry.message}</td>
                   <td className="px-4 py-2 text-white/50">{entry.organizationId ?? "—"}</td>
