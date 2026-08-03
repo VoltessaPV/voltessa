@@ -45,8 +45,8 @@ Five independent `systemd` units run on it (plus the undocumented one above):
    directly; it always goes through this gateway via `FUSIONSOLAR_GATEWAY_URL` +
    `FUSIONSOLAR_GATEWAY_SECRET` (`apps/web/lib/fusionsolar/api-client.ts`). This is the only unit
    that runs real integration logic on this VM — see "Huawei Gateway" below.
-2. **`voltessa-telemetry-ingestion.timer`** — fires every 5 minutes, calls back into Vercel to
-   ingest `DeviceTelemetry`. See "Systemd Timers" below.
+2. **`voltessa-telemetry-ingestion.timer`** — fires every 15 minutes, daily 06:00-22:00
+   Europe/Sofia, calls back into Vercel to ingest `DeviceTelemetry`. See "Systemd Timers" below.
 3. **`voltessa-market-price-scheduler.timer`** — fires once daily, calls back into Vercel to import
    ENTSO-E day-ahead prices. See "Systemd Timers" below.
 4. **`voltessa-automation-execution.timer`** — fires every 15 minutes, calls back into Vercel to run
@@ -113,35 +113,42 @@ journalctl -u voltessa-fusionsolar-proxy -f
 
 ## `voltessa-telemetry-ingestion.timer`
 
-**Database-First Telemetry Architecture milestone (ADR-011)**: this timer's cadence is unchanged
-(still every 5 minutes), but the route it calls no longer synchronizes anything itself — it
-delegates to the same shared synchronization service Dashboard/Market's on-demand path also calls.
-See `docs/research/telemetry-platform-foundation.md` §9 for the full record.
+**Live Telemetry Synchronization Redesign milestone**: cadence is every 15 minutes, daily
+06:00-22:00 Europe/Sofia (previously hourly 06:00-22:00 plus a 23:58 close — both superseded by
+this milestone; the 23:58 close-of-day run was dropped, since the remaining coverage gap
+(22:00-06:00) is now backstopped by Dashboard/Market's own background recovery check the moment
+anyone actually opens the app, rather than one more blind scheduled tick). The route this timer
+calls does not synchronize anything itself — it delegates to the same shared synchronization
+service Dashboard/Market's background recovery check also calls. See
+`docs/research/telemetry-platform-foundation.md` §9 for the pre-redesign history.
 
 ```
-voltessa-telemetry-ingestion.timer  (OnCalendar=*:0/5 — every 5 minutes, unchanged)
+voltessa-telemetry-ingestion.timer  (every 15 minutes, 06:00-22:00 Europe/Sofia)
   -> voltessa-telemetry-ingestion.service  (curl, Bearer CRON_SECRET)
   -> POST https://app.voltessa.ai/api/internal/fusionsolar/bootstrap-device-telemetry?days=1
   -> route.ts: crypto.timingSafeEqual auth check
   -> for every FusionSolarConnection:
        synchronizeFusionSolarConnection(connectionId)  (apps/web/lib/fusionsolar/telemetry-sync-service.ts)
-         -> freshness check against FUSIONSOLAR_SYNC_FRESHNESS_MS -- if fresh, skipped, no Huawei call
+         -> freshness check against FUSIONSOLAR_SYNC_FRESHNESS_MS (5 min) -- if fresh, skipped, no Huawei call
          -> otherwise: lease claim -> importDeviceTelemetry() + importPlantDailyKpi() -> Huawei
          -> DeviceTelemetry / PlantDailyKpi tables
-  -> Dashboard / Market read via lib/telemetry/queries.ts / lib/telemetry/plant-daily-kpi.ts,
-     which themselves call the same synchronizeFusionSolarConnection() before every read --
-     this timer is a background cache-warmer, not what keeps the UI alive (ADR-011)
+  -> Dashboard / Market read directly from these tables on every render (Database-First
+     Architecture milestone) -- this timer is the PRIMARY freshness mechanism; Dashboard/Market's
+     own background ensureTelemetryFresh() call (mode: "background", non-blocking, fires after the
+     response is already sent) is a RECOVERY-ONLY backstop for when this timer missed a cycle
+     (scheduler/gateway/Huawei/network outage), never something the render waits on
 ```
 
-- The `?days=1` query parameter is now **inert** — the sync service's window is a fixed internal
-  constant (`DAYS_BACK = 1`, same "yesterday + today" shape as before). The systemd service's
-  existing invocation does not need to change; the parameter is simply no longer read.
-- **The scheduler is not special-cased** — it goes through the identical freshness gate as a
-  Dashboard/Market page render (`synchronizeFusionSolarConnection(connectionId)`, no `force`). A
-  tick that finds the connection already synced within `FUSIONSOLAR_SYNC_FRESHNESS_MS` (e.g. a user
-  loaded Dashboard moments before this tick fired) **correctly skips contacting Huawei** — this is
-  expected behavior, not a missed cycle. Only the manual Refresh action and deliberately-invoked
-  diagnostics ever pass `force: true`.
+- The `?days=1` query parameter is inert — the sync service's window is a fixed internal constant
+  (`DAYS_BACK = 1`, "yesterday + today"). The systemd service's existing invocation does not need to
+  change; the parameter is simply not read.
+- **The scheduler is not special-cased** — it goes through the identical freshness gate as
+  Dashboard/Market's own background recovery check (`synchronizeFusionSolarConnection(connectionId)`,
+  no `force`). Since `FUSIONSOLAR_SYNC_FRESHNESS_MS` (5 min) is shorter than this timer's own
+  15-minute cadence, a tick almost always performs a real sync; one that finds the connection
+  already synced within 5 minutes (e.g. a user's page load triggered a recovery sync moments
+  earlier) **correctly skips contacting Huawei** — expected, not a missed cycle. Only the manual
+  Refresh action and deliberately-invoked diagnostics ever pass `force: true`.
 - **EnvironmentFile**: `/etc/voltessa-telemetry-scheduler.env` (root-only, `chmod 600`) — holds this
   service's own `CRON_SECRET` copy. This is a **separate file** from the gateway's
   `/etc/voltessa-fusionsolar-proxy.env` — don't confuse them.
@@ -427,7 +434,9 @@ someone reading the Vercel dashboard live.
 
 1. `systemctl status voltessa-telemetry-ingestion.timer` — confirm it's `active (waiting)`, not
    disabled/failed.
-2. `systemctl list-timers` — confirm the "next" fire time is within 5 minutes of now, not stalled.
+2. `systemctl list-timers` — confirm the "next" fire time is within 15 minutes of now during
+   06:00-22:00 Europe/Sofia (outside that window, the next fire time is the following day's 06:00 —
+   not stalled, by design; see Dashboard/Market's background recovery check for what covers that gap).
 3. `journalctl -u voltessa-telemetry-ingestion.service --since "15 min ago"` — check the last few
    runs. Since ADR-011 (Database-First Telemetry Architecture), the response is `ok:true` with a
    `results` array, one entry per `FusionSolarConnection`, each carrying a `status`:

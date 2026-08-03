@@ -3,6 +3,7 @@ import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import {
   computeExportRevenue,
   type RevenueSummary,
@@ -10,6 +11,7 @@ import {
 import { formatDateInZone, type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
+import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
@@ -344,6 +346,15 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     );
   }
 
+  // Live Telemetry Synchronization Redesign milestone - see this file's
+  // "Database-First Architecture milestone" comment further below for what
+  // this is (and isn't) doing. Recovery-only, non-blocking; a no-op
+  // whenever the scheduler already kept telemetry fresh.
+  await ensureTelemetryFresh(organizationId, {
+    mode: "background",
+    onSettled: revalidateTelemetryPagesIfSynced,
+  });
+
   // Checked before any other data fetching (ENTSO-E price import, revenue,
   // production telemetry) - none of that is plant-specific, so without a
   // plant this page would otherwise still render real market-price widgets
@@ -368,9 +379,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   // Database-First Architecture milestone: Market never blocks on a live
   // Huawei sync any more, for any period including today - it reads
   // whatever DeviceTelemetry/MarketPrice already holds. Freshness for
-  // "today" now comes exclusively from the 5-minute telemetry-ingestion
-  // scheduler and the login-triggered sync (`lib/auth/config.ts`), never
-  // from a page render.
+  // "today" primarily comes from the telemetry-ingestion scheduler (every
+  // 15 minutes, 06:00-22:00 Europe/Sofia) and the login-triggered sync
+  // (`lib/auth/config.ts`); the non-blocking `ensureTelemetryFresh` call
+  // above is a recovery mechanism for when those missed a cycle, never a
+  // wait inside this render.
 
   const automationSettings = await prisma.automationSettings.findUnique({
     where: { organizationId },

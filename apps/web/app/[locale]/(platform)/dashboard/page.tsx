@@ -3,8 +3,10 @@ import { getTranslations } from "next-intl/server";
 
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { resolveOrganizationViewAccess } from "@/lib/auth/session";
+import { ensureTelemetryFresh } from "@/lib/fusionsolar/telemetry-sync-service";
 import { type CalendarPeriod } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-telemetry-pages";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
@@ -88,17 +90,35 @@ import { getDashboardPageData } from "./dashboard-data";
  * `components/platform/layout/page-headings.ts`, Full Internationalization
  * milestone) instead of here - this page starts directly with `MarketToolbar`.
  *
- * ## Transparent Freshness milestone
+ * ## Transparent Freshness milestone (superseded below)
  *
- * The manual Refresh button is gone - Dashboard now blocks on
- * `ensureTelemetryFresh` (`lib/fusionsolar/telemetry-sync-service.ts`)
- * before loading page data, so every render already reflects telemetry no
- * more than `FUSIONSOLAR_SYNC_FRESHNESS_MS` old, transparently. Market
- * does the identical thing; Settings/Automations/Alerts/Plants call the
- * same helper in background mode instead, since they render no telemetry
- * and must never wait on Huawei. `resolvePlantContext` (called inside
- * `getDashboardPageData` below) no longer has any synchronization
- * side effect of its own - see its doc comment.
+ * The manual Refresh button is gone. This milestone originally made
+ * Dashboard block on `ensureTelemetryFresh` before loading page data - that
+ * blocking call was later removed entirely by the Database-First
+ * Architecture milestone (production evidence showed unpredictable Huawei
+ * latency turning page loads into multi-second-to-multi-minute waits).
+ *
+ * ## Live Telemetry Synchronization Redesign milestone
+ *
+ * Dashboard is - and remains - a pure database read: `getDashboardPageData`
+ * never calls Huawei/ENTSO-E, never triggers or waits on an import (see the
+ * Database-First Architecture comment below). Freshness is primarily the
+ * telemetry-ingestion scheduler's job now (every 15 minutes, 06:00-22:00
+ * Europe/Sofia - see `docs/infrastructure/scaleway-production.md`). This
+ * page additionally calls `ensureTelemetryFresh(organizationId, { mode:
+ * "background" })` purely as a recovery mechanism for when the scheduler
+ * missed a cycle (temporary Huawei/gateway/network outage): it returns
+ * immediately (the real sync, if any, runs via `after()` strictly after
+ * this response has already been sent - the render below never waits on
+ * it), and is a no-op whenever telemetry is already fresher than
+ * `FUSIONSOLAR_SYNC_FRESHNESS_MS`. `onSettled` revalidates `/dashboard` and
+ * `/market` once a real sync completes, so a subsequent visit already
+ * reflects the recovered data. Same helper, same non-blocking mode, same
+ * `onSettled` wiring Settings/Automations/Alerts/Plants already use -
+ * Dashboard/Market are not a special case any more, just two more
+ * background-mode callers. `resolvePlantContext` (called inside
+ * `getDashboardPageData` below) itself still has no synchronization side
+ * effect of its own - see its doc comment.
  */
 
 /**
@@ -197,6 +217,14 @@ export default async function DashboardPage({
       </PageContainer>
     );
   }
+
+  // Live Telemetry Synchronization Redesign milestone - see this file's own
+  // top doc comment. Recovery-only: a no-op whenever the scheduler already
+  // kept telemetry fresh, never blocks this render either way.
+  await ensureTelemetryFresh(organizationId, {
+    mode: "background",
+    onSettled: revalidateTelemetryPagesIfSynced,
+  });
 
   const params = await searchParams;
   const period = parsePeriod(params.period);

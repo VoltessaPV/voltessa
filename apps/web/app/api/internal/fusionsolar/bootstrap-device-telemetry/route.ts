@@ -13,10 +13,15 @@ const SCHEDULER_NAME = "telemetry_ingestion";
 
 /**
  * The Scaleway systemd timer's HTTP entry point (`voltessa-telemetry-
- * ingestion.timer`, `OnCalendar=*:0/5`, ADR-008/ADR-009). URL unchanged —
- * this is an externally-configured contract the VM's timer/service files
- * depend on. Bearer-token gated (`CRON_SECRET`), same convention as
- * `ingest-plant-telemetry`.
+ * ingestion.timer`). Live Telemetry Synchronization Redesign milestone:
+ * cadence is every 15 minutes, daily 06:00-22:00 Europe/Sofia (see
+ * `docs/infrastructure/scaleway-production.md` for the exact `OnCalendar`
+ * expression — this is the primary synchronization mechanism; outside that
+ * window, freshness relies on the login-triggered sync and Dashboard/
+ * Market's own background recovery check, see `telemetry-sync-service.ts`).
+ * URL unchanged — this is an externally-configured contract the VM's
+ * timer/service files depend on. Bearer-token gated (`CRON_SECRET`), same
+ * convention as `ingest-plant-telemetry`.
  *
  * Database-First Telemetry Architecture milestone: this route no longer
  * synchronizes anything itself. It enumerates every `FusionSolarConnection`
@@ -24,11 +29,11 @@ const SCHEDULER_NAME = "telemetry_ingestion";
  * synchronization entry point the whole application shares (see
  * `lib/fusionsolar/telemetry-sync-service.ts`). Deliberately called
  * *without* `force`: the scheduler is not special-cased — it goes through
- * the identical freshness gate as a Dashboard/Market render or the manual
- * Refresh action. `FUSIONSOLAR_SYNC_FRESHNESS_MS` is chosen so the
- * unchanged 5-minute cron still performs a real sync on effectively every
- * tick this milestone; only that one shared constant governs how often
- * Huawei is actually contacted, from any caller.
+ * the identical freshness gate as Dashboard/Market's background recovery
+ * check or the manual Refresh action. `FUSIONSOLAR_SYNC_FRESHNESS_MS` (5
+ * minutes) is shorter than this scheduler's own 15-minute cadence, so a
+ * real sync runs on effectively every tick; only that one shared constant
+ * governs how often Huawei is actually contacted, from any caller.
  *
  * NOT wired to Vercel's native `crons` config — confirmed blocked on this
  * plan tier (see `docs/research/telemetry-consumer-migration.md` §11 and

@@ -69,14 +69,15 @@ const SYNC_LEASE_MS = 2 * 60 * 1000;
 /**
  * The single shared, explicitly-tunable freshness threshold — referenced
  * everywhere a caller decides "is this connection's telemetry fresh
- * enough," never duplicated as a literal. Approved architecture: the
- * scheduler now runs hourly (06:00-22:00) plus a 23:58 close, so this
- * constant is no longer coupled to the scheduler's own cadence — it is
- * specifically the login-triggered freshness threshold ("if the last
- * successful Huawei sync is older than 5 minutes, sync now"). The
- * scheduler goes through this exact same check as every other caller (no
- * special-cased `force`), so a scheduled run within 5 minutes of a
- * login-triggered sync is simply skipped as already fresh.
+ * enough," never duplicated as a literal. Live Telemetry Synchronization
+ * Redesign milestone: the scheduler runs every 15 minutes (06:00-22:00
+ * Europe/Sofia - see `docs/infrastructure/scaleway-production.md`), and
+ * every other caller (login-triggered sync, the manual Refresh action, and
+ * now Dashboard/Market's own background recovery check) shares this exact
+ * same 5-minute threshold and goes through this exact same check (no
+ * special-cased `force` for any of them) - so a caller that runs within 5
+ * minutes of any other real sync is simply skipped as already fresh,
+ * regardless of which of these triggered it.
  */
 export const FUSIONSOLAR_SYNC_FRESHNESS_MS = 5 * 60 * 1000;
 
