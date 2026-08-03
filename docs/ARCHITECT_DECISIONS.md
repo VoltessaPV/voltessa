@@ -1059,3 +1059,70 @@ in `TraderAssignment`'s shape and this milestone's own review conversation, not 
   assignment) remains explicitly out of scope — M6, per ADR-015 — and this ADR's "Energy Traders
   cannot assign themselves" rule must be revisited explicitly, not silently relaxed, whenever that
   milestone is scoped.
+
+## ADR-017: Live Telemetry Synchronization Redesign — 15-minute scheduler + database-first background recovery
+
+### Status
+
+Accepted (Live Telemetry Synchronization Redesign milestone, immediate follow-up to ADR-011/ADR-012).
+
+### Context
+
+Real production investigation (2026-08-03) found `voltessa-telemetry-ingestion.timer`'s actual
+`OnCalendar` had drifted to hourly (06:00-22:00 Europe/Sofia, plus a 23:58 close) while
+`docs/infrastructure/scaleway-production.md` still documented `*:0/5` (every 5 minutes) — the two
+had been out of sync for an unknown period. Because ADR-012 removed Dashboard/Market's own
+freshness check entirely (not just its blocking behavior), the scheduler was the *only* thing that
+could ever refresh telemetry, with no independent backstop. Combined, these two facts fully
+explained a real incident: Dashboard/Market showing telemetry up to ~60 minutes stale under normal
+operation, worst-case right before the next hourly tick — confirmed with real `SchedulerRun`/
+`HuaweiRequestLog`/`DeviceTelemetry` evidence, not simulated.
+
+A separate investigation (also 2026-08-03) confirmed, both from Huawei's own documented contract
+and from real production testing already on file (`docs/research/telemetry-platform-foundation.md`
+§3: the `devDn`/`startTime`/`endTime` shape of `getDevFiveMinutes` fails with `failCode 20011` on
+this tenant), that no Huawei endpoint can return less than a full calendar day of 5-minute samples
+per call. Shrinking the *requested window* therefore cannot reduce Huawei-side sync cost — the only
+lever available is *how often* the existing full-day pull runs, and *whether Dashboard/Market can
+recover independently* when it doesn't run often enough.
+
+### Decision
+
+1. **Scheduler cadence**: `voltessa-telemetry-ingestion.timer` changed from hourly (06:00-22:00,
+   plus a 23:58 close) to every 15 minutes, daily 06:00-22:00 Europe/Sofia
+   (`OnCalendar=*-*-* 06..21:0/15:00 Europe/Sofia` + `OnCalendar=*-*-* 22:00:00 Europe/Sofia`). The
+   23:58 close-of-day run is dropped — the 22:00-06:00 gap it partially covered is now the same kind
+   of gap the background recovery mechanism below already exists to handle, so a separate
+   special-cased tick is no longer needed. This remains the **primary** synchronization mechanism;
+   nothing about `importDeviceTelemetry`/`synchronizeFusionSolarConnection`'s own logic changed.
+2. **Dashboard/Market background recovery**: both pages now call
+   `ensureTelemetryFresh(organizationId, { mode: "background", onSettled:
+   revalidateTelemetryPagesIfSynced })` immediately after resolving `organizationId` — the exact
+   same function, same non-blocking `after()` mechanism, and same `onSettled` revalidation wiring
+   Settings/Automations/Alerts/Plants have used since before ADR-011/012 (reused, not
+   reimplemented). This is **not** a reversal of ADR-012: the call is non-blocking by construction
+   (registering an `after()` continuation costs one fast Prisma lookup; the real sync, if any, only
+   ever runs after the response has already been sent) and is a no-op whenever
+   `FUSIONSOLAR_SYNC_FRESHNESS_MS` (5 minutes, unchanged) hasn't elapsed since the last real sync —
+   which, given the scheduler's own 15-minute cadence, is true most of the time. It exists
+   specifically as a recovery path for when the scheduler itself missed a cycle (VM/gateway/Huawei/
+   network outage) — not as the normal freshness mechanism.
+3. **Database-first rule reaffirmed**: Dashboard/Market rendering (`getDashboardPageData`/
+   `getMarketPageData`/`getProductionPageData`) still never calls Huawei or ENTSO-E directly and
+   never awaits a sync — unchanged from ADR-011. Huawei may only be reached by: the scheduler, the
+   background recovery call above (via the identical `synchronizeFusionSolarConnection` path), or
+   an explicit Platform Admin historical import (`importHistoricalRange`) — no other code path.
+
+### Consequences
+
+- Worst-case scheduler-driven staleness drops from ~60 minutes to ~15 minutes during 06:00-22:00
+  Europe/Sofia; outside that window, staleness is bounded only by when someone next opens Dashboard
+  or Market (the background recovery call), not by a fixed scheduled tick.
+- Dashboard/Market page-load latency is unaffected: the added call is registered, not awaited to
+  completion, exactly like every existing background-mode caller — confirmed by lint/typecheck/build
+  passing with no new blocking `await` on Huawei anywhere in either page's render path.
+- `docs/infrastructure/scaleway-production.md` is the authoritative record of the exact
+  `OnCalendar` expression in production; this ADR does not repeat it verbatim to avoid a second,
+  driftable copy — see that document's "Systemd Timers" section instead.
+- The four other `mode: "background"` callers (Settings/Automations/Alerts/Plants) are unaffected —
+  same shared function, same freshness/lease semantics, no special-casing added for Dashboard/Market.

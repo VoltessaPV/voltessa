@@ -9,17 +9,19 @@ import type { TelemetryFreshnessResult } from "@/lib/fusionsolar/telemetry-sync-
  * of performing this itself (see its own doc comment - cache invalidation
  * is a UI concern, not a synchronization concern).
  *
- * Used only by `mode: "background"` callers (Settings/Automations/Alerts/
- * Plants), via `onSettled` - by the time a background sync completes, the
- * request that triggered it has long since finished, so this is the only
- * remaining way to react to it. Dashboard/Market's own `mode: "blocking"`
- * calls don't use this: both routes are fully dynamic (never in the Full
- * Route Cache) with no client-side `staleTimes` override, so their own
- * data-loading already reads live database state without any invalidation
- * - see their page.tsx's own comment on this. If a future blocking caller
- * ever needs this, remember `revalidatePath` can't run directly during a
+ * Used by every `mode: "background"` caller (Settings/Automations/Alerts/
+ * Plants, and - since the Live Telemetry Synchronization Redesign
+ * milestone - Dashboard/Market too), via `onSettled` - by the time a
+ * background sync completes, the request that triggered it has long since
+ * finished, so this is the only remaining way to react to it. Dashboard/
+ * Market are already fully dynamic (never in the Full Route Cache) with no
+ * client-side `staleTimes` override, so a plain reload always reads live
+ * database state regardless; this revalidation just means an already-open
+ * tab's next navigation reflects a just-recovered sync without the user
+ * needing to hard-refresh. `revalidatePath` can't run directly during a
  * Server Component's own render - only from a Server Action, Route
- * Handler, or an `after()` continuation.
+ * Handler, or (as here) an `after()` continuation, which is why this is
+ * plumbed through `onSettled` rather than called inline.
  */
 export function revalidateTelemetryPagesIfSynced(result: TelemetryFreshnessResult): void {
   if (result === "synced") {
