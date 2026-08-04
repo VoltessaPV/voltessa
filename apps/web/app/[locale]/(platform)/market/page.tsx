@@ -413,9 +413,32 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     tTerm,
   );
 
-  const revenue: RevenueSummary = data.dataAvailable
+  const meterRevenue: RevenueSummary = data.dataAvailable
     ? computeExportRevenue(data.series, production.settlementEnergySeries)
     : { available: false };
+
+  // Existing-Data Completeness milestone: a plant with no real meter has
+  // no settlement-energy series to derive export revenue from, so
+  // `meterRevenue` above is always unavailable for it. Falls back to the
+  // exact same `computeExportRevenue` function, fed real measured
+  // production (`production.productionEnergySeries`) instead of real
+  // measured export — never estimated, just a different real measurement
+  // priced the same way. A plant with a real meter (Atlanta) always
+  // resolves `meterRevenue` successfully and never reaches this fallback.
+  const productionRevenue: RevenueSummary =
+    !meterRevenue.available && data.dataAvailable
+      ? computeExportRevenue(
+          data.series,
+          production.productionEnergySeries.map((point) => ({
+            intervalStart: point.intervalStart,
+            exportedKwh: point.producedKwh,
+            importedKwh: null,
+          })),
+        )
+      : { available: false };
+
+  const revenue: RevenueSummary = meterRevenue.available ? meterRevenue : productionRevenue;
+  const revenueFromProduction = !meterRevenue.available && productionRevenue.available;
   const revenueEyebrow =
     data.dataAvailable && data.isToday ? t("summary.revenueToday") : t("summary.revenue");
 
@@ -537,7 +560,13 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                 revenue.available
                   ? [
                       {
-                        label: data.isToday ? tSummary("exportedToday") : tSummary("exported"),
+                        label: revenueFromProduction
+                          ? data.isToday
+                            ? tSummary("producedToday")
+                            : tSummary("produced")
+                          : data.isToday
+                            ? tSummary("exportedToday")
+                            : tSummary("exported"),
                         value: `${revenue.exportedKwh.toFixed(2)} kWh`,
                       },
                       {

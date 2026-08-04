@@ -32,6 +32,8 @@
     "fusionSolarMeterUnavailable": "FusionSolar meter data unavailable",
     "exportedToday": "Exported today",
     "exported": "Exported",
+    "producedToday": "Produced today",
+    "produced": "Produced",
     "averageSellingPrice": "Average selling price",
     "vsLastWeek": "vs last week",
     "vsLastMonth": "vs last month",
