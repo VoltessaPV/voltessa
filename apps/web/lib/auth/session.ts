@@ -5,6 +5,7 @@ import { forbidden, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
+import { resolveActiveImpersonation } from "./impersonation";
 import { resolveTraderOnboardingStage } from "./trader-onboarding";
 import type { Role } from "./roles";
 
@@ -32,42 +33,36 @@ export type CurrentUserWithOrganization = CurrentUser & {
   organization: CurrentOrganization;
 };
 
-async function findCurrentUserByEmail(
-  email: string,
-): Promise<CurrentUser | null> {
-  const user = await prisma.user.findUnique({
-    where: {
-      email,
-      // Platform Administration milestone. A deactivated or soft-deleted
-      // user must not authenticate - this is the one query behind
-      // getCurrentUser(), so every gate below (requireCurrentUser,
-      // requireOnboardedUser, requirePermission, requirePlatformAdmin)
-      // inherits this for free. This is what cuts off an ALREADY-active
-      // session the moment an admin deactivates/deletes someone - the
-      // sign-in-time checks in lib/auth/config.ts and app/login/actions.ts
-      // only stop a NEW login, they don't touch an existing Session row.
-      deletedAt: null,
-      deactivatedAt: null,
-    },
+const CURRENT_USER_SELECT = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  isPlatformAdmin: true,
+  accountType: true,
+  organizationId: true,
+  organization: {
     select: {
       id: true,
       name: true,
-      email: true,
-      role: true,
-      isPlatformAdmin: true,
-      accountType: true,
-      organizationId: true,
-      organization: {
-        select: {
-          id: true,
-          name: true,
-          onboardingCompletedAt: true,
-        },
-      },
+      onboardingCompletedAt: true,
     },
-  });
+  },
+} as const;
 
-  if (!user?.email) {
+type CurrentUserRow = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: Role;
+  isPlatformAdmin: boolean;
+  accountType: AccountType;
+  organizationId: string | null;
+  organization: CurrentOrganization | null;
+};
+
+function toCurrentUser(user: CurrentUserRow): CurrentUser | null {
+  if (!user.email) {
     return null;
   }
 
@@ -83,11 +78,68 @@ async function findCurrentUserByEmail(
   };
 }
 
+/**
+ * Platform Administration milestone. A deactivated or soft-deleted user must
+ * not authenticate - this same `deletedAt`/`deactivatedAt` filter backs both
+ * lookups below, so every gate built on `getCurrentUser()` (requireCurrentUser,
+ * requireOnboardedUser, requirePermission, requirePlatformAdmin) inherits it
+ * for free, for the real admin AND for an impersonated target alike. This is
+ * what cuts off an ALREADY-active session the moment an admin deactivates/
+ * deletes someone - the sign-in-time checks in lib/auth/config.ts and
+ * app/login/actions.ts only stop a NEW login, they don't touch an existing
+ * Session row.
+ */
+async function findCurrentUserByEmail(email: string): Promise<CurrentUser | null> {
+  const user = await prisma.user.findUnique({
+    where: { email, deletedAt: null, deactivatedAt: null },
+    select: CURRENT_USER_SELECT,
+  });
+
+  return user ? toCurrentUser(user) : null;
+}
+
+/**
+ * Impersonation milestone counterpart to `findCurrentUserByEmail` - same
+ * select shape, same active-account filter, looked up by id since the
+ * impersonation target is resolved from `ImpersonationSession.targetUserId`,
+ * not an email. If the target has since been deactivated/deleted this
+ * returns null, and `getCurrentUser()` below simply falls back to the real
+ * admin's own identity rather than failing the request entirely.
+ */
+async function findCurrentUserById(id: string): Promise<CurrentUser | null> {
+  const user = await prisma.user.findUnique({
+    where: { id, deletedAt: null, deactivatedAt: null },
+    select: CURRENT_USER_SELECT,
+  });
+
+  return user ? toCurrentUser(user) : null;
+}
+
+/**
+ * Multi-Tenant Audit + Impersonation milestone. The single tenant/identity
+ * resolution choke point - every exported function in this file is built on
+ * top of this one, so this is the only place impersonation needed to be
+ * wired in for every page/Server Action/query in the app to inherit it
+ * automatically, with zero per-page changes. See
+ * `lib/auth/impersonation.ts`'s `resolveActiveImpersonation` for the actual
+ * validation (bound to the real admin's own live session, never a
+ * standalone expiry). No page or Server Action downstream of this function
+ * can tell whether the returned `CurrentUser` is the real signed-in user or
+ * an impersonated one - that's the point.
+ */
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const session = await auth();
 
   if (!session?.user?.email) {
     return null;
+  }
+
+  const impersonation = await resolveActiveImpersonation();
+  if (impersonation) {
+    const target = await findCurrentUserById(impersonation.targetUserId);
+    if (target) {
+      return target;
+    }
   }
 
   return findCurrentUserByEmail(session.user.email);
@@ -270,9 +322,7 @@ export type OrganizationViewAccess = {
  * than plain ownership - reusing this helper's `requireOnboardedUser()`
  * fallback there would silently downgrade that check. Automations builds
  * the same `{ organizationId, readOnly }` shape itself, from its own
- * explicit branch, instead (see that page). Also deliberately NOT used by
- * Dashboard, which is portfolio-level for a trader and never resolves a
- * single "current" organization to render.
+ * explicit branch, instead (see that page).
  */
 export async function resolveOrganizationViewAccess(): Promise<OrganizationViewAccess> {
   const identity = await requireCurrentUser();

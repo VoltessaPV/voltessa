@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
-import { softDeleteUser, toggleUserActive, updateTraderProfile } from "../../actions";
+import { softDeleteUser, startImpersonation, toggleUserActive, updateTraderProfile } from "../../actions";
 import {
   getEnergyTraderById,
   isLastActivePlatformAdmin,
@@ -74,6 +74,17 @@ export default async function AdminTraderDetailPage({ params, searchParams }: Pr
 
         {(trader.deactivatedAt || canDeactivateOrDelete) && (
           <div className="flex flex-wrap gap-2">
+            {!isSelf && !trader.deactivatedAt && (
+              <form action={startImpersonation.bind(null, trader.id)}>
+                <button
+                  type="submit"
+                  className="rounded-xl border border-white/15 px-4 py-2 font-medium text-white/70 transition hover:bg-white/10"
+                >
+                  Impersonate
+                </button>
+              </form>
+            )}
+
             <form action={toggleActiveAction}>
               <button
                 type="submit"

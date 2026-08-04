@@ -1,10 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { createAuditLog } from "@/lib/admin/audit-log";
 import { getUserPurgeEligibility, isLastActivePlatformAdmin } from "@/lib/admin/queries";
+import { getAuthSessionCookieName } from "@/lib/auth/create-session";
+import {
+  clearImpersonationCookie,
+  readImpersonationToken,
+  setImpersonationCookie,
+} from "@/lib/auth/impersonation";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 import { getBulgarianDistributionOperators } from "@/lib/market/distribution/bg";
 import { prisma } from "@/lib/prisma";
@@ -431,4 +438,101 @@ export async function purgeUser(userId: string) {
     revalidatePath(`/admin/plant-owners/${organizationId}`);
     revalidatePath("/admin/plant-owners");
   }
+}
+
+/**
+ * Multi-Tenant Audit + Impersonation milestone. "Become the customer" -
+ * everything downstream resolves the impersonated identity through the
+ * exact same `getCurrentUser()` every ordinary request already uses (see
+ * `lib/auth/session.ts`), so this action's only job is to create the
+ * `ImpersonationSession` row and set the cookie that function reads. No
+ * stacking: any impersonation this admin already has active is ended first,
+ * so an admin can never end up "inside" two overlapping sessions.
+ * `adminSessionToken` binds this row to the admin's own real, current
+ * NextAuth session cookie - see `resolveActiveImpersonation`'s doc comment
+ * for why that's what actually terminates impersonation automatically on
+ * sign-out/expiry, not a separate expiry field on this row.
+ */
+export async function startImpersonation(targetUserId: string) {
+  const admin = await requirePlatformAdmin();
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId, deletedAt: null, deactivatedAt: null },
+    select: { id: true },
+  });
+  if (!target) {
+    return;
+  }
+
+  const cookieStore = await cookies();
+  const adminSessionToken = cookieStore.get(getAuthSessionCookieName())?.value;
+  if (!adminSessionToken) {
+    return;
+  }
+
+  const headerList = await headers();
+
+  await prisma.impersonationSession.updateMany({
+    where: { adminUserId: admin.id, endedAt: null },
+    data: { endedAt: new Date() },
+  });
+
+  const token = crypto.randomUUID();
+  await prisma.impersonationSession.create({
+    data: {
+      token,
+      adminUserId: admin.id,
+      adminSessionToken,
+      targetUserId,
+      adminIp: headerList.get("x-forwarded-for"),
+      adminUserAgent: headerList.get("user-agent"),
+    },
+  });
+
+  await setImpersonationCookie(token);
+
+  await createAuditLog({
+    actorUserId: admin.id,
+    targetUserId,
+    action: "impersonation_started",
+  });
+
+  redirect("/dashboard");
+}
+
+/**
+ * Deliberately does NOT call `requirePlatformAdmin()` - by the time this
+ * runs, `getCurrentUser()` (and therefore that check) would resolve to the
+ * IMPERSONATED identity, not the real admin's, since impersonation is still
+ * active. The only way this action can ever have anything to end is if
+ * `startImpersonation` (itself `requirePlatformAdmin()`-gated) created the
+ * row in the first place, so no separate authorization check is needed here.
+ */
+export async function stopImpersonation() {
+  const token = await readImpersonationToken();
+  await clearImpersonationCookie();
+
+  if (!token) {
+    redirect("/admin");
+  }
+
+  const record = await prisma.impersonationSession.findUnique({
+    where: { token },
+    select: { id: true, adminUserId: true, targetUserId: true, endedAt: true },
+  });
+
+  if (record && !record.endedAt) {
+    await prisma.impersonationSession.update({
+      where: { id: record.id },
+      data: { endedAt: new Date() },
+    });
+
+    await createAuditLog({
+      actorUserId: record.adminUserId,
+      targetUserId: record.targetUserId,
+      action: "impersonation_ended",
+    });
+  }
+
+  redirect("/admin");
 }

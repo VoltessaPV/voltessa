@@ -35,15 +35,24 @@ export async function createDatabaseSession(userId: string): Promise<void> {
 
   await adapter.createSession!({ sessionToken, userId, expires });
 
-  const useSecureCookies = process.env.NODE_ENV === "production";
-  const cookieName = `${useSecureCookies ? "__Secure-" : ""}authjs.session-token`;
-
   const cookieStore = await cookies();
-  cookieStore.set(cookieName, sessionToken, {
+  cookieStore.set(getAuthSessionCookieName(), sessionToken, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
-    secure: useSecureCookies,
+    secure: process.env.NODE_ENV === "production",
     expires,
   });
+}
+
+/**
+ * The exact NextAuth v5 database-session cookie name this app's requests
+ * carry — verified against `@auth/core`'s `defaultCookies()`, see this
+ * file's own doc comment above. Exported so `lib/auth/impersonation.ts` can
+ * read the real admin's own session token off the request without
+ * duplicating this derivation a second time.
+ */
+export function getAuthSessionCookieName(): string {
+  const useSecureCookies = process.env.NODE_ENV === "production";
+  return `${useSecureCookies ? "__Secure-" : ""}authjs.session-token`;
 }

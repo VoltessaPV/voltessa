@@ -24,7 +24,9 @@ export type AdminAuditActionType =
   | "trader_profile_updated"
   | "trader_assigned"
   | "trader_changed"
-  | "trader_removed";
+  | "trader_removed"
+  | "impersonation_started"
+  | "impersonation_ended";
 
 export type CreateAuditLogInput = {
   actorUserId: string;
