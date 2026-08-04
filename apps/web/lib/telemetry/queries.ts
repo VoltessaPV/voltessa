@@ -81,7 +81,7 @@ export async function getLatestTelemetryTimestamp(
   return row?.timestamp ?? null;
 }
 
-/** Row shape for `getLatestMeterTelemetry` — only field its one caller (`deriveGridReadings`) reads. */
+/** Row shape for `getLatestMeterTelemetry` — only field its one caller (`lib/telemetry/canonical.ts`'s `getCurrentGridReadings`) reads. */
 export type LatestMeterRow = {
   meterActivePower: Prisma.Decimal | null;
 };
@@ -96,7 +96,7 @@ export async function getLatestMeterTelemetry(
   });
 }
 
-/** Row shape for `getLatestInverterTelemetryForDevices` — only fields its callers (`sumInverterProduction`, Dashboard's inverter-status builder) read. */
+/** Row shape for `getLatestInverterTelemetryForDevices` — only fields its callers (`lib/telemetry/canonical.ts`'s `getCurrentProduction`, Dashboard's inverter-status builder) read. */
 export type LatestInverterRow = {
   deviceId: string;
   activePower: Prisma.Decimal | null;
