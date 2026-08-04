@@ -89,6 +89,7 @@ import {
   type ProductionEnergyPoint,
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
+import { getPlantDailyKpiRange } from "@/lib/telemetry/plant-daily-kpi";
 import {
   getLatestInverterTelemetryForDevices,
   getLatestMeterTelemetry,
@@ -138,6 +139,22 @@ export type ProductionPageData = {
    * data and never reaches this fallback.
    */
   productionEnergySeries: ProductionEnergyPoint[];
+  /**
+   * Canonical Telemetry Architecture milestone. The manufacturer-reported
+   * produced energy for the *selected* period — `PlantDailyKpi.pvYieldKwh`
+   * summed via `getPlantDailyKpiRange`, the EXACT SAME function and field
+   * `dashboard-data.ts` reads for its own "Yield Today"/"Total Yield" KPIs.
+   * Huawei already reports this total directly (`getStationRealKpi`'s
+   * `day_power` / `getKpiStationDay`'s `PVYield`) — Voltessa must not
+   * recompute an alternative total from raw telemetry when the
+   * manufacturer already provides one. `page.tsx` displays this value
+   * (never `revenue.exportedKwh`, the settlement-block sum) as the
+   * "Produced" row whenever Revenue falls back to the production-based
+   * calculation, so Market and Dashboard always show the identical
+   * number for the identical plant/period. `null` only when no
+   * `PlantDailyKpi` row exists yet for the selected period.
+   */
+  canonicalProducedKwh: number | null;
   /**
    * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The
    * same shape as `settlementEnergySeries`, but for the previous calendar
@@ -296,6 +313,7 @@ export async function getProductionPageData(
       ),
       settlementEnergySeries: [],
       productionEnergySeries: [],
+      canonicalProducedKwh: null,
       installedCapacityKw,
       latestTelemetryAt: null,
     };
@@ -306,10 +324,11 @@ export async function getProductionPageData(
   // results — both were previously fetched as two separate sequential
   // `Promise.all` groups; merged into one, gated the same way each
   // branch already was (Category A only for `isToday`, unchanged).
-  const [series, productionSeries, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
+  const [series, productionSeries, dailyKpiRange, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
     await Promise.all([
       getPlantSettlementEnergySeries(context.plant.id, periodStart, seriesEnd),
       getPlantProductionEnergySeries(context.plant.id, periodStart, seriesEnd),
+      getPlantDailyKpiRange(context.plant.id, periodStart, periodEnd),
       getLatestTelemetryTimestamp(context.plant.id),
       isToday
         ? preloaded
@@ -344,6 +363,7 @@ export async function getProductionPageData(
 
   const settlementEnergySeries = series;
   const productionEnergySeries = productionSeries;
+  const canonicalProducedKwh = dailyKpiRange.available ? dailyKpiRange.producedKwh : null;
   const latestTelemetryAt = latestTimestamp;
 
   // Category A — "current" state, database-only (Database-First Telemetry
@@ -361,6 +381,7 @@ export async function getProductionPageData(
       ),
       settlementEnergySeries,
       productionEnergySeries,
+      canonicalProducedKwh,
       previousPeriodSettlementEnergySeries: previousPeriodSeries,
       installedCapacityKw,
       latestTelemetryAt,
@@ -368,7 +389,21 @@ export async function getProductionPageData(
   }
 
   const currentProduction = sumInverterProduction(inverterRows);
-  const { currentExport, currentImport } = deriveGridReadings(meterRow);
+  const meterGridReadings = deriveGridReadings(meterRow);
+
+  // Canonical Telemetry Architecture milestone — business rule, not a new
+  // telemetry source: a plant with no real meter reading has no
+  // independently measured export, but its own real current production
+  // (already computed above) is a genuine physical measurement. For a
+  // Producer, everything produced is exported by definition, so export
+  // can honestly be reported as equal to production. `currentImport`
+  // deliberately has NO equivalent fallback — a Producer never imports,
+  // and there is no real reading to substitute for one either way, so it
+  // stays exactly as unavailable as `deriveGridReadings` already reports.
+  const currentExport = meterGridReadings.currentExport.available
+    ? meterGridReadings.currentExport
+    : currentProduction;
+  const currentImport = meterGridReadings.currentImport;
 
   return {
     currentProduction,
@@ -380,6 +415,7 @@ export async function getProductionPageData(
     ),
     settlementEnergySeries,
     productionEnergySeries,
+    canonicalProducedKwh,
     installedCapacityKw,
     latestTelemetryAt,
   };
