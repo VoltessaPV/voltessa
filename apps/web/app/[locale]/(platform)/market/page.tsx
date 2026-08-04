@@ -517,6 +517,24 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
   const nowAnnotation =
     nowAnnotationParts.length > 0 ? nowAnnotationParts.join(" · ") : undefined;
 
+  // Canonical Telemetry Architecture milestone: the Price & Export chart
+  // visualizes real historical telemetry - it must never invent its own
+  // production total. It reuses the exact same real 15-minute blocks
+  // already computed for Revenue (`production.productionEnergySeries`)
+  // whenever the meter-based series has no real data, the same fallback
+  // Revenue itself already applies. A plant with a real meter (Atlanta)
+  // always has real settlement data and never reaches this fallback.
+  const hasMeterSettlementData = production.settlementEnergySeries.some(
+    (point) => point.exportedKwh !== null,
+  );
+  const chartSettlementSeries: SettlementEnergyPoint[] = hasMeterSettlementData
+    ? production.settlementEnergySeries
+    : production.productionEnergySeries.map((point) => ({
+        intervalStart: point.intervalStart,
+        exportedKwh: point.producedKwh,
+        importedKwh: null,
+      }));
+
   return (
     <PageContainer className="space-y-3">
       <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start">
@@ -567,7 +585,22 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                           : data.isToday
                             ? tSummary("exportedToday")
                             : tSummary("exported"),
-                        value: `${revenue.exportedKwh.toFixed(2)} kWh`,
+                        // Canonical Telemetry Architecture milestone: when
+                        // Revenue falls back to the production-based
+                        // calculation, the displayed kWh is the manufacturer-
+                        // reported canonical total (`PlantDailyKpi.pvYieldKwh`,
+                        // the exact same value Dashboard's own Yield Today/
+                        // Total Yield read) - never the sum of only the
+                        // settlement blocks that happened to have a matching
+                        // price, which is a different (and always slightly
+                        // smaller-or-equal) number. The EUR revenue figure
+                        // itself is untouched - it still needs the real
+                        // 15-minute blocks to price production against the
+                        // price that applied at the time it happened.
+                        value:
+                          revenueFromProduction && production.canonicalProducedKwh !== null
+                            ? `${production.canonicalProducedKwh.toFixed(2)} kWh`
+                            : `${revenue.exportedKwh.toFixed(2)} kWh`,
                       },
                       {
                         label: tSummary("averageSellingPrice"),
@@ -650,7 +683,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                   series={
                     period === "today"
                       ? data.series
-                      : buildAspChartSeries(period, data.series, production.settlementEnergySeries)
+                      : buildAspChartSeries(period, data.series, chartSettlementSeries)
                   }
                   thresholdPrice={data.threshold.minimumExportPrice}
                   // Export Threshold is an operational, today-only concept —
@@ -677,11 +710,11 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                   // rather than serialized into this prop for nothing.
                   settlementEnergySeries={
                     period === "today"
-                      ? production.settlementEnergySeries.map(({ intervalStart, exportedKwh }) => ({
+                      ? chartSettlementSeries.map(({ intervalStart, exportedKwh }) => ({
                           intervalStart,
                           exportedKwh,
                         }))
-                      : bucketSettlementForChart(period, production.settlementEnergySeries)
+                      : bucketSettlementForChart(period, chartSettlementSeries)
                   }
                   installedCapacityKw={production.installedCapacityKw}
                 />
