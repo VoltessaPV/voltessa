@@ -44,14 +44,14 @@ type EnergyFlowDiagramProps = {
  * Every line is gated on the real magnitude it represents (`pvKw`/
  * `gridKw` > 0) — never shown active for a flow that isn't happening.
  *
- * Existing-Data Completeness milestone: a plant with no meter still has a
- * real `pvKw` reading (`flow.available && !flow.gridAvailable`) — the PV
- * trunk/branch render exactly as before, driven by the same `pvActive`
- * check; Load/Grid simply have no value to show (`"—"`, same fallback
- * `InvertersCard` already uses for a missing reading) and their branches/
- * particles stay inactive, since `exportingActive`/`importingActive` are
- * both `false` whenever there is no real grid reading. No new node, no
- * layout change — the diagram always has exactly these three nodes.
+ * Producer Topology milestone: a plant with no real meter
+ * (`flow.available && !flow.gridAvailable`) renders a genuinely different,
+ * two-node topology (PV -> Grid only, see the early return below) instead
+ * of the three-node PV/Load/Grid diagram above — there is no Load leg to
+ * show for a plant that has no way to measure one, and a dashed
+ * placeholder third node would misrepresent the plant's real topology, not
+ * just report a temporary gap. `pvKw` still renders its real value either
+ * way; Grid, when shown at all without a meter, always reads `"—"`.
  */
 export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const t = useTranslations("dashboard.energyFlow");
@@ -86,20 +86,7 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   // deliberately untouched, so the branch split point and Load/Grid never
   // move; the trunk is simply a little shorter as a result.
   const PV = { x: 50, y: 14 };
-  // The horizontal branches run at exactly this y (NODE_Y) and the
-  // Load-Grid line at LOWER_LINE_Y — both fixed, unchanged line geometry.
-  // `LOAD`/`GRID` (x, and NODE_Y for the branch endpoint) still drive the
-  // SVG paths directly, so the lines themselves never move. The rendered
-  // icon's vertical center is a separate value, `ICON_Y`: the exact
-  // midpoint between the two lines, so distance(branch -> icon) always
-  // equals distance(icon -> lower line) for both Load and Grid — the
-  // lines are never pulled to match the icon, only the icon centers
-  // between them.
   const NODE_Y = 50;
-  const LOWER_LINE_Y = NODE_Y + 3;
-  const ICON_Y = (NODE_Y + LOWER_LINE_Y) / 2;
-  const LOAD = { x: 28, y: NODE_Y };
-  const GRID = { x: 72, y: NODE_Y };
 
   const INACTIVE_STROKE = "rgba(255,255,255,0.12)";
   const INACTIVE_DASH = "2 2";
@@ -110,7 +97,90 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const PARTICLE_DURATION = "3.2s";
   const PARTICLE_DELAYS = [0, 1, 2];
 
+  const toTopPercent = (y: number) => `${(y / VIEWBOX_HEIGHT) * 100}%`;
+
   const pvActive = pvKw > 0;
+  const pvColor = pvActive ? "#34d399" : INACTIVE_STROKE;
+
+  // Producer Topology milestone: a plant with no real meter has no Load
+  // leg to show at all — a fabricated or placeholder third node would
+  // misrepresent the plant's real topology, not just its current
+  // availability. Two nodes only (PV -> Grid), a single straight trunk,
+  // never the three-node Load/Grid split below. Grid still renders (the
+  // plant does physically connect to the grid) but its value stays "—" —
+  // there is no real reading to show, never a fabricated one.
+  if (!grid) {
+    const trunkPath = `M${PV.x},${PV.y + 6} L${PV.x},${NODE_Y}`;
+
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3">
+        <div
+          className="relative mx-auto mt-3 w-full max-w-full"
+          style={{ aspectRatio: `100 / ${VIEWBOX_HEIGHT}`, height: "100%", maxHeight: 340 }}
+        >
+          <svg
+            viewBox={`0 0 100 ${VIEWBOX_HEIGHT}`}
+            preserveAspectRatio="none"
+            className="absolute inset-0 h-full w-full"
+            aria-hidden
+          >
+            <path
+              d={trunkPath}
+              stroke={pvColor}
+              strokeWidth={pvActive ? 0.6 : 0.4}
+              fill="none"
+              strokeDasharray={pvActive ? undefined : INACTIVE_DASH}
+            />
+
+            {pvActive &&
+              PARTICLE_DELAYS.map((delay) => (
+                <circle
+                  key={`pv-grid-${delay}`}
+                  r={0.9}
+                  fill="#6ee7b7"
+                  className="voltessa-flow-particle"
+                  style={{
+                    offsetPath: `path('${trunkPath}')`,
+                    animationDelay: `${delay}s`,
+                    animationDuration: PARTICLE_DURATION,
+                  }}
+                />
+              ))}
+          </svg>
+
+          <FlowNode
+            icon={<SolarPanelIcon className="h-[31px] w-[31px] text-emerald-300/90" />}
+            label={t("pvLabel")}
+            value={`${pvKw.toFixed(1)} kW`}
+            layout="labelValueIcon"
+            style={{ left: `${PV.x}%`, top: toTopPercent(PV.y) }}
+          />
+
+          <FlowNode
+            icon={<TransmissionTowerIcon className="h-[31px] w-[31px] text-cyan-300/90" />}
+            label={t("gridLabel")}
+            value="—"
+            style={{ left: `${PV.x}%`, top: toTopPercent(NODE_Y) }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // The horizontal branches run at exactly this y (NODE_Y) and the
+  // Load-Grid line at LOWER_LINE_Y — both fixed, unchanged line geometry.
+  // `LOAD`/`GRID` (x, and NODE_Y for the branch endpoint) still drive the
+  // SVG paths directly, so the lines themselves never move. The rendered
+  // icon's vertical center is a separate value, `ICON_Y`: the exact
+  // midpoint between the two lines, so distance(branch -> icon) always
+  // equals distance(icon -> lower line) for both Load and Grid — the
+  // lines are never pulled to match the icon, only the icon centers
+  // between them.
+  const LOWER_LINE_Y = NODE_Y + 3;
+  const ICON_Y = (NODE_Y + LOWER_LINE_Y) / 2;
+  const LOAD = { x: 28, y: NODE_Y };
+  const GRID = { x: 72, y: NODE_Y };
+
   const exportingActive = !importing && gridKw !== null && gridKw > 0;
   const importingActive = importing && gridKw !== null && gridKw > 0;
 
@@ -120,11 +190,8 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const gridBranchPath = `M${PV.x + 1.4},${NODE_Y} L${GRID.x},${NODE_Y}`;
   const lowerLinePath = `M${GRID.x},${LOWER_LINE_Y} L${LOAD.x},${LOWER_LINE_Y}`;
 
-  const pvColor = pvActive ? "#34d399" : INACTIVE_STROKE;
   const gridBranchColor = exportingActive ? "#34d399" : INACTIVE_STROKE;
   const lowerLineColor = importingActive ? "#fb923c" : INACTIVE_STROKE;
-
-  const toTopPercent = (y: number) => `${(y / VIEWBOX_HEIGHT) * 100}%`;
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3">

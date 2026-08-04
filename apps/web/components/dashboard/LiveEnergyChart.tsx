@@ -145,6 +145,20 @@ export function LiveEnergyChart({
   xAxisUnit = "time",
 }: LiveEnergyChartProps) {
   const t = useTranslations("dashboard.liveEnergy");
+
+  // Producer Topology milestone: a plant with no real meter never has a
+  // real consumption/import/export reading at any timestamp, in any period
+  // — every point already has `null` for these three fields (see
+  // `dashboard-data.ts`'s `toEnergyFlowPoint`/`buildPeriodChartSeries`).
+  // Detected directly from the data already passed in, not a new prop:
+  // the chart becomes a plain real-time PV production widget for such a
+  // plant, instead of three permanently-empty lines/legend entries next to
+  // the one real line. A plant with a real meter (Atlanta) always has at
+  // least one real point for these fields and is completely unaffected.
+  const hasGridData = data.some(
+    (point) => point.consumptionKw !== null || point.gridImportKw !== null || point.gridExportKw !== null,
+  );
+
   const now = Date.now();
   const domainStart = data[0]?.time;
   const domainEnd = data[data.length - 1]?.time;
@@ -178,18 +192,22 @@ export function LiveEnergyChart({
           <span className="h-0.5 w-3 rounded-full bg-emerald-400" />
           {t("pvOutput")}
         </span>
-        <span className="flex items-center gap-1.5 text-slate-300">
-          <span className="h-0.5 w-3 rounded-full bg-amber-400" />
-          {t("totalConsumption")}
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-300">
-          <span className="h-0.5 w-3 rounded-full bg-orange-400" />
-          {t("importFromGrid")}
-        </span>
-        <span className="flex items-center gap-1.5 text-slate-300">
-          <span className="h-0.5 w-3 rounded-full bg-blue-400" />
-          {t("fedToGrid")}
-        </span>
+        {hasGridData && (
+          <>
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="h-0.5 w-3 rounded-full bg-amber-400" />
+              {t("totalConsumption")}
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="h-0.5 w-3 rounded-full bg-orange-400" />
+              {t("importFromGrid")}
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="h-0.5 w-3 rounded-full bg-blue-400" />
+              {t("fedToGrid")}
+            </span>
+          </>
+        )}
       </div>
 
       <div className="mt-2 min-h-0 flex-1">
@@ -226,18 +244,20 @@ export function LiveEnergyChart({
             />
           )}
 
-          <Line
-            yAxisId="power"
-            type="monotone"
-            dataKey="consumptionKw"
-            stroke="#fbbf24"
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 3.5 }}
-            connectNulls={false}
-            isAnimationActive
-            animationDuration={700}
-          />
+          {hasGridData && (
+            <Line
+              yAxisId="power"
+              type="monotone"
+              dataKey="consumptionKw"
+              stroke="#fbbf24"
+              strokeWidth={2}
+              dot={false}
+              activeDot={{ r: 3.5 }}
+              connectNulls={false}
+              isAnimationActive
+              animationDuration={700}
+            />
+          )}
           {/* Rendered after (so visually above) consumptionKw - see this
               file's own top doc comment: keeps the PV line visible when the
               two values are close, since later SVG siblings paint on top. */}
@@ -253,30 +273,34 @@ export function LiveEnergyChart({
             isAnimationActive
             animationDuration={700}
           />
-          <Line
-            yAxisId="power"
-            type="monotone"
-            dataKey="gridImportNegKw"
-            stroke="#fb923c"
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 3.5 }}
-            connectNulls={false}
-            isAnimationActive
-            animationDuration={700}
-          />
-          <Line
-            yAxisId="power"
-            type="monotone"
-            dataKey="gridExportKw"
-            stroke="#60a5fa"
-            strokeWidth={2}
-            dot={false}
-            activeDot={{ r: 3.5 }}
-            connectNulls={false}
-            isAnimationActive
-            animationDuration={700}
-          />
+          {hasGridData && (
+            <>
+              <Line
+                yAxisId="power"
+                type="monotone"
+                dataKey="gridImportNegKw"
+                stroke="#fb923c"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 3.5 }}
+                connectNulls={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+              <Line
+                yAxisId="power"
+                type="monotone"
+                dataKey="gridExportKw"
+                stroke="#60a5fa"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 3.5 }}
+                connectNulls={false}
+                isAnimationActive
+                animationDuration={700}
+              />
+            </>
+          )}
         </ChartFrame>
       </div>
     </div>
