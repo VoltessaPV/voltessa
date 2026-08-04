@@ -89,14 +89,16 @@ import {
   type ProductionEnergyPoint,
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
-import { getPlantDailyKpiRange } from "@/lib/telemetry/plant-daily-kpi";
 import {
+  getCurrentGridReadings,
+  getCurrentProduction,
+  getDailyTotals,
   getLatestInverterTelemetryForDevices,
   getLatestMeterTelemetry,
-  getLatestTelemetryTimestamp,
-  INVERTER_DEV_TYPE_ID,
+  type CanonicalReading,
   type LatestInverterRow,
-} from "@/lib/telemetry/queries";
+} from "@/lib/telemetry/canonical";
+import { getLatestTelemetryTimestamp, INVERTER_DEV_TYPE_ID } from "@/lib/telemetry/queries";
 import { resolvePlantContext, type PlantRenderContext } from "@/lib/telemetry/plant-context";
 
 /** Same Sofia local-day convention `market-data.ts` uses for the Market page's displayed day — duplicated intentionally, see this module's doc comment. */
@@ -106,14 +108,10 @@ function isValidDateString(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
-export type ProductionReading =
-  | { available: true; kw: number }
-  | { available: false; reason: string };
-
 export type ProductionPageData = {
-  currentProduction: ProductionReading;
-  currentExport: ProductionReading;
-  currentImport: ProductionReading;
+  currentProduction: CanonicalReading;
+  currentExport: CanonicalReading;
+  currentImport: CanonicalReading;
   configuredExportMode: ConfiguredExportControlMode;
   configuredExportModeLabel: { label: string; colorClass: string };
   /**
@@ -141,10 +139,11 @@ export type ProductionPageData = {
   productionEnergySeries: ProductionEnergyPoint[];
   /**
    * Canonical Telemetry Architecture milestone. The manufacturer-reported
-   * produced energy for the *selected* period — `PlantDailyKpi.pvYieldKwh`
-   * summed via `getPlantDailyKpiRange`, the EXACT SAME function and field
-   * `dashboard-data.ts` reads for its own "Yield Today"/"Total Yield" KPIs.
-   * Huawei already reports this total directly (`getStationRealKpi`'s
+   * daily production for the *selected* period, via
+   * `lib/telemetry/canonical.ts`'s `getDailyTotals` — the exact same
+   * canonical access layer `dashboard-data.ts` reads for its own "Yield
+   * Today"/"Total Yield" KPIs, never `PlantDailyKpi` directly. Huawei
+   * already reports this total directly (`getStationRealKpi`'s
    * `day_power` / `getKpiStationDay`'s `PVYield`) — Voltessa must not
    * recompute an alternative total from raw telemetry when the
    * manufacturer already provides one. `page.tsx` displays this value
@@ -152,9 +151,9 @@ export type ProductionPageData = {
    * "Produced" row whenever Revenue falls back to the production-based
    * calculation, so Market and Dashboard always show the identical
    * number for the identical plant/period. `null` only when no
-   * `PlantDailyKpi` row exists yet for the selected period.
+   * canonical daily record exists yet for the selected period.
    */
-  canonicalProducedKwh: number | null;
+  dailyProduction: number | null;
   /**
    * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The
    * same shape as `settlementEnergySeries`, but for the previous calendar
@@ -194,7 +193,7 @@ export type ProductionPageData = {
   latestTelemetryAt: Date | null;
 };
 
-const UNAVAILABLE_NO_TELEMETRY: ProductionReading = {
+const UNAVAILABLE_NO_TELEMETRY: CanonicalReading = {
   available: false,
   reason: "no_telemetry",
 };
@@ -211,40 +210,6 @@ const UNAVAILABLE_NO_CONNECTION_MODE: ConfiguredExportControlMode = {
   available: false,
   reason: "configuration_endpoint_failed",
 };
-
-/** Sum of every inverter's newest `activePower` sample — mirrors the former live `getInverterProductionKw`'s shape, sourced from `DeviceTelemetry` instead. */
-function sumInverterProduction(rows: LatestInverterRow[]): ProductionReading {
-  const readings = rows
-    .map((row) => (row.activePower !== null ? row.activePower.toNumber() : null))
-    .filter((kw): kw is number => kw !== null);
-
-  if (readings.length === 0) {
-    return UNAVAILABLE_NO_TELEMETRY;
-  }
-
-  const totalKw = Math.round(readings.reduce((sum, kw) => sum + kw, 0) * 100) / 100;
-
-  return { available: true, kw: totalKw };
-}
-
-/** Signed meter reading -> export/import pair — mirrors the former live `getMeterGridPowerKw`'s sign convention (negative = importing, positive = exporting), sourced from `DeviceTelemetry` instead. */
-function deriveGridReadings(
-  row: { meterActivePower: { toNumber(): number } | null } | null,
-): { currentExport: ProductionReading; currentImport: ProductionReading } {
-  if (!row || row.meterActivePower === null) {
-    return {
-      currentExport: UNAVAILABLE_NO_TELEMETRY,
-      currentImport: UNAVAILABLE_NO_TELEMETRY,
-    };
-  }
-
-  const kw = row.meterActivePower.toNumber();
-
-  return {
-    currentExport: kw > 0 ? { available: true, kw } : { available: true, kw: 0 },
-    currentImport: kw < 0 ? { available: true, kw: Math.abs(kw) } : { available: true, kw: 0 },
-  };
-}
 
 /**
  * Data Dashboard already resolved/fetched for the same request — passing
@@ -313,7 +278,7 @@ export async function getProductionPageData(
       ),
       settlementEnergySeries: [],
       productionEnergySeries: [],
-      canonicalProducedKwh: null,
+      dailyProduction: null,
       installedCapacityKw,
       latestTelemetryAt: null,
     };
@@ -324,11 +289,11 @@ export async function getProductionPageData(
   // results — both were previously fetched as two separate sequential
   // `Promise.all` groups; merged into one, gated the same way each
   // branch already was (Category A only for `isToday`, unchanged).
-  const [series, productionSeries, dailyKpiRange, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
+  const [series, productionSeries, dailyTotals, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
     await Promise.all([
       getPlantSettlementEnergySeries(context.plant.id, periodStart, seriesEnd),
       getPlantProductionEnergySeries(context.plant.id, periodStart, seriesEnd),
-      getPlantDailyKpiRange(context.plant.id, periodStart, periodEnd),
+      getDailyTotals(context.plant.id, periodStart, periodEnd),
       getLatestTelemetryTimestamp(context.plant.id),
       isToday
         ? preloaded
@@ -363,7 +328,7 @@ export async function getProductionPageData(
 
   const settlementEnergySeries = series;
   const productionEnergySeries = productionSeries;
-  const canonicalProducedKwh = dailyKpiRange.available ? dailyKpiRange.producedKwh : null;
+  const dailyProduction = dailyTotals.available ? dailyTotals.dailyProduction : null;
   const latestTelemetryAt = latestTimestamp;
 
   // Category A — "current" state, database-only (Database-First Telemetry
@@ -381,29 +346,15 @@ export async function getProductionPageData(
       ),
       settlementEnergySeries,
       productionEnergySeries,
-      canonicalProducedKwh,
+      dailyProduction,
       previousPeriodSettlementEnergySeries: previousPeriodSeries,
       installedCapacityKw,
       latestTelemetryAt,
     };
   }
 
-  const currentProduction = sumInverterProduction(inverterRows);
-  const meterGridReadings = deriveGridReadings(meterRow);
-
-  // Canonical Telemetry Architecture milestone — business rule, not a new
-  // telemetry source: a plant with no real meter reading has no
-  // independently measured export, but its own real current production
-  // (already computed above) is a genuine physical measurement. For a
-  // Producer, everything produced is exported by definition, so export
-  // can honestly be reported as equal to production. `currentImport`
-  // deliberately has NO equivalent fallback — a Producer never imports,
-  // and there is no real reading to substitute for one either way, so it
-  // stays exactly as unavailable as `deriveGridReadings` already reports.
-  const currentExport = meterGridReadings.currentExport.available
-    ? meterGridReadings.currentExport
-    : currentProduction;
-  const currentImport = meterGridReadings.currentImport;
+  const currentProduction = getCurrentProduction(inverterRows);
+  const { currentExport, currentImport } = getCurrentGridReadings(meterRow, currentProduction);
 
   return {
     currentProduction,
@@ -415,7 +366,7 @@ export async function getProductionPageData(
     ),
     settlementEnergySeries,
     productionEnergySeries,
-    canonicalProducedKwh,
+    dailyProduction,
     installedCapacityKw,
     latestTelemetryAt,
   };

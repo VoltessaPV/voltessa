@@ -115,14 +115,16 @@ import {
   INVERTER_DEV_TYPE_ID,
 } from "@/lib/telemetry/queries";
 import {
-  getPlantDailyKpiRange,
-  type PlantDailyKpiRangeDay,
-} from "@/lib/telemetry/plant-daily-kpi";
+  getDailyTotals,
+  latestLifetimeProduction,
+  type CanonicalDailyRecord,
+  type CanonicalReading,
+} from "@/lib/telemetry/canonical";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
 
 import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
-import { getProductionPageData, type ProductionReading } from "@/app/[locale]/(platform)/market/production-data";
+import { getProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
 
 /** Same Sofia local-day convention `market-data.ts` / `production-data.ts` use — see this module's top doc comment for why this is hardcoded here too, not read from `Plant.timezone`. */
 const BULGARIA_TIMEZONE = "Europe/Sofia";
@@ -139,7 +141,7 @@ const TELEMETRY_GRID_MINUTES = 5;
 
 export type DashboardKpis = {
   producedTodayKwh: number | null;
-  /** Lifetime PV yield (Huawei `total_power`) — see `getPlantDailyKpiRange`'s doc comment. Read off the *last* day within the selected period (for "today", that's today's own row) — `null` only when the field isn't present, never fabricated. */
+  /** Lifetime PV yield (Huawei `total_power`) — see `lib/telemetry/canonical.ts`'s `getDailyTotals` doc comment. Read off the *last* day within the selected period (for "today", that's today's own row) — `null` only when the field isn't present, never fabricated. */
   totalYieldKwh: number | null;
   consumedTodayKwh: number | null;
   /**
@@ -345,7 +347,8 @@ function bucketKey(instant: Date, granularity: "day" | "month"): string {
  * Today, so `LiveEnergyChart` needs no new data contract, only a `chartUnit`
  * label to say these are kWh totals per bucket, not kW instantaneous
  * readings (see `DashboardPageData.chartUnit`). Produced/Consumed come from
- * `PlantDailyKpi` (already one row per day — `getPlantDailyKpiRange`);
+ * canonical daily production/consumption (`lib/telemetry/canonical.ts`'s
+ * `getDailyTotals`, backed by `PlantDailyKpi` — already one row per day);
  * Exported/Imported come from `production.settlementEnergySeries`, already
  * fetched at native 15-minute resolution for the whole period (needed for
  * the revenue calculation regardless), summed per bucket here rather than
@@ -355,7 +358,7 @@ function bucketKey(instant: Date, granularity: "day" | "month"): string {
  */
 function buildPeriodChartSeries(
   period: "week" | "month" | "year",
-  dailyKpiDays: PlantDailyKpiRangeDay[],
+  dailyRecords: CanonicalDailyRecord[],
   settlementSeries: SettlementEnergyPoint[],
 ): EnergyFlowPoint[] {
   const granularity: "day" | "month" = period === "year" ? "month" : "day";
@@ -366,10 +369,10 @@ function buildPeriodChartSeries(
   const importedByBucket = new Map<string, number>();
   const bucketInstant = new Map<string, number>();
 
-  for (const day of dailyKpiDays) {
+  for (const day of dailyRecords) {
     const key = bucketKey(day.localDate, granularity);
-    producedByBucket.set(key, (producedByBucket.get(key) ?? 0) + day.producedKwh);
-    consumedByBucket.set(key, (consumedByBucket.get(key) ?? 0) + day.consumedKwh);
+    producedByBucket.set(key, (producedByBucket.get(key) ?? 0) + day.dailyProduction);
+    consumedByBucket.set(key, (consumedByBucket.get(key) ?? 0) + day.dailyConsumption);
     if (!bucketInstant.has(key)) {
       bucketInstant.set(key, day.localDate.getTime());
     }
@@ -419,9 +422,9 @@ function buildPeriodChartSeries(
  * value, instead of the whole System Overview widget going blank.
  */
 function buildEnergyFlow(production: {
-  currentProduction: ProductionReading;
-  currentExport: ProductionReading;
-  currentImport: ProductionReading;
+  currentProduction: CanonicalReading;
+  currentExport: CanonicalReading;
+  currentImport: CanonicalReading;
 }): EnergyFlowState {
   if (!production.currentProduction.available) {
     return { available: false };
@@ -562,18 +565,17 @@ export async function getDashboardPageData(
   // instead (see `buildPeriodChartSeries`) — fetching a full period's worth
   // of 5-minute samples for that would be a wasted query, so it's skipped
   // entirely whenever `period !== "today"`.
-  const [marketData, production, chartSeriesRaw, dailyKpiRange, previousPeriodDailyKpiRange, weather] =
+  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather] =
     await Promise.all([
       getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
       getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
       period === "today"
         ? getPlantTelemetrySeries(plant.id, periodStart, seriesEnd)
         : Promise.resolve([]),
-      // Replaces the old single-day `getPlantDailyKpi` call: a `[dayStart,
-      // dayEnd)` range always resolves to zero or one row, so this one
-      // function now serves both "today" and Week/Month/Year — see
-      // `getPlantDailyKpiRange`'s own doc comment.
-      getPlantDailyKpiRange(plant.id, periodStart, periodEnd),
+      // A `[dayStart, dayEnd)` range always resolves to zero or one day, so
+      // this one canonical call serves both "today" and Week/Month/Year —
+      // see `getDailyTotals`'s own doc comment.
+      getDailyTotals(plant.id, periodStart, periodEnd),
       period === "today"
         ? Promise.resolve(undefined)
         : (() => {
@@ -582,7 +584,7 @@ export async function getDashboardPageData(
               periodStart,
               BULGARIA_TIMEZONE,
             );
-            return getPlantDailyKpiRange(plant.id, previousStart, previousEnd);
+            return getDailyTotals(plant.id, previousStart, previousEnd);
           })(),
       fetchSolarWeatherSafe(
         plant.latitude?.toNumber() ?? null,
@@ -600,7 +602,7 @@ export async function getDashboardPageData(
   // day) instead of issuing a second, redundant `DeviceTelemetry` query.
   const settlementTotals = sumSettlementEnergy(production.settlementEnergySeries);
 
-  const producedTodayKwh = dailyKpiRange.available ? dailyKpiRange.producedKwh : null;
+  const producedTodayKwh = dailyTotals.available ? dailyTotals.dailyProduction : null;
   const exportedTodayKwh = settlementTotals.available ? settlementTotals.exportedKwh : null;
 
   const kpis: DashboardKpis = {
@@ -608,10 +610,8 @@ export async function getDashboardPageData(
     // Lifetime counter, read off the *last* day within the selected
     // period (for "today" that's today's own row, unchanged from before) —
     // never summed across days, since it isn't a period-scoped quantity.
-    totalYieldKwh: dailyKpiRange.available
-      ? (dailyKpiRange.days.at(-1)?.totalYieldKwh ?? null)
-      : null,
-    consumedTodayKwh: dailyKpiRange.available ? dailyKpiRange.consumedKwh : null,
+    totalYieldKwh: latestLifetimeProduction(dailyTotals),
+    consumedTodayKwh: dailyTotals.available ? dailyTotals.dailyConsumption : null,
     consumedFromPvKwh: computeConsumedFromPv(producedTodayKwh, exportedTodayKwh),
     exportedTodayKwh,
     importedTodayKwh: settlementTotals.available ? settlementTotals.importedKwh : null,
@@ -623,8 +623,8 @@ export async function getDashboardPageData(
     const previousSettlementTotals = production.previousPeriodSettlementEnergySeries
       ? sumSettlementEnergy(production.previousPeriodSettlementEnergySeries)
       : undefined;
-    const previousProducedKwh = previousPeriodDailyKpiRange?.available
-      ? previousPeriodDailyKpiRange.producedKwh
+    const previousProducedKwh = previousPeriodDailyTotals?.available
+      ? previousPeriodDailyTotals.dailyProduction
       : null;
     const previousExportedKwh = previousSettlementTotals?.available
       ? previousSettlementTotals.exportedKwh
@@ -632,8 +632,8 @@ export async function getDashboardPageData(
 
     previousPeriodKpis = {
       producedKwh: previousProducedKwh,
-      consumedKwh: previousPeriodDailyKpiRange?.available
-        ? previousPeriodDailyKpiRange.consumedKwh
+      consumedKwh: previousPeriodDailyTotals?.available
+        ? previousPeriodDailyTotals.dailyConsumption
         : null,
       consumedFromPvKwh: computeConsumedFromPv(previousProducedKwh, previousExportedKwh),
       exportedKwh: previousExportedKwh,
@@ -647,7 +647,7 @@ export async function getDashboardPageData(
       ? buildFullDayChartSeries(periodStart, periodEnd, chartSeriesRaw)
       : buildPeriodChartSeries(
           period,
-          dailyKpiRange.available ? dailyKpiRange.days : [],
+          dailyTotals.available ? dailyTotals.days : [],
           production.settlementEnergySeries,
         );
   const chartUnit: "kW" | "kWh" = period === "today" ? "kW" : "kWh";

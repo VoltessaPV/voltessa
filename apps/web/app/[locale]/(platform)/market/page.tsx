@@ -598,8 +598,8 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
                         // 15-minute blocks to price production against the
                         // price that applied at the time it happened.
                         value:
-                          revenueFromProduction && production.canonicalProducedKwh !== null
-                            ? `${production.canonicalProducedKwh.toFixed(2)} kWh`
+                          revenueFromProduction && production.dailyProduction !== null
+                            ? `${production.dailyProduction.toFixed(2)} kWh`
                             : `${revenue.exportedKwh.toFixed(2)} kWh`,
                       },
                       {
