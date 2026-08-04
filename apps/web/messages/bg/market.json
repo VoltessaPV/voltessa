@@ -32,6 +32,8 @@
     "fusionSolarMeterUnavailable": "Данните от измервателния уред на FusionSolar не са налични",
     "exportedToday": "Изнесено днес",
     "exported": "Изнесено",
+    "producedToday": "Произведено днес",
+    "produced": "Произведено",
     "averageSellingPrice": "Средна продажна цена",
     "vsLastWeek": "спрямо миналата седмица",
     "vsLastMonth": "спрямо миналия месец",

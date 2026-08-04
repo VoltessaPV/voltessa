@@ -84,7 +84,9 @@ import {
 } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import {
+  getPlantProductionEnergySeries,
   getPlantSettlementEnergySeries,
+  type ProductionEnergyPoint,
   type SettlementEnergyPoint,
 } from "@/lib/telemetry/energy-metrics";
 import {
@@ -125,6 +127,17 @@ export type ProductionPageData = {
    * organization.
    */
   settlementEnergySeries: SettlementEnergyPoint[];
+  /**
+   * Existing-Data Completeness milestone: real produced energy per
+   * 15-minute interval for the *selected* day, for plants with no real
+   * meter counter (`getPlantProductionEnergySeries` — the production-only
+   * counterpart to `settlementEnergySeries` above, same 15-minute grid).
+   * `page.tsx` uses this only as a fallback for Revenue when the real
+   * meter-based `settlementEnergySeries` has nothing to offer — a plant
+   * with a real meter (Atlanta) always has real `settlementEnergySeries`
+   * data and never reaches this fallback.
+   */
+  productionEnergySeries: ProductionEnergyPoint[];
   /**
    * Dashboard & Market Analytics milestone (Weekly/Monthly/Yearly). The
    * same shape as `settlementEnergySeries`, but for the previous calendar
@@ -282,6 +295,7 @@ export async function getProductionPageData(
         UNAVAILABLE_NO_CONNECTION_MODE,
       ),
       settlementEnergySeries: [],
+      productionEnergySeries: [],
       installedCapacityKw,
       latestTelemetryAt: null,
     };
@@ -292,9 +306,10 @@ export async function getProductionPageData(
   // results — both were previously fetched as two separate sequential
   // `Promise.all` groups; merged into one, gated the same way each
   // branch already was (Category A only for `isToday`, unchanged).
-  const [series, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
+  const [series, productionSeries, latestTimestamp, inverterRows, meterRow, previousPeriodSeries] =
     await Promise.all([
       getPlantSettlementEnergySeries(context.plant.id, periodStart, seriesEnd),
+      getPlantProductionEnergySeries(context.plant.id, periodStart, seriesEnd),
       getLatestTelemetryTimestamp(context.plant.id),
       isToday
         ? preloaded
@@ -328,6 +343,7 @@ export async function getProductionPageData(
     ]);
 
   const settlementEnergySeries = series;
+  const productionEnergySeries = productionSeries;
   const latestTelemetryAt = latestTimestamp;
 
   // Category A — "current" state, database-only (Database-First Telemetry
@@ -344,6 +360,7 @@ export async function getProductionPageData(
         UNAVAILABLE_NO_CONNECTION_MODE,
       ),
       settlementEnergySeries,
+      productionEnergySeries,
       previousPeriodSettlementEnergySeries: previousPeriodSeries,
       installedCapacityKw,
       latestTelemetryAt,
@@ -362,6 +379,7 @@ export async function getProductionPageData(
       UNAVAILABLE_NO_CONNECTION_MODE,
     ),
     settlementEnergySeries,
+    productionEnergySeries,
     installedCapacityKw,
     latestTelemetryAt,
   };

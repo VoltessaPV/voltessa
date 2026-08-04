@@ -437,6 +437,73 @@ export function sumSettlementEnergy(points: SettlementEnergyPoint[]): {
 }
 
 /**
+ * A settlement interval's real PRODUCED energy (kWh) — the production-only
+ * counterpart to `getPlantSettlementEnergySeries` above, for plants with no
+ * real meter counter to derive exported/imported energy from. Reuses the
+ * exact same building blocks, never a second aggregation approach: the real
+ * per-timestamp inverter power sum already comes from `getPlantTelemetrySeries`
+ * (the same function `computeEnergyMetricsFromSeries` already uses), and
+ * each interval's energy is computed by calling the exact same `integrateKwh`
+ * a whole-series total already uses — just once per 15-minute bucket instead
+ * of once over the whole range, with the last real point at/before the
+ * bucket's start spliced in so the boundary segment integrates correctly
+ * (same lead-in technique `getPlantSettlementEnergySeries`'s
+ * `COUNTER_BASELINE_LOOKBACK_MS` uses for the same reason, adapted to power
+ * integration instead of a counter lookup).
+ *
+ * `null` only for a bucket with no real sample strictly inside it — never a
+ * fabricated or interpolated value. Never a substitute for real exported
+ * energy: this is real measured PRODUCTION, nothing else.
+ */
+export type ProductionEnergyPoint = {
+  intervalStart: Date;
+  producedKwh: number | null;
+};
+
+export async function getPlantProductionEnergySeries(
+  plantId: string,
+  start: Date,
+  end: Date,
+  intervalMinutes: number = SETTLEMENT_INTERVAL_MINUTES,
+): Promise<ProductionEnergyPoint[]> {
+  const series = await getPlantTelemetrySeries(plantId, start, end);
+  const stepMs = intervalMinutes * 60 * 1000;
+  const points: ProductionEnergyPoint[] = [];
+
+  for (let t = start.getTime(); t < end.getTime(); t += stepMs) {
+    const bucketEnd = t + stepMs;
+
+    // `integrateKwh` attributes each pair's gap to the EARLIER point's kw
+    // (left-Riemann) — so closing out the segment ending exactly at
+    // `bucketEnd` requires including the real point AT `bucketEnd` too
+    // (shared with the next bucket's own `leadIn`), not just points
+    // strictly before it. Omitting it would silently drop the final
+    // ~1/3 of every bucket's energy (confirmed against real production
+    // data before this was caught) — every point still contributes to
+    // exactly one segment per bucket, never double-counted, since
+    // `integrateKwh` only ever pairs consecutive entries within the
+    // array it's given.
+    const leadIn = series.filter((p) => p.timestamp.getTime() <= t).at(-1);
+    const hasRealSample = series.some(
+      (p) => p.timestamp.getTime() > t && p.timestamp.getTime() < bucketEnd,
+    );
+    const bucketSeries = series.filter(
+      (p) => p.timestamp.getTime() > t && p.timestamp.getTime() <= bucketEnd,
+    );
+    const withLeadIn = leadIn ? [leadIn, ...bucketSeries] : bucketSeries;
+
+    points.push({
+      intervalStart: new Date(t),
+      producedKwh: hasRealSample
+        ? integrateKwh(withLeadIn.map((p) => ({ timestamp: p.timestamp, kw: p.productionKw })))
+        : null,
+    });
+  }
+
+  return points;
+}
+
+/**
  * Full plant energy metrics for `[start, end)`: production (numerically
  * integrated from inverter power — no cumulative production counter
  * exists in this table, see this module's doc comment) plus exported/
