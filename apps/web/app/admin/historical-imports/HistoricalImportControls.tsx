@@ -9,6 +9,14 @@ type ToastState = { kind: "success" | "error"; message: string } | null;
 const inputClassName =
   "rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-white/30 focus:outline-none";
 
+// [color-scheme:dark] + optionStyle: same fix as
+// components/settings/EnergyMarketCard.tsx's selectClassName - native
+// <option> popups don't inherit background-color from the <select>, so
+// without this they render on the browser's default opaque white surface
+// under our white option text.
+const selectClassName = `${inputClassName} [color-scheme:dark]`;
+const optionStyle = { backgroundColor: "#0f172a", color: "#f8fafc" };
+
 const buttonClassName =
   "rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600";
 
@@ -50,9 +58,9 @@ export function NewHistoricalImportForm({
     <form action={handleSubmit} className="flex flex-wrap items-end gap-3 text-sm">
       <div className="flex flex-col gap-1">
         <label className="text-xs text-white/50">Organization</label>
-        <select name="organizationId" required className={inputClassName}>
+        <select name="organizationId" required className={selectClassName}>
           {organizations.map((org) => (
-            <option key={org.id} value={org.id}>
+            <option key={org.id} value={org.id} style={optionStyle}>
               {org.name}
             </option>
           ))}
@@ -65,12 +73,12 @@ export function NewHistoricalImportForm({
           name="importType"
           value={importType}
           onChange={(event) => setImportType(event.target.value as typeof importType)}
-          className={inputClassName}
+          className={selectClassName}
         >
-          <option value="month">One calendar month (current)</option>
-          <option value="year">One calendar year (current)</option>
-          <option value="custom">Custom date range</option>
-          <option value="complete">Complete history</option>
+          <option value="month" style={optionStyle}>One calendar month (current)</option>
+          <option value="year" style={optionStyle}>One calendar year (current)</option>
+          <option value="custom" style={optionStyle}>Custom date range</option>
+          <option value="complete" style={optionStyle}>Complete history</option>
         </select>
       </div>
 

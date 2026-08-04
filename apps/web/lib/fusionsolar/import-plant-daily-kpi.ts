@@ -5,6 +5,7 @@ import { getFusionSolarPlantRealTimeData } from "@/lib/fusionsolar/plant-data";
 import { getFusionSolarStationDayKpi } from "@/lib/fusionsolar/station-day-kpi";
 import { localDayBoundsUtc, localMonthBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { METER_DEV_TYPE_ID } from "@/lib/telemetry/queries";
 
 /**
  * Writes `PlantDailyKpi` from Huawei's station-level `getStationRealKpi`
@@ -31,6 +32,39 @@ function toDecimal(value: number | null): Prisma.Decimal | null {
   return new Prisma.Decimal(value);
 }
 
+/** Every plant id (of `plantIds`) that has at least one meter device (`Device.devTypeId === METER_DEV_TYPE_ID`) — the same device-topology signal `lib/telemetry/canonical.ts` already uses to distinguish a Prosumer plant (Atlanta, has a meter) from a Producer plant (Chomakovtsi, none). Never inferred from organization/plant name. */
+async function plantIdsWithMeter(plantIds: string[]): Promise<Set<string>> {
+  if (plantIds.length === 0) {
+    return new Set();
+  }
+
+  const rows = await prisma.device.findMany({
+    where: { plantId: { in: plantIds }, devTypeId: METER_DEV_TYPE_ID },
+    select: { plantId: true },
+  });
+
+  return new Set(rows.map((row) => row.plantId));
+}
+
+/**
+ * Huawei reports a plant's daily consumption (`day_use_energy`/`use_power`)
+ * as `null` in two genuinely different situations this codebase must not
+ * conflate: a metered (Prosumer) plant with a transient reporting gap for
+ * that specific day, versus a Producer plant that structurally has no meter
+ * and therefore never has a consumption figure to report, ever. Only the
+ * first is dishonest to paper over with a `0` (see this file's "never write
+ * a placeholder row" rule below) - the second is a real fact about the
+ * plant's topology, not missing data, so `0` there is the honest value.
+ */
+function resolveConsumptionKwh(hasMeter: boolean, rawValue: number | null): Prisma.Decimal | null {
+  const parsed = toDecimal(rawValue);
+  if (parsed !== null) {
+    return parsed;
+  }
+
+  return hasMeter ? null : new Prisma.Decimal(0);
+}
+
 export type PlantDailyKpiImportResult = {
   plantsRequested: number;
   kpisUpserted: number;
@@ -49,6 +83,7 @@ export async function importPlantDailyKpi(
   const plantByStationCode = new Map(
     plants.flatMap((plant) => (plant.stationCode ? [[plant.stationCode, plant] as const] : [])),
   );
+  const meteredPlantIds = await plantIdsWithMeter(plants.map((plant) => plant.id));
 
   const localDate = localDayBoundsUtc(new Date(), BULGARIA_TIMEZONE).start;
 
@@ -86,11 +121,13 @@ export async function importPlantDailyKpi(
 
       const data = item.dataItemMap;
       const pvYieldKwh = toDecimal(data.day_power);
-      const consumptionKwh = toDecimal(data.day_use_energy);
+      const consumptionKwh = resolveConsumptionKwh(meteredPlantIds.has(plant.id), data.day_use_energy);
 
       // Never write a placeholder row when Huawei's own daily counters
       // aren't present — an absent row (read back as `available: false`)
-      // is honest; a fabricated `0` is not.
+      // is honest; a fabricated `0` is not. Production (`day_power`) must
+      // always be real; consumption only needs to be real for a metered
+      // plant - see `resolveConsumptionKwh`.
       if (pvYieldKwh === null || consumptionKwh === null) {
         errors.push({
           stationCode: item.stationCode,
@@ -186,6 +223,7 @@ export async function importPlantDailyKpiRange(
   });
 
   const monthAnchors = computeMonthAnchors(range.start, range.end);
+  const meteredPlantIds = await plantIdsWithMeter(plants.map((plant) => plant.id));
 
   let daysUpserted = 0;
   const errors: PlantDailyKpiRangeImportResult["errors"] = [];
@@ -194,6 +232,8 @@ export async function importPlantDailyKpiRange(
     if (!plant.stationCode) {
       continue;
     }
+
+    const hasMeter = meteredPlantIds.has(plant.id);
 
     for (const collectTime of monthAnchors) {
       let monthData: Awaited<ReturnType<typeof getFusionSolarStationDayKpi>>;
@@ -228,10 +268,11 @@ export async function importPlantDailyKpiRange(
         }
 
         const pvYieldKwh = toDecimal(entry.dataItemMap.PVYield);
-        const consumptionKwh = toDecimal(entry.dataItemMap.use_power);
+        const consumptionKwh = resolveConsumptionKwh(hasMeter, entry.dataItemMap.use_power);
 
         // Same "never fabricate a placeholder row" rule as
-        // `importPlantDailyKpi` above.
+        // `importPlantDailyKpi` above - production must always be real;
+        // consumption only needs to be for a metered plant.
         if (pvYieldKwh === null || consumptionKwh === null) {
           errors.push({
             stationCode: plant.stationCode,
