@@ -43,6 +43,15 @@ type EnergyFlowDiagramProps = {
  *
  * Every line is gated on the real magnitude it represents (`pvKw`/
  * `gridKw` > 0) — never shown active for a flow that isn't happening.
+ *
+ * Existing-Data Completeness milestone: a plant with no meter still has a
+ * real `pvKw` reading (`flow.available && !flow.gridAvailable`) — the PV
+ * trunk/branch render exactly as before, driven by the same `pvActive`
+ * check; Load/Grid simply have no value to show (`"—"`, same fallback
+ * `InvertersCard` already uses for a missing reading) and their branches/
+ * particles stay inactive, since `exportingActive`/`importingActive` are
+ * both `false` whenever there is no real grid reading. No new node, no
+ * layout change — the diagram always has exactly these three nodes.
  */
 export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const t = useTranslations("dashboard.energyFlow");
@@ -55,9 +64,13 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
     );
   }
 
-  const { pvKw, consumption, direction, gridKw } = flow;
-  const importing = direction === "importing";
-  const loadKw = consumption.consistent ? consumption.kw : null;
+  const { pvKw } = flow;
+  const grid = flow.gridAvailable
+    ? { gridKw: flow.gridKw, importing: flow.direction === "importing", consumption: flow.consumption }
+    : null;
+  const importing = grid?.importing ?? false;
+  const gridKw = grid?.gridKw ?? null;
+  const loadKw = grid?.consumption.consistent ? grid.consumption.kw : null;
 
   // Coordinates share the same 0-100 x / 0-VIEWBOX_HEIGHT y space as the
   // SVG viewBox below, so the HTML icon nodes (positioned by percentage)
@@ -98,8 +111,8 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
   const PARTICLE_DELAYS = [0, 1, 2];
 
   const pvActive = pvKw > 0;
-  const exportingActive = !importing && gridKw > 0;
-  const importingActive = importing && gridKw > 0;
+  const exportingActive = !importing && gridKw !== null && gridKw > 0;
+  const importingActive = importing && gridKw !== null && gridKw > 0;
 
   const trunkLeftPath = `M${PV.x - 1.4},${PV.y + 6} L${PV.x - 1.4},${NODE_Y}`;
   const trunkRightPath = `M${PV.x + 1.4},${PV.y + 6} L${PV.x + 1.4},${NODE_Y}`;
@@ -236,24 +249,26 @@ export function EnergyFlowDiagram({ flow, isToday }: EnergyFlowDiagramProps) {
         <FlowNode
           icon={<LoadBuildingIcon className="h-[31px] w-[31px] text-slate-300" />}
           label={t("loadLabel")}
-          value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : t("inconsistent")}
+          value={loadKw !== null ? `${loadKw.toFixed(1)} kW` : grid ? t("inconsistent") : "—"}
           style={{ left: `${LOAD.x}%`, top: toTopPercent(ICON_Y) }}
         />
 
         <FlowNode
           icon={<TransmissionTowerIcon className="h-[31px] w-[31px] text-cyan-300/90" />}
           label={t("gridLabel")}
-          value={`${gridKw.toFixed(1)} kW`}
+          value={gridKw !== null ? `${gridKw.toFixed(1)} kW` : "—"}
           style={{ left: `${GRID.x}%`, top: toTopPercent(ICON_Y) }}
         />
       </div>
 
-      <div className="flex items-center gap-2 text-sm">
-        <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-orange-400" : "bg-emerald-400"}`} />
-        <span className="font-medium text-white">{importing ? t("importing") : t("exporting")}</span>
-      </div>
+      {grid && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`h-1.5 w-1.5 rounded-full ${importing ? "bg-orange-400" : "bg-emerald-400"}`} />
+          <span className="font-medium text-white">{importing ? t("importing") : t("exporting")}</span>
+        </div>
+      )}
 
-      {loadKw === null && (
+      {grid && loadKw === null && (
         <p className="max-w-[220px] text-center text-xs text-amber-400/80">
           {t("inconsistentNote")}
         </p>

@@ -251,16 +251,43 @@ export type DashboardPageData =
  * way, "no honest number to show," never a fabricated one. `pvKw`/grid
  * values are always the real measured readings for that timestamp,
  * unmodified, even when consumption can't be derived.
+ *
+ * Existing-Data Completeness milestone: a real `productionKw` reading is
+ * shown even when the meter (`exportKw`/`importKw`) has no reading at that
+ * timestamp — only the grid/consumption fields fall back to `null` in that
+ * case, never the whole point. `LiveEnergyChart`'s lines already render
+ * `connectNulls={false}` per series, so a plant with no meter simply never
+ * plots the other three lines while its real PV line renders normally.
  */
 function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
-  if (point.productionKw === null || point.exportKw === null || point.importKw === null) {
+  if (point.productionKw === null) {
     return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+  }
+
+  if (point.exportKw === null || point.importKw === null) {
+    return {
+      time: point.timestamp.getTime(),
+      pvKw: point.productionKw,
+      consumptionKw: null,
+      gridImportKw: null,
+      gridExportKw: null,
+    };
   }
 
   const flow = deriveEnergyFlow(point.productionKw, point.exportKw, point.importKw);
 
   if (!flow.available) {
     return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+  }
+
+  if (!flow.gridAvailable) {
+    return {
+      time: point.timestamp.getTime(),
+      pvKw: flow.pvKw,
+      consumptionKw: null,
+      gridImportKw: null,
+      gridExportKw: null,
+    };
   }
 
   return {
@@ -383,17 +410,25 @@ function buildPeriodChartSeries(
   }));
 }
 
+/**
+ * Existing-Data Completeness milestone: a real current-production reading
+ * is shown even when the meter has no current reading — only in that case,
+ * `energy-flow.ts`'s `gridAvailable: false` shape is returned directly
+ * (never `deriveEnergyFlow`, which requires all three real numbers) so
+ * `EnergyFlowDiagram` can render the real PV node while Grid/Load show no
+ * value, instead of the whole System Overview widget going blank.
+ */
 function buildEnergyFlow(production: {
   currentProduction: ProductionReading;
   currentExport: ProductionReading;
   currentImport: ProductionReading;
 }): EnergyFlowState {
-  if (
-    !production.currentProduction.available ||
-    !production.currentExport.available ||
-    !production.currentImport.available
-  ) {
+  if (!production.currentProduction.available) {
     return { available: false };
+  }
+
+  if (!production.currentExport.available || !production.currentImport.available) {
+    return { available: true, gridAvailable: false, pvKw: production.currentProduction.kw };
   }
 
   return deriveEnergyFlow(
@@ -407,6 +442,10 @@ function buildEnergyFlow(production: {
 function buildNowAnnotation(energyFlow: EnergyFlowState): string | undefined {
   if (!energyFlow.available) {
     return undefined;
+  }
+
+  if (!energyFlow.gridAvailable) {
+    return `${energyFlow.pvKw} kW PV`;
   }
 
   return `${energyFlow.pvKw} kW PV · ${energyFlow.gridKw} kW ${energyFlow.direction === "importing" ? "import" : "export"}`;

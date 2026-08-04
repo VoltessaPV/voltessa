@@ -11,8 +11,8 @@
  * import - export`. This module applies that identity to the real-time
  * reading (and, per timestamp, the historical series).
  *
- * Exactly two valid states, determined solely by the real meter reading
- * (`exportKw`/`importKw` — one is always exactly `0`, see
+ * Exactly two valid *grid* states, determined solely by the real meter
+ * reading (`exportKw`/`importKw` — one is always exactly `0`, see
  * `get-plant-power-status.ts`), never inferred from configuration and
  * never both shown at once:
  *
@@ -28,6 +28,20 @@
  * invent a value to hide it: it reports `consistent: false` so the UI can
  * render an honest "measurements are currently inconsistent" state instead
  * of a wrong number.
+ *
+ * ## Partial availability (Existing-Data Completeness milestone)
+ *
+ * `EnergyFlowResult`'s `available: true` case now has two shapes,
+ * discriminated by `gridAvailable`: the original full shape (`gridKw`/
+ * `direction`/`consumption`, requires a real meter reading) and a new
+ * production-only shape (`pvKw` alone). This function itself is unchanged
+ * — it still requires all three real numbers and always returns the full
+ * shape — the production-only shape is constructed directly by this
+ * module's callers (`dashboard-data.ts`) when a real PV reading exists but
+ * no real meter reading does, so a plant with no meter still shows its
+ * real, measured production instead of the whole result collapsing to
+ * `available: false`. Never a fabricated or estimated grid value in either
+ * shape — an unavailable grid stays unavailable.
  *
  * This inconsistency path exists as a general safety net for real-time
  * measurement disagreement between independently-polled devices — it is
@@ -49,10 +63,16 @@ export type EnergyFlowResult =
   | { available: false }
   | {
       available: true;
+      gridAvailable: true;
       pvKw: number;
       gridKw: number;
       direction: "importing" | "exporting";
       consumption: { consistent: true; kw: number } | { consistent: false };
+    }
+  | {
+      available: true;
+      gridAvailable: false;
+      pvKw: number;
     };
 
 export function deriveEnergyFlow(pvKw: number, exportKw: number, importKw: number): EnergyFlowResult {
@@ -61,6 +81,7 @@ export function deriveEnergyFlow(pvKw: number, exportKw: number, importKw: numbe
     // never be physically impossible, so this branch is always consistent.
     return {
       available: true,
+      gridAvailable: true,
       pvKw,
       gridKw: importKw,
       direction: "importing",
@@ -72,6 +93,7 @@ export function deriveEnergyFlow(pvKw: number, exportKw: number, importKw: numbe
 
   return {
     available: true,
+    gridAvailable: true,
     pvKw,
     gridKw: exportKw,
     direction: "exporting",
