@@ -101,6 +101,7 @@ export type LatestInverterRow = {
   deviceId: string;
   activePower: Prisma.Decimal | null;
   inverterState: number | null;
+  temperature: Prisma.Decimal | null;
 };
 
 /**
@@ -123,7 +124,7 @@ export async function getLatestInverterTelemetryForDevices(
     deviceIds.map((deviceId) =>
       prisma.deviceTelemetry.findFirst({
         where: { deviceId },
-        select: { deviceId: true, activePower: true, inverterState: true },
+        select: { deviceId: true, activePower: true, inverterState: true, temperature: true },
         orderBy: { timestamp: "desc" },
       }),
     ),

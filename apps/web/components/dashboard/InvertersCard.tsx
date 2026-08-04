@@ -18,15 +18,22 @@ const STATUS_DOT_CLASS: Record<string, string> = {
 
 /**
  * Every inverter shown individually — never aggregated into one number —
- * simplified to one compact row per inverter (Design-System Consistency
- * milestone): status dot, name, current power. No "Online · Grid-
- * connected" subtitle — the dot's color already represents online state
- * (green = online/producing, gray = offline/no data, per
- * `get-plant-inverter-status.ts`'s classification), so a redundant text
- * label next to it repeated the same fact twice.
+ * one compact row per inverter (Design-System Consistency milestone):
+ * status dot, name, current power. The dot's color already represents
+ * online state (green = online/producing, gray = offline/no data, per
+ * `get-plant-inverter-status.ts`'s classification).
+ *
+ * Existing-Data Completeness milestone: each row now also shows the
+ * inverter's real operating-state text (translated from `statusKey` —
+ * `classifyInverterState`'s already-computed classification, previously
+ * only used for the dot's color) and its real internal temperature
+ * (`DeviceTelemetry.temperature`, already fetched for this exact card,
+ * previously never read) — no new query, no new widget, same one row per
+ * inverter.
  */
 export function InvertersCard({ inverters, zeroExportActive }: InvertersCardProps) {
   const t = useTranslations("dashboard.inverters");
+  const tStatus = useTranslations("dashboard.inverters.status");
   const tTerm = useTranslations("terminology");
 
   return (
@@ -59,12 +66,20 @@ export function InvertersCard({ inverters, zeroExportActive }: InvertersCardProp
             <li key={inverter.deviceId} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
               <div className="flex min-w-0 items-center gap-2.5">
                 <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT_CLASS[inverter.statusColor]}`} />
-                <p className="truncate text-sm font-medium text-white">{inverter.name}</p>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-white">{inverter.name}</p>
+                  <p className="truncate text-[11px] text-slate-500">{tStatus(inverter.statusKey)}</p>
+                </div>
               </div>
 
-              <p className="shrink-0 text-sm font-medium tabular-nums text-white">
-                {inverter.powerKw !== null ? `${inverter.powerKw.toFixed(1)} kW` : "—"}
-              </p>
+              <div className="shrink-0 text-right">
+                <p className="text-sm font-medium tabular-nums text-white">
+                  {inverter.powerKw !== null ? `${inverter.powerKw.toFixed(1)} kW` : "—"}
+                </p>
+                <p className="text-[11px] tabular-nums text-slate-500">
+                  {inverter.temperatureC !== null ? `${inverter.temperatureC.toFixed(1)}°C` : "—"}
+                </p>
+              </div>
             </li>
           ))}
         </ul>

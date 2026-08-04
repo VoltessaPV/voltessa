@@ -50,7 +50,18 @@
     "title": "Inverters",
     "noInverterDevices": "No inverter devices configured",
     "historicalUnavailable": "Historical inverter status is not available",
-    "dataUnavailable": "FusionSolar data unavailable"
+    "dataUnavailable": "FusionSolar data unavailable",
+    "status": {
+      "noData": "No data",
+      "gridConnected": "Grid-connected",
+      "powerLimited": "Power limited",
+      "selfDerating": "Self-derating",
+      "shutdown": "Shutdown",
+      "standbyNoIrradiation": "Standby (no irradiation)",
+      "standby": "Standby",
+      "starting": "Starting",
+      "other": "Other"
+    }
   },
   "weather": {
     "title": "Solar Weather",

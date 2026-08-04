@@ -682,8 +682,9 @@ export async function getDashboardPageData(
         name: device.devName,
         online: classification.online,
         powerKw: row?.activePower ? row.activePower.toNumber() : null,
+        temperatureC: row?.temperature ? row.temperature.toNumber() : null,
         statusColor: classification.color,
-        statusLabel: classification.label,
+        statusKey: classification.statusKey,
       };
     });
 

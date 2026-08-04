@@ -50,7 +50,18 @@
     "title": "Инвертори",
     "noInverterDevices": "Не са конфигурирани инверторни устройства",
     "historicalUnavailable": "Историческият статус на инверторите не е наличен",
-    "dataUnavailable": "Данните от FusionSolar не са налични"
+    "dataUnavailable": "Данните от FusionSolar не са налични",
+    "status": {
+      "noData": "Няма данни",
+      "gridConnected": "Свързан с мрежата",
+      "powerLimited": "Ограничена мощност",
+      "selfDerating": "Самоограничение",
+      "shutdown": "Изключен",
+      "standbyNoIrradiation": "В готовност (без слънчева радиация)",
+      "standby": "В готовност",
+      "starting": "Стартиране",
+      "other": "Друго"
+    }
   },
   "weather": {
     "title": "Слънчево време",

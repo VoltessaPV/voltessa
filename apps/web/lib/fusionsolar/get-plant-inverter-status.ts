@@ -32,13 +32,32 @@ const INVERTER_DEV_TYPE_ID = 1;
 
 export type InverterStatusColor = "green" | "yellow" | "red" | "gray";
 
+/**
+ * Stable, machine-readable status identifier — translated at the render
+ * site (`InvertersCard`'s `dashboard.inverters.status` namespace), never a
+ * raw English string baked into the domain layer. One key per
+ * `classifyInverterState` branch below.
+ */
+export type InverterStatusKey =
+  | "noData"
+  | "gridConnected"
+  | "powerLimited"
+  | "selfDerating"
+  | "shutdown"
+  | "standbyNoIrradiation"
+  | "standby"
+  | "starting"
+  | "other";
+
 export type InverterStatus = {
   deviceId: string;
   name: string;
   online: boolean;
   powerKw: number | null;
+  /** Inverter internal temperature, °C (Huawei `dataItemMap.temperature`) — `null` only when no reading exists. */
+  temperatureC: number | null;
   statusColor: InverterStatusColor;
-  statusLabel: string;
+  statusKey: InverterStatusKey;
 };
 
 export type InverterStatusResult =
@@ -91,42 +110,42 @@ function inverterKw(raw: number | null | undefined): number | null {
  */
 export function classifyInverterState(rawValue: number | null): {
   color: InverterStatusColor;
-  label: string;
+  statusKey: InverterStatusKey;
   online: boolean;
 } {
   if (rawValue === null) {
-    return { color: "gray", label: "No data", online: false };
+    return { color: "gray", statusKey: "noData", online: false };
   }
 
   if (rawValue === 512) {
-    return { color: "green", label: "Grid-connected", online: true };
+    return { color: "green", statusKey: "gridConnected", online: true };
   }
 
   if (rawValue === 513) {
-    return { color: "yellow", label: "Power limited", online: true };
+    return { color: "yellow", statusKey: "powerLimited", online: true };
   }
 
   if (rawValue === 514) {
-    return { color: "yellow", label: "Self-derating", online: true };
+    return { color: "yellow", statusKey: "selfDerating", online: true };
   }
 
   if (rawValue >= 768 && rawValue <= 774) {
-    return { color: "red", label: "Shutdown", online: false };
+    return { color: "red", statusKey: "shutdown", online: false };
   }
 
   if (rawValue === 40960) {
-    return { color: "gray", label: "Standby (no irradiation)", online: true };
+    return { color: "gray", statusKey: "standbyNoIrradiation", online: true };
   }
 
   if (rawValue >= 0 && rawValue <= 3) {
-    return { color: "gray", label: "Standby", online: true };
+    return { color: "gray", statusKey: "standby", online: true };
   }
 
   if (rawValue === 256) {
-    return { color: "gray", label: "Starting", online: true };
+    return { color: "gray", statusKey: "starting", online: true };
   }
 
-  return { color: "gray", label: "Other", online: true };
+  return { color: "gray", statusKey: "other", online: true };
 }
 
 /**
@@ -181,8 +200,9 @@ export async function getPlantInverterStatuses(
       name: device.devName,
       online: classification.online,
       powerKw: kpi ? inverterKw(kpi.dataItemMap.active_power) : null,
+      temperatureC: typeof kpi?.dataItemMap.temperature === "number" ? kpi.dataItemMap.temperature : null,
       statusColor: classification.color,
-      statusLabel: classification.label,
+      statusKey: classification.statusKey,
     };
   });
 
