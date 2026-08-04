@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { assignTrader, changeTrader, removeTrader } from "../../actions";
+import { assignTrader, changeTrader, removeTrader, startImpersonation } from "../../actions";
 import {
   getPlantOwnerOrganizationById,
   listAssignableTraders,
@@ -74,9 +74,21 @@ export default async function AdminPlantOwnerDetailPage({ params }: Props) {
         ) : (
           <ul className="mt-4 space-y-2">
             {organization.users.map((user) => (
-              <li key={user.id} className="text-sm text-white/70">
-                {resolveUserDisplayName(user) ?? user.email}
-                {user.deactivatedAt && <span className="ml-2 text-red-300">(deactivated)</span>}
+              <li key={user.id} className="flex flex-wrap items-center gap-3 text-sm text-white/70">
+                <span>
+                  {resolveUserDisplayName(user) ?? user.email}
+                  {user.deactivatedAt && <span className="ml-2 text-red-300">(deactivated)</span>}
+                </span>
+                {!user.deactivatedAt && (
+                  <form action={startImpersonation.bind(null, user.id)}>
+                    <button
+                      type="submit"
+                      className="rounded-lg border border-white/15 px-3 py-1 text-xs font-medium text-white/70 transition hover:bg-white/10"
+                    >
+                      Impersonate
+                    </button>
+                  </form>
+                )}
               </li>
             ))}
           </ul>
