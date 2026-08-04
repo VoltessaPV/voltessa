@@ -4,6 +4,8 @@ import { after } from "next/server";
 import { auth } from "@/auth";
 import { runOnboardingHistoricalImport } from "@/lib/onboarding/historical-import";
 import { prisma } from "@/lib/prisma";
+import { syncFusionSolarPlants } from "@/lib/fusionsolar/sync-plants";
+import { syncFusionSolarDevices } from "@/lib/fusionsolar/sync-devices";
 
 export const runtime = "nodejs";
 
@@ -176,7 +178,7 @@ export async function GET(request: NextRequest) {
   });
   const isFirstConnection = existingConnection === null;
 
-  await prisma.fusionSolarConnection.upsert({
+  const connection = await prisma.fusionSolarConnection.upsert({
     where: {
       organizationId_provider: {
         organizationId: user.organizationId,
@@ -211,6 +213,30 @@ export async function GET(request: NextRequest) {
     tokenType: tokenData.token_type,
     isFirstConnection,
   });
+
+  // Production incident fix: this was the missing link between "FusionSolar
+  // OAuth succeeded" and "Dashboard/Market ever show real data." Nothing
+  // else in the automatic pipeline ever populated Plant.stationCode/
+  // plantCode or created Device rows - syncFusionSolarPlants/
+  // syncFusionSolarDevices previously existed only behind manual
+  // /api/diag/* routes. Awaited inline (not backgrounded like the
+  // historical import below) because resolvePlantContext - what both
+  // Dashboard and Market gate rendering on - depends on this having
+  // already run by the time the user's browser lands back on /settings
+  // and navigates onward; unlike the historical import, this is a small,
+  // fast, few-call sync (one station list + one device list), not a
+  // multi-week backfill. A failure here must not break the OAuth redirect
+  // itself - the user still gets a working connection and can retry via
+  // Settings' existing "sync" affordance.
+  try {
+    await syncFusionSolarPlants(user.organizationId, connection);
+    await syncFusionSolarDevices(user.organizationId, connection);
+  } catch (error) {
+    console.error("[FusionSolar OAuth Token Exchange] Plant/device sync failed", {
+      organizationId: user.organizationId,
+      error,
+    });
+  }
 
   // Database-First Architecture milestone: the one automatic historical
   // import, fired exactly once. `after()` (not awaited inline) so the
