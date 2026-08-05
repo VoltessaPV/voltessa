@@ -105,6 +105,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
+  computeConsumedFromPv,
   getPlantTelemetrySeries,
   sumSettlementEnergy,
   type PlantTelemetrySeriesPoint,
@@ -478,13 +479,6 @@ async function fetchSolarWeatherSafe(
   } catch {
     return null;
   }
-}
-
-/** Self-consumption energy-balance identity, shared by the current and previous-period KPI computations below — never a new measurement, see `DashboardKpis.consumedFromPvKwh`'s doc comment. */
-function computeConsumedFromPv(producedKwh: number | null, exportedKwh: number | null): number | null {
-  return producedKwh !== null && exportedKwh !== null && producedKwh >= exportedKwh
-    ? Math.round((producedKwh - exportedKwh) * 100) / 100
-    : null;
 }
 
 export async function getDashboardPageData(

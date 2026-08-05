@@ -48,6 +48,7 @@ keep the runbook itself current when the infrastructure changes.
 | `docs/VISION.md`, `docs/CLIENT_REQUIREMENTS.md`, `docs/ROADMAP.md`, `docs/BACKLOG.md` | Product context, first-customer scope, sprint status                                                                                                                                 |
 | `docs/PROJECT_CONTEXT.md`                                                             | Product-level framing — mission, vision, target customers, MVP vs. long-term scope                                                                                                   |
 | `docs/ARCHITECT_DECISIONS.md`                                                         | ADR log and template, in English, alongside `docs/DECISIONS/*`                                                                                                                       |
+| `docs/CANONICAL_ENTITY_CONTRACT.md`                                                   | The one definition/representation/update-strategy/manufacturer-mapping per physical/business quantity (Production, Export, Revenue, Settlement Energy, ...) — see ADR-018            |
 | `docs/AI_TASK_TEMPLATE.md`                                                            | Template to scope any AI implementation task before starting it                                                                                                                      |
 
 ## Repo layout
