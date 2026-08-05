@@ -9,6 +9,7 @@ import {
   CalendarClock,
   ClipboardList,
   FileClock,
+  FlaskConical,
   LayoutDashboard,
   LineChart,
   LogOut,
@@ -126,6 +127,11 @@ const adminNavigation = [
     label: "Historical Imports",
     href: "/admin/historical-imports",
     icon: CalendarClock,
+  },
+  {
+    label: "Automation Lab",
+    href: "/admin/automation-lab",
+    icon: FlaskConical,
   },
 ];
 
