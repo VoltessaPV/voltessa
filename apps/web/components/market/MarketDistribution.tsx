@@ -105,15 +105,16 @@ export function MarketDistribution({ buckets }: MarketDistributionProps) {
               key={bucket.label}
               className="flex items-center justify-between gap-2 text-xs"
             >
-              <span className="flex items-center gap-2 text-slate-400">
+              <span className="flex min-w-0 items-center gap-2 text-slate-400">
                 <span
-                  className={`h-2 w-2 rounded-full ${bucket.colorClass}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${bucket.colorClass}`}
                 />
-                {bucket.label}
-                <span className="text-slate-600">{bucket.rangeLabel}</span>
+                <span className="truncate">
+                  {bucket.label} <span className="text-slate-600">{bucket.rangeLabel}</span>
+                </span>
               </span>
 
-              <span className="font-medium tabular-nums text-white">
+              <span className="shrink-0 font-medium tabular-nums text-white">
                 {bucket.percentage}%
               </span>
             </div>
