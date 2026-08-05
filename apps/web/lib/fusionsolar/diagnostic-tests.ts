@@ -293,6 +293,34 @@ export const DIAGNOSTIC_DEFINITIONS: DiagnosticDefinition[] = [
       ],
     }),
   },
+  {
+    id: "deliver-apc-task-limited-feed-in",
+    label: "Deliver Active Power Control Task (Set Export Limit)",
+    kind: "control",
+    endpoint: "/rest/openapi/pvms/nbi/v2/control/active-power-control/async-task",
+    supportedTargetTypes: ["plant"],
+    parameters: [
+      {
+        name: "maxGridFeedInPowerKw",
+        label: "Max grid feed-in power (kW)",
+        type: "number",
+        required: true,
+        placeholder: "e.g. 50",
+      },
+    ],
+    buildRequestBody: (target, params) => ({
+      tasks: [
+        {
+          plantCode: target.plantCode,
+          controlMode: "6",
+          controlInfo: {
+            maxGridFeedInPower: Number(params.maxGridFeedInPowerKw || "0"),
+            limitationMode: 0,
+          },
+        },
+      ],
+    }),
+  },
 ];
 
 export function findDiagnosticDefinition(
