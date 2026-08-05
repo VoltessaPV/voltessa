@@ -5,7 +5,7 @@ import { getFusionSolarPlantRealTimeData } from "@/lib/fusionsolar/plant-data";
 import { getFusionSolarStationDayKpi } from "@/lib/fusionsolar/station-day-kpi";
 import { localDayBoundsUtc, localMonthBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
-import { METER_DEV_TYPE_ID } from "@/lib/telemetry/queries";
+import { plantIdsWithMeter } from "@/lib/telemetry/plant-topology";
 
 /**
  * Writes `PlantDailyKpi` from Huawei's station-level `getStationRealKpi`
@@ -30,20 +30,6 @@ function toDecimal(value: number | null): Prisma.Decimal | null {
   }
 
   return new Prisma.Decimal(value);
-}
-
-/** Every plant id (of `plantIds`) that has at least one meter device (`Device.devTypeId === METER_DEV_TYPE_ID`) — the same device-topology signal `lib/telemetry/canonical.ts` already uses to distinguish a Prosumer plant (Atlanta, has a meter) from a Producer plant (Chomakovtsi, none). Never inferred from organization/plant name. */
-async function plantIdsWithMeter(plantIds: string[]): Promise<Set<string>> {
-  if (plantIds.length === 0) {
-    return new Set();
-  }
-
-  const rows = await prisma.device.findMany({
-    where: { plantId: { in: plantIds }, devTypeId: METER_DEV_TYPE_ID },
-    select: { plantId: true },
-  });
-
-  return new Set(rows.map((row) => row.plantId));
 }
 
 /**
