@@ -504,6 +504,23 @@ export async function getPlantProductionEnergySeries(
 }
 
 /**
+ * Self-consumption energy-balance identity — canonical Self-Consumption
+ * quantity (see `docs/CANONICAL_ENTITY_CONTRACT.md`): `production - export`,
+ * never a separate measurement or Huawei field. `null` whenever either
+ * input is unavailable, or when the subtraction would go negative (a
+ * genuine disagreement between two independently-sourced totals) — never
+ * clamped to zero. Extracted from `dashboard/dashboard-data.ts` (previously
+ * private there) so every consumer of Self-Consumption, including a future
+ * Digital Twin replay, calls this exact same identity rather than
+ * re-deriving it.
+ */
+export function computeConsumedFromPv(producedKwh: number | null, exportedKwh: number | null): number | null {
+  return producedKwh !== null && exportedKwh !== null && producedKwh >= exportedKwh
+    ? Math.round((producedKwh - exportedKwh) * 100) / 100
+    : null;
+}
+
+/**
  * Full plant energy metrics for `[start, end)`: production (numerically
  * integrated from inverter power — no cumulative production counter
  * exists in this table, see this module's doc comment) plus exported/

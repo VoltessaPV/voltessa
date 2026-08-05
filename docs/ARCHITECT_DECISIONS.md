@@ -1060,6 +1060,72 @@ in `TraderAssignment`'s shape and this milestone's own review conversation, not 
   cannot assign themselves" rule must be revisited explicitly, not silently relaxed, whenever that
   milestone is scoped.
 
+## ADR-018: Canonical Entity Contract — one definition, one representation, one update strategy, one manufacturer mapping per quantity
+
+### Status
+
+Accepted
+
+### Context
+
+Voltessa's stated goal is a vendor-agnostic energy platform, not a Huawei application — a second
+manufacturer adapter must be addable without touching Dashboard, Market, or any business
+calculation. Two concrete features (Automation Lab, an internal Platform-Admin tool to validate any
+automation against any plant/manufacturer; and Digital Twin, a historical-replay simulator) both
+need to consume plant data without any manufacturer-specific knowledge, and Digital Twin in
+particular must never invent a second Revenue or Settlement calculation that could silently
+disagree with what Dashboard/Market already show.
+
+Auditing the existing code found this was already mostly true in practice —
+`lib/telemetry/canonical.ts` already describes itself as "Voltessa's single access layer" and
+already stores manufacturer daily totals verbatim rather than recomputing them from raw telemetry —
+but it was never written down as an explicit, closed contract, and one piece of shared logic
+(`computeConsumedFromPv`, the Self-Consumption identity) was still private to `dashboard-data.ts`
+rather than available to a future Digital Twin.
+
+### Decision
+
+Every physical/business quantity Voltessa computes has exactly one definition, one database
+representation (or an explicit "never stored — always derived"), one update strategy, and one
+manufacturer mapping — recorded in full in `docs/CANONICAL_ENTITY_CONTRACT.md`. Quantities are
+either **Ingested (real-time)**, **Ingested (manufacturer total, stored verbatim, never recomputed
+from raw telemetry)**, or **Derived (a pure function over already-Ingested quantities, never
+stored)**. No code outside the canonical implementation named for a quantity in that document may
+compute it a second way.
+
+Two consequences that go beyond documentation:
+
+1. **`AutomationService` depends only on a generic `ManufacturerControlAdapter` interface**
+   (`execute(plant, automationType, payload) -> CanonicalAutomationResult`), never on Huawei
+   directly. The Huawei adapter is the first, not the only, implementation — it wraps the existing
+   `lib/fusionsolar/diagnostic-tests.ts` registry/executor rather than reimplementing it. Atlanta's
+   Chromium automation is explicitly outside this contract — it is not, and will never be, a
+   `ManufacturerControlAdapter` (see ADR-001/ADR-005's existing vendor-abstraction precedent, and
+   the Automation Service `CLAUDE.md` section's "Historical note" on why Atlanta's automation lives
+   outside `apps/web` entirely).
+2. **Digital Twin (a historical replay simulator) introduces zero business calculations.** It may
+   only define a *Scenario* — a pure function that transforms historical canonical input (e.g. a PV
+   capacity factor, an export-limit ceiling, a battery's chronological SOC evolution) into
+   adjusted, still-canonical-shaped input — before handing off to the unchanged Settlement Engine
+   and Revenue Engine (`lib/telemetry/energy-metrics.ts`, `lib/market-price/revenue.ts`). Curtailment
+   (production exceeding a scenario's export ceiling) is a Scenario-layer concept for exactly this
+   reason: it does not exist in real historical data, so it cannot live in the Engine layer that
+   Dashboard/Market also run.
+
+### Consequences
+
+Makes a second manufacturer adapter addable without touching any application page, since every page
+already reads through the canonical implementations named in `docs/CANONICAL_ENTITY_CONTRACT.md`.
+Makes Digital Twin's numbers trustworthy by construction: any real (non-scenario) replay of
+unmodified historical data must reproduce Dashboard/Market's own figures exactly, because it calls
+the identical Engine functions. Rules out ad hoc per-feature revenue/self-consumption/settlement
+math anywhere in the codebase going forward — a new feature needing one of these quantities extends
+or calls the canonical implementation, never writes its own. Follow-up work: `AutomationService` and
+the Huawei `ManufacturerControlAdapter` (Milestone 2), Automation Lab (Milestone 3), and Digital
+Twin's replay engine (Milestone 4) are implemented as separate, individually-verified milestones on
+top of this contract, per the "before touching Huawei/FusionSolar/production integrations" caution
+this repo already applies to that code.
+
 ## ADR-017: Live Telemetry Synchronization Redesign — 15-minute scheduler + database-first background recovery
 
 ### Status
