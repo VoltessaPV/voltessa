@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useState, useTransition } from "react";
 
 import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
+import type { ChartResolution } from "@/lib/market-price/chart-aggregation";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
@@ -80,6 +81,35 @@ function formatRangeLabel(start: Date, end: Date): string {
   const formatter = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Sofia", dateStyle: "medium" });
   const inclusiveEnd = new Date(end.getTime() - 1);
   return `${formatter.format(start)} – ${formatter.format(inclusiveEnd)}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Adaptive Visualization milestone (Milestone 6) - a purely presentational
+ * label describing the resolution `runDigitalTwinSimulation` already chose
+ * (`result.chartResolution`) and aggregated both charts to server-side.
+ * This component never decides the resolution itself, only names it.
+ */
+function resolutionLabel(resolution: ChartResolution, rangeStart: Date, rangeEnd: Date): string {
+  const days = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / DAY_MS));
+  if (resolution === "native") return `Resolution: 15-minute (${days}-day period)`;
+  if (resolution === "hourly") return `Resolution: Hourly (${days}-day period)`;
+  return `Resolution: Daily (${days}-day period)`;
+}
+
+/**
+ * Maps the resolution to one of `MarketPriceChart`'s existing `xAxisUnit`
+ * values without modifying that component (per spec). "time" locks the
+ * energy axis to a 15-minute-interval-width, capacity-derived scale and
+ * fixed 90-minute ticks - correct only for the native 15-minute grid. "day"
+ * uses the auto-scaling, interval-width-agnostic axis (`computeNiceEnergyAxis`)
+ * and recharts' own automatic tick placement - safe for both hourly- and
+ * daily-bucketed data, exactly like Market's own Week/Month views already
+ * rely on for their day-bucketed charts.
+ */
+function xAxisUnitFor(resolution: ChartResolution): "time" | "day" {
+  return resolution === "native" ? "time" : "day";
 }
 
 /**
@@ -180,6 +210,45 @@ export function DigitalTwinForm({ plants }: Props) {
         rows,
       };
     });
+  }, [result]);
+
+  /**
+   * Investment Summary - every field here is arithmetic on values
+   * `runDigitalTwinSimulation` already returned (`result.current`/
+   * `result.simulated`/`result.currentCapacityKw`/`result.newCapacityKw`);
+   * nothing here re-derives a quantity the simulation didn't already
+   * compute. Import reduction only makes sense for a Prosumer (a Producer's
+   * import is always zero, by topology, never a simulated outcome).
+   */
+  const investmentSummary = useMemo(() => {
+    if (!result?.ok) return null;
+
+    const capacityIncreaseKw = result.newCapacityKw - result.currentCapacityKw;
+    const capacityIncreasePercent = (result.capacityFactor - 1) * 100;
+    const additionalProductionKwh = result.simulated.productionKwh - result.current.productionKwh;
+    const additionalExportKwh = result.simulated.exportedKwh - result.current.exportedKwh;
+    const importReductionKwh =
+      result.topology === "Prosumer" ? result.current.importedKwh - result.simulated.importedKwh : null;
+    const additionalRevenueEur =
+      result.current.revenueEur !== null && result.simulated.revenueEur !== null
+        ? result.simulated.revenueEur - result.current.revenueEur
+        : null;
+    const revenueIncreasePercent =
+      additionalRevenueEur !== null && result.current.revenueEur !== null && result.current.revenueEur > 0
+        ? (additionalRevenueEur / result.current.revenueEur) * 100
+        : null;
+
+    return {
+      currentCapacityKw: result.currentCapacityKw,
+      newCapacityKw: result.newCapacityKw,
+      capacityIncreaseKw,
+      capacityIncreasePercent,
+      additionalProductionKwh,
+      additionalExportKwh,
+      importReductionKwh,
+      additionalRevenueEur,
+      revenueIncreasePercent,
+    };
   }, [result]);
 
   if (plants.length === 0) {
@@ -332,7 +401,7 @@ export function DigitalTwinForm({ plants }: Props) {
         )}
       </section>
 
-      {result?.ok && metricRows && (
+      {result?.ok && metricRows && investmentSummary && (
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-medium">Results</h2>
@@ -345,20 +414,92 @@ export function DigitalTwinForm({ plants }: Props) {
             ))}
           </div>
 
+          <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+            <h3 className="text-sm font-semibold text-white">Investment summary</h3>
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
+              <div>
+                <dt className="text-xs text-white/40">Current installed capacity</dt>
+                <dd className="text-white/80">{investmentSummary.currentCapacityKw} kWp</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Simulated installed capacity</dt>
+                <dd className="text-white/80">{investmentSummary.newCapacityKw} kWp</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Capacity increase</dt>
+                <dd className="text-emerald-400">
+                  +{formatKwh(investmentSummary.capacityIncreaseKw)} kWp (+
+                  {investmentSummary.capacityIncreasePercent.toFixed(1)}%)
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Additional production</dt>
+                <dd className={diffColorClass(investmentSummary.additionalProductionKwh)}>
+                  {formatSignedKwh(investmentSummary.additionalProductionKwh)} kWh
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Additional export</dt>
+                <dd className={diffColorClass(investmentSummary.additionalExportKwh)}>
+                  {formatSignedKwh(investmentSummary.additionalExportKwh)} kWh
+                </dd>
+              </div>
+              {investmentSummary.importReductionKwh !== null && (
+                <div>
+                  <dt className="text-xs text-white/40">Import reduction</dt>
+                  <dd className={diffColorClass(investmentSummary.importReductionKwh)}>
+                    {formatSignedKwh(investmentSummary.importReductionKwh)} kWh
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-xs text-white/40">Additional revenue</dt>
+                <dd
+                  className={
+                    investmentSummary.additionalRevenueEur !== null
+                      ? diffColorClass(investmentSummary.additionalRevenueEur)
+                      : "text-white/80"
+                  }
+                >
+                  {investmentSummary.additionalRevenueEur !== null
+                    ? `${formatSignedEur(investmentSummary.additionalRevenueEur)} EUR`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Revenue increase</dt>
+                <dd
+                  className={
+                    investmentSummary.revenueIncreasePercent !== null
+                      ? diffColorClass(investmentSummary.revenueIncreasePercent)
+                      : "text-white/80"
+                  }
+                >
+                  {investmentSummary.revenueIncreasePercent !== null
+                    ? `${investmentSummary.revenueIncreasePercent >= 0 ? "+" : ""}${investmentSummary.revenueIncreasePercent.toFixed(1)}%`
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-white">Charts</h3>
+            <p className="text-xs text-white/40">{resolutionLabel(result.chartResolution, result.rangeStart, result.rangeEnd)}</p>
+          </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <h3 className="text-sm font-semibold text-white">Current (historical)</h3>
               <div className="mt-2.5 h-[240px] sm:h-[280px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicMarketPriceChart
-                    series={result.priceSeries}
+                    series={result.currentChart.price}
                     thresholdPrice={0}
                     showThreshold={false}
                     priceMetric="averageSelling"
-                    xAxisUnit={
-                      result.rangeEnd.getTime() - result.rangeStart.getTime() <= 25 * 60 * 60 * 1000 ? "time" : "day"
-                    }
-                    settlementEnergySeries={result.currentSettlementSeries.map(({ intervalStart, exportedKwh }) => ({
+                    xAxisUnit={xAxisUnitFor(result.chartResolution)}
+                    settlementEnergySeries={result.currentChart.settlement.map(({ intervalStart, exportedKwh }) => ({
                       intervalStart,
                       exportedKwh,
                     }))}
@@ -373,14 +514,12 @@ export function DigitalTwinForm({ plants }: Props) {
               <div className="mt-2.5 h-[240px] sm:h-[280px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicMarketPriceChart
-                    series={result.priceSeries}
+                    series={result.simulatedChart.price}
                     thresholdPrice={0}
                     showThreshold={false}
                     priceMetric="averageSelling"
-                    xAxisUnit={
-                      result.rangeEnd.getTime() - result.rangeStart.getTime() <= 25 * 60 * 60 * 1000 ? "time" : "day"
-                    }
-                    settlementEnergySeries={result.simulatedSettlementSeries.map(({ intervalStart, exportedKwh }) => ({
+                    xAxisUnit={xAxisUnitFor(result.chartResolution)}
+                    settlementEnergySeries={result.simulatedChart.settlement.map(({ intervalStart, exportedKwh }) => ({
                       intervalStart,
                       exportedKwh,
                     }))}
