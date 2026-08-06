@@ -1,4 +1,4 @@
-import { buildHistoricalIntervals } from "@/lib/digital-twin/replay-engine";
+import { buildHistoricalIntervals } from "@/lib/digital-twin/historical-intervals";
 import { getAutomationModeTimeline, isZeroExportAt } from "@/lib/digital-twin/automation-mode-timeline";
 
 /**

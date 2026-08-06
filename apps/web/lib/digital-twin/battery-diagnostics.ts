@@ -252,7 +252,18 @@ export function validateConstraints(diagnostics: BatteryIntervalDiagnostic[], ba
       });
     }
 
-    if (!battery.allowGridCharging && d.batteryChargeKwh > d.availablePvKwh + TOLERANCE_KWH) {
+    // Bounded by gross Available PV in the normal case (consumption >= 0),
+    // matching this check's original intent unchanged. Real settlement
+    // telemetry can reconstruct a slightly negative consumption for an
+    // interval (counter/meter noise - `historicalConsumption` is derived as
+    // `production - export + import`, never independently measured), in
+    // which case the physically meaningful bound is the same PV-surplus
+    // bound `pv_only_charging_never_uses_grid` already enforces
+    // (`availablePv - consumption`) - subtracting a negative consumption
+    // widens the bound exactly as much as the surplus does, so this stays a
+    // no-op whenever consumption is >= 0.
+    const availablePvBoundKwh = d.availablePvKwh - Math.min(0, d.consumptionKwh);
+    if (!battery.allowGridCharging && d.batteryChargeKwh > availablePvBoundKwh + TOLERANCE_KWH) {
       violations.push({
         check: "available_pv_never_exceeded",
         intervalStart: d.intervalStart,

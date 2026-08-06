@@ -1,11 +1,15 @@
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
+import {
+  aggregateAvailablePvTo15Min,
+  reconstructAvailablePv,
+  type AvailablePvInterval,
+} from "@/lib/digital-twin/available-pv-reconstruction";
+import { type BatteryConfig, type BatteryDispatchInterval, runBatteryDispatch } from "@/lib/digital-twin/battery-dispatch";
+import { buildHistoricalIntervals } from "@/lib/digital-twin/historical-intervals";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
 import {
-  getPlantSettlementEnergySeries,
-  getPlantTelemetrySeries,
-  integrateKwh,
   sumSettlementEnergy,
   SETTLEMENT_INTERVAL_MINUTES,
   type SettlementEnergyPoint,
@@ -13,48 +17,50 @@ import {
 import { getPlantTopology, type PlantTopology } from "@/lib/telemetry/plant-topology";
 
 /**
- * Digital Twin's Simulation Engine (ADR-018). A reusable library, no UI.
- * Operates at native telemetry resolution (5-minute intervals) - the
- * highest resolution historical data Voltessa has - then aggregates the
- * simulated result into the existing 15-minute settlement grid before
- * handing off to the unchanged Revenue Engine.
+ * Digital Twin's Simulation Engine (ADR-018), Replay Pipeline Unification
+ * milestone. `replay-engine.ts` is the single orchestrator for every replay
+ * - no second replay engine exists anywhere else. It executes only the
+ * scenario layers the caller enables:
  *
- * One pipeline, no topology branch anywhere in the simulation itself:
+ *   Historical Data -> Available PV Reconstruction -> Capacity Scenario (optional)
+ *     -> Battery Dispatch (optional) -> Settlement Series -> Revenue Engine
  *
- * 1. Load historical 5-minute data (native telemetry: `getPlantTelemetrySeries`
- *    for production, `getPlantSettlementEnergySeries` at 5-minute
- *    granularity for export/import - both already-existing functions,
- *    called with different parameters, not reimplemented).
- * 2. Build the historical consumption profile ONCE, independent of any
- *    scenario - Producer's consumption is always 0 (an axiom: no meter
- *    exists to reconstruct anything from); Prosumer's is reconstructed via
- *    `historicalProduction - historicalExport + historicalImport`. This is
- *    the ONLY place topology is consulted.
- * 3. Run the scenario: `newProduction = historicalProduction × capacityFactor`,
- *    `balance = newProduction - historicalConsumption`, `export`/`import`
- *    from the sign of `balance`. Identical code path for every plant -
- *    Producer and Prosumer differ only in the Step 2 input, never in this
- *    step's logic.
- * 4. Aggregate the simulated 5-minute export/import into 15-minute
- *    settlement blocks (sum).
- * 5. Feed those blocks into the existing, unchanged Revenue Engine
- *    (`sumSettlementEnergy`/`computeExportRevenue`).
+ * Available PV Reconstruction always runs - it is a no-op for any interval
+ * that was never curtailed (see `available-pv-reconstruction.ts`), and
+ * genuinely corrects the input for periods that were. Capacity Scenario and
+ * Battery Dispatch are each independently optional; "capacity + battery" is
+ * not a third code path - `runBatteryDispatch` already accepts a
+ * `capacityFactor`, so battery-only and capacity+battery are the exact same
+ * call, just with a different factor.
+ *
+ * The no-battery path (no scenario, or capacity-only) reuses
+ * `runCapacityScenario`/`aggregateToSettlementIntervals` completely
+ * unchanged from before this milestone - same native-5-minute balance
+ * computation, same aggregation-after-the-fact - so its numeric output stays
+ * byte-identical to the pre-unification implementation for any period with
+ * no curtailment. It intentionally does NOT go through the battery path's
+ * aggregate-before-compute order, because summing a per-interval
+ * `max(0, ...)` balance is not the same as clamping a summed balance
+ * whenever the sign flips within an aggregation window.
+ *
+ * The battery path reuses `reconstructAvailablePv` /
+ * `aggregateAvailablePvTo15Min` / `runBatteryDispatch` completely unchanged
+ * from the Battery Dispatch Engine milestone - the same 15-minute dispatch
+ * resolution already validated by `battery-diagnostics.ts` and
+ * `battery-optimality-check.ts`.
  */
 
-export type CapacityScenario = {
-  type: "capacity";
+export type CapacityScenarioConfig = {
   /** The hypothetical new installed capacity, kWp. */
   newCapacityKw: number;
 };
 
-/** Step 2's output - the immutable historical input every capacity factor evaluated afterward shares. */
-export type HistoricalInterval = {
-  intervalStart: Date;
-  historicalProduction: number | null;
-  historicalConsumption: number | null;
+export type ReplayScenario = {
+  capacityScenario?: CapacityScenarioConfig;
+  batteryScenario?: BatteryConfig;
 };
 
-/** Step 3's output, at native 5-minute resolution. */
+/** Capacity Scenario step's output, at native 5-minute resolution (no-battery path only). */
 export type ScenarioInterval = {
   intervalStart: Date;
   newProduction: number | null;
@@ -62,31 +68,63 @@ export type ScenarioInterval = {
   newImport: number | null;
 };
 
+/**
+ * The single per-interval shape `ReplayOutcome.intervals` returns,
+ * regardless of which layers ran. Resolution differs by path (native
+ * 5-minute for no-battery, 15-minute for battery-enabled - the battery
+ * engine's own already-validated native dispatch resolution, matching the
+ * settlement grid) - each path is honest about its own native granularity
+ * rather than forcing a shared one that would either violate byte-identical
+ * no-battery output or discard real battery dispatch resolution.
+ */
+export type ReplayIntervalOutcome = {
+  intervalStart: Date;
+  productionKwh: number | null;
+  availablePvKwh: number | null;
+  consumptionKwh: number | null;
+  exportedKwh: number | null;
+  importedKwh: number | null;
+  chargeKwh: number | null;
+  dischargeKwh: number | null;
+  socKwh: number | null;
+};
+
 export type ReplayTotals = {
+  /** Post-capacity-scaling total PV production. */
   productionKwh: number;
+  /** Pre-capacity-scaling, curtailment-corrected available PV. Equal to productionKwh when no capacity scenario is applied. */
+  availablePvKwh: number;
+  consumptionKwh: number;
   exportedKwh: number;
   importedKwh: number;
 };
 
-export type ReplayOutcome = {
-  topology: PlantTopology;
-  /** Native 5-minute simulated intervals. */
-  intervals: ScenarioInterval[];
-  totals: ReplayTotals;
-  revenue: RevenueSummary;
+export type ReplayBatteryTotals = {
+  chargedEnergyKwh: number;
+  dischargedEnergyKwh: number;
+  batteryLossesKwh: number;
+  throughputKwh: number;
+  finalSocKwh: number;
+  peakSocKwh: number;
 };
 
-const NATIVE_INTERVAL_MINUTES = 5;
+export type ReplayOutcome = {
+  topology: PlantTopology;
+  totals: ReplayTotals;
+  /** null when no battery scenario was run. */
+  battery: ReplayBatteryTotals | null;
+  revenue: RevenueSummary;
+  intervals: ReplayIntervalOutcome[];
+};
 
 function sumNullable(values: Array<number | null>): number {
   return Math.round(values.reduce((sum: number, v) => sum + (v ?? 0), 0) * 100) / 100;
 }
 
 /**
- * Battery Simulation milestone: exported, unchanged, so
- * `lib/digital-twin/battery-replay-engine.ts` reuses this exact price-shape
- * adapter instead of a third copy (the Digital Twin UI's own actions.ts
- * already has one duplicate of this same six-line mapping).
+ * Exported, unchanged, so `battery-engine-report.ts`'s diagnostics can fetch
+ * the same price series the replay itself used, independent of a scenario
+ * result.
  */
 export async function fetchPriceSeries(start: Date, end: Date): Promise<MarketPricePoint[]> {
   const result = await dbMarketPriceProvider.getPricesInRange({ start, end });
@@ -106,105 +144,22 @@ export async function fetchPriceSeries(start: Date, end: Date): Promise<MarketPr
 }
 
 /**
- * Step 1 + Step 2. Loads native 5-minute telemetry and reconstructs the
- * historical consumption profile exactly once. No scenario is considered
- * here - this is data preparation, immutable for every capacity factor
- * evaluated afterward.
+ * Capacity Scenario step. Pure and deterministic - identical for every
+ * plant. Topology is not consulted here at all; `consumptionKwh` already
+ * encodes the only difference (0 for a Producer). Unchanged formula from
+ * before this milestone - only the input type changed, from raw
+ * `HistoricalInterval` to post-reconstruction `AvailablePvInterval`, since
+ * Available PV Reconstruction now always runs first.
  */
-/**
- * Battery Simulation milestone: exported, unchanged, so the Battery
- * Engine's Available PV reconstruction (`lib/digital-twin/
- * available-pv-reconstruction.ts`) reuses this exact historical-telemetry
- * loading/consumption-reconstruction step instead of a second
- * implementation. The Battery Engine calls this with a WIDENED date range
- * (beyond the requested simulation period) purely to have enough
- * neighbouring days available for reconstruction - this function itself is
- * untouched and has no idea a battery scenario exists.
- */
-export async function buildHistoricalIntervals(
-  plantId: string,
-  start: Date,
-  end: Date,
-): Promise<{ topology: PlantTopology; intervals: HistoricalInterval[] }> {
-  const topology = await getPlantTopology(plantId);
-  const rawSeries = await getPlantTelemetrySeries(plantId, start, end);
-
-  // Consecutive real-sample pairs - each pair is one native 5-minute
-  // interval, [previous.timestamp, current.timestamp).
-  const pairs: Array<{ previous: (typeof rawSeries)[number]; current: (typeof rawSeries)[number] }> = [];
-  for (let i = 1; i < rawSeries.length; i += 1) {
-    const previous = rawSeries[i - 1];
-    const current = rawSeries[i];
-    if (previous && current) {
-      pairs.push({ previous, current });
-    }
-  }
-
-  if (topology === "Producer") {
-    const intervals: HistoricalInterval[] = pairs.map(({ previous, current }) => {
-      const historicalProduction =
-        previous.productionKw !== null
-          ? integrateKwh([
-              { timestamp: previous.timestamp, kw: previous.productionKw },
-              { timestamp: current.timestamp, kw: current.productionKw },
-            ])
-          : null;
-
-      return { intervalStart: previous.timestamp, historicalProduction, historicalConsumption: 0 };
-    });
-
-    return { topology, intervals };
-  }
-
-  // Prosumer: export/import at native 5-minute granularity, via the same
-  // counter-lookup function already used at 15-minute granularity elsewhere
-  // - a forward counter lookup is valid at any interval width, unlike
-  // power integration (see this module's own investigation record).
-  const settlement5 = await getPlantSettlementEnergySeries(plantId, start, end, NATIVE_INTERVAL_MINUTES);
-  const settlementByTime = new Map(settlement5.map((point) => [point.intervalStart.getTime(), point]));
-
-  const intervals: HistoricalInterval[] = pairs.map(({ previous, current }) => {
-    const historicalProduction =
-      previous.productionKw !== null
-        ? integrateKwh([
-            { timestamp: previous.timestamp, kw: previous.productionKw },
-            { timestamp: current.timestamp, kw: current.productionKw },
-          ])
-        : null;
-
-    // The settlement bucket [previous.timestamp, current.timestamp) is
-    // keyed by its start - the same instant this pair's production
-    // integration also starts from, so both describe the identical window.
-    const settlement = settlementByTime.get(previous.timestamp.getTime()) ?? null;
-    const historicalExport = settlement?.exportedKwh ?? null;
-    const historicalImport = settlement?.importedKwh ?? null;
-
-    const historicalConsumption =
-      historicalProduction !== null && historicalExport !== null && historicalImport !== null
-        ? historicalProduction - historicalExport + historicalImport
-        : null;
-
-    return { intervalStart: previous.timestamp, historicalProduction, historicalConsumption };
-  });
-
-  return { topology, intervals };
-}
-
-/**
- * Step 3. Pure and deterministic - identical for every plant. Topology is
- * not consulted here at all; `historicalConsumption` already encodes the
- * only difference (0 for a Producer).
- */
-function runCapacityScenario(intervals: HistoricalInterval[], capacityFactor: number): ScenarioInterval[] {
+function runCapacityScenario(intervals: AvailablePvInterval[], capacityFactor: number): ScenarioInterval[] {
   return intervals.map((interval) => {
-    const newProduction =
-      interval.historicalProduction !== null ? interval.historicalProduction * capacityFactor : null;
+    const newProduction = interval.availablePvKwh !== null ? interval.availablePvKwh * capacityFactor : null;
 
-    if (newProduction === null || interval.historicalConsumption === null) {
+    if (newProduction === null || interval.consumptionKwh === null) {
       return { intervalStart: interval.intervalStart, newProduction, newExport: null, newImport: null };
     }
 
-    const balance = newProduction - interval.historicalConsumption;
+    const balance = newProduction - interval.consumptionKwh;
 
     return {
       intervalStart: interval.intervalStart,
@@ -215,7 +170,7 @@ function runCapacityScenario(intervals: HistoricalInterval[], capacityFactor: nu
   });
 }
 
-/** Step 4. Sums native 5-minute simulated intervals into the standard 15-minute settlement grid. */
+/** Sums native 5-minute simulated intervals into the standard 15-minute settlement grid. */
 function aggregateToSettlementIntervals(intervals: ScenarioInterval[]): SettlementEnergyPoint[] {
   const bucketMs = SETTLEMENT_INTERVAL_MINUTES * 60 * 1000;
   const buckets = new Map<number, { exportedKwh: number | null; importedKwh: number | null }>();
@@ -237,43 +192,169 @@ function aggregateToSettlementIntervals(intervals: ScenarioInterval[]): Settleme
     .map(([t, v]) => ({ intervalStart: new Date(t), exportedKwh: v.exportedKwh, importedKwh: v.importedKwh }));
 }
 
-export async function replayCapacityScenario(params: {
+async function replayNoBattery(params: {
+  plantId: string;
+  organizationId: string;
+  start: Date;
+  end: Date;
+  capacityFactor: number;
+}): Promise<ReplayOutcome> {
+  const { plantId, organizationId, start, end, capacityFactor } = params;
+
+  const [{ topology, intervals: historicalIntervals }, availablePvWide, priceSeries] = await Promise.all([
+    buildHistoricalIntervals(plantId, start, end),
+    reconstructAvailablePv({ plantId, organizationId, start, end }),
+    fetchPriceSeries(start, end),
+  ]);
+
+  // reconstructAvailablePv widens its own query range (up to ±30 days) to
+  // have neighbour days available for curtailment correction, and derives
+  // its own [start, end) interval set independently from that wider query -
+  // which can legitimately include one boundary interval buildHistoricalIntervals's
+  // own narrow [start, end) query would not have had a "next" sample to
+  // pair with and form. Re-keying onto buildHistoricalIntervals's own
+  // interval set (queried at the exact requested range, unchanged from
+  // before this milestone) guarantees the exact same interval count/set as
+  // the pre-unification implementation - required for byte-identical
+  // capacity-only output - while still picking up curtailment-corrected
+  // values wherever reconstruction actually changed one.
+  const availablePvByTime = new Map(availablePvWide.map((interval) => [interval.intervalStart.getTime(), interval]));
+  const availablePv: AvailablePvInterval[] = historicalIntervals.map((interval) => {
+    const corrected = availablePvByTime.get(interval.intervalStart.getTime());
+    return (
+      corrected ?? {
+        intervalStart: interval.intervalStart,
+        availablePvKwh: interval.historicalProduction,
+        consumptionKwh: interval.historicalConsumption,
+      }
+    );
+  });
+
+  const scenarioIntervals = runCapacityScenario(availablePv, capacityFactor);
+  const settlementIntervals = aggregateToSettlementIntervals(scenarioIntervals);
+  const settlementTotals = sumSettlementEnergy(settlementIntervals);
+  const revenue = computeExportRevenue(priceSeries, settlementIntervals);
+
+  const intervals: ReplayIntervalOutcome[] = scenarioIntervals.map((interval, index) => ({
+    intervalStart: interval.intervalStart,
+    productionKwh: interval.newProduction,
+    availablePvKwh: availablePv[index]?.availablePvKwh ?? null,
+    consumptionKwh: availablePv[index]?.consumptionKwh ?? null,
+    exportedKwh: interval.newExport,
+    importedKwh: interval.newImport,
+    chargeKwh: null,
+    dischargeKwh: null,
+    socKwh: null,
+  }));
+
+  return {
+    topology,
+    totals: {
+      productionKwh: sumNullable(scenarioIntervals.map((i) => i.newProduction)),
+      availablePvKwh: sumNullable(availablePv.map((i) => i.availablePvKwh)),
+      consumptionKwh: sumNullable(availablePv.map((i) => i.consumptionKwh)),
+      exportedKwh: settlementTotals.exportedKwh,
+      importedKwh: settlementTotals.importedKwh,
+    },
+    battery: null,
+    revenue,
+    intervals,
+  };
+}
+
+async function replayWithBattery(params: {
+  plantId: string;
+  organizationId: string;
+  start: Date;
+  end: Date;
+  capacityFactor: number;
+  batteryScenario: BatteryConfig;
+}): Promise<ReplayOutcome> {
+  const { plantId, organizationId, start, end, capacityFactor, batteryScenario } = params;
+
+  const [topology, nativeAvailablePv, priceSeries] = await Promise.all([
+    getPlantTopology(plantId),
+    reconstructAvailablePv({ plantId, organizationId, start, end }),
+    fetchPriceSeries(start, end),
+  ]);
+
+  const fifteenMinAvailablePv = aggregateAvailablePvTo15Min(nativeAvailablePv);
+  const dispatch: BatteryDispatchInterval[] = runBatteryDispatch(fifteenMinAvailablePv, capacityFactor, priceSeries, batteryScenario);
+
+  const revenue = computeExportRevenue(priceSeries, dispatch);
+
+  const intervals: ReplayIntervalOutcome[] = dispatch.map((interval, index) => ({
+    intervalStart: interval.intervalStart,
+    // dispatch.availablePvKwh is already capacity-scaled (runBatteryDispatch's own output contract) - this is "production", the post-scaling PV.
+    productionKwh: interval.availablePvKwh,
+    availablePvKwh: fifteenMinAvailablePv[index]?.availablePvKwh ?? null,
+    consumptionKwh: interval.consumptionKwh,
+    exportedKwh: interval.exportedKwh,
+    importedKwh: interval.importedKwh,
+    chargeKwh: interval.chargeKwh,
+    dischargeKwh: interval.dischargeKwh,
+    socKwh: interval.socKwh,
+  }));
+
+  const eta = Math.sqrt(batteryScenario.roundTripEfficiencyPercent / 100);
+  const chargedEnergyKwh = sumNullable(dispatch.map((i) => i.chargeKwh));
+  const dischargedEnergyKwh = sumNullable(dispatch.map((i) => i.dischargeKwh));
+  const batteryLossesKwh =
+    Math.round(dispatch.reduce((sum, i) => sum + i.chargeKwh * (1 - eta) + i.dischargeKwh * (1 / eta - 1), 0) * 100) / 100;
+  const throughputKwh = Math.round((chargedEnergyKwh + dischargedEnergyKwh) * 100) / 100;
+  const finalSocKwh = dispatch.length > 0 ? dispatch[dispatch.length - 1]!.socKwh : 0;
+  const peakSocKwh = dispatch.length > 0 ? Math.max(...dispatch.map((i) => i.socKwh)) : 0;
+
+  return {
+    topology,
+    totals: {
+      productionKwh: sumNullable(dispatch.map((i) => i.availablePvKwh)),
+      availablePvKwh: sumNullable(fifteenMinAvailablePv.map((i) => i.availablePvKwh)),
+      consumptionKwh: sumNullable(dispatch.map((i) => i.consumptionKwh)),
+      exportedKwh: sumNullable(dispatch.map((i) => i.exportedKwh)),
+      importedKwh: sumNullable(dispatch.map((i) => i.importedKwh)),
+    },
+    battery: { chargedEnergyKwh, dischargedEnergyKwh, batteryLossesKwh, throughputKwh, finalSocKwh, peakSocKwh },
+    revenue,
+    intervals,
+  };
+}
+
+/** The single replay entry point. Executes only the scenario layers `scenario` enables. */
+export async function replay(params: {
   plantId: string;
   start: Date;
   end: Date;
-  scenario: CapacityScenario;
+  scenario: ReplayScenario;
 }): Promise<ReplayOutcome> {
   const { plantId, start, end, scenario } = params;
 
   const plant = await prisma.plant.findUnique({
     where: { id: plantId },
-    select: { capacityKw: true },
+    select: { capacityKw: true, organizationId: true },
   });
 
-  const currentCapacityKw = plant?.capacityKw ? Number(plant.capacityKw) : null;
+  if (!plant) {
+    throw new Error("Plant not found");
+  }
+
+  const currentCapacityKw = plant.capacityKw ? Number(plant.capacityKw) : null;
   if (!currentCapacityKw) {
     throw new Error("Plant has no configured installed capacity to derive a capacity factor from");
   }
 
-  const capacityFactor = scenario.newCapacityKw / currentCapacityKw;
+  const capacityFactor = scenario.capacityScenario ? scenario.capacityScenario.newCapacityKw / currentCapacityKw : 1;
 
-  const { topology, intervals: historicalIntervals } = await buildHistoricalIntervals(plantId, start, end);
-  const intervals = runCapacityScenario(historicalIntervals, capacityFactor);
+  if (scenario.batteryScenario) {
+    return replayWithBattery({
+      plantId,
+      organizationId: plant.organizationId,
+      start,
+      end,
+      capacityFactor,
+      batteryScenario: scenario.batteryScenario,
+    });
+  }
 
-  const settlementIntervals = aggregateToSettlementIntervals(intervals);
-
-  const priceSeries = await fetchPriceSeries(start, end);
-  const settlementTotals = sumSettlementEnergy(settlementIntervals);
-  const revenue = computeExportRevenue(priceSeries, settlementIntervals);
-
-  return {
-    topology,
-    intervals,
-    totals: {
-      productionKwh: sumNullable(intervals.map((i) => i.newProduction)),
-      exportedKwh: settlementTotals.exportedKwh,
-      importedKwh: settlementTotals.importedKwh,
-    },
-    revenue,
-  };
+  return replayNoBattery({ plantId, organizationId: plant.organizationId, start, end, capacityFactor });
 }

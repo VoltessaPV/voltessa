@@ -2,7 +2,7 @@
 
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { requirePlatformAdmin } from "@/lib/auth/session";
-import { replayCapacityScenario, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
+import { replay, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
 import {
   aggregatePriceSeriesForChart,
   aggregateSettlementSeriesForChart,
@@ -65,8 +65,9 @@ export type DigitalTwinResult =
  * here (not exported from `replay-engine.ts`, per the explicit instruction
  * not to touch the Simulation Engine for this milestone) purely to feed
  * `MarketPriceChart`'s existing prop shape. Mechanical bucketing only - the
- * `ScenarioInterval[]` it consumes already comes entirely from
- * `replayCapacityScenario`, no new calculation happens here.
+ * `ReplayIntervalOutcome[]` it consumes already comes entirely from
+ * `replay` (capacity-only scenario, native 5-minute resolution), no new
+ * calculation happens here.
  */
 function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]): SettlementEnergyPoint[] {
   const bucketMs = 15 * 60 * 1000;
@@ -78,9 +79,9 @@ function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]):
 
     buckets.set(bucketStart, {
       exportedKwh:
-        interval.newExport !== null ? (existing.exportedKwh ?? 0) + interval.newExport : existing.exportedKwh,
+        interval.exportedKwh !== null ? (existing.exportedKwh ?? 0) + interval.exportedKwh : existing.exportedKwh,
       importedKwh:
-        interval.newImport !== null ? (existing.importedKwh ?? 0) + interval.newImport : existing.importedKwh,
+        interval.importedKwh !== null ? (existing.importedKwh ?? 0) + interval.importedKwh : existing.importedKwh,
     });
   }
 
@@ -146,12 +147,12 @@ function resolveRange(
 
 /**
  * Digital Twin's only Server Action. Every number the page displays comes
- * from `replayCapacityScenario` (called twice - once at the plant's real
- * current capacity, once at the administrator's chosen capacity) plus the
- * already-existing `computeConsumedFromPv` for self-consumption. No
- * business calculation happens in this file beyond composing those
- * existing, approved functions and resolving the requested period via
- * `lib/market-price/timezone.ts`'s existing calendar helpers.
+ * from `replay` (called twice with a capacity-only scenario - once at the
+ * plant's real current capacity, once at the administrator's chosen
+ * capacity) plus the already-existing `computeConsumedFromPv` for
+ * self-consumption. No business calculation happens in this file beyond
+ * composing those existing, approved functions and resolving the requested
+ * period via `lib/market-price/timezone.ts`'s existing calendar helpers.
  */
 export async function runDigitalTwinSimulation(
   plantId: string,
@@ -176,8 +177,8 @@ export async function runDigitalTwinSimulation(
     const { start, end } = resolveRange(period, customStart, customEnd);
 
     const [currentOutcome, simulatedOutcome, priceResult] = await Promise.all([
-      replayCapacityScenario({ plantId, start, end, scenario: { type: "capacity", newCapacityKw: currentCapacityKw } }),
-      replayCapacityScenario({ plantId, start, end, scenario: { type: "capacity", newCapacityKw } }),
+      replay({ plantId, start, end, scenario: { capacityScenario: { newCapacityKw: currentCapacityKw } } }),
+      replay({ plantId, start, end, scenario: { capacityScenario: { newCapacityKw } } }),
       dbMarketPriceProvider.getPricesInRange({ start, end }),
     ]);
 
