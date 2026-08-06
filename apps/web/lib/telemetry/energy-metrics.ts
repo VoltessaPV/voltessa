@@ -142,7 +142,14 @@ export type PlantProductionSeriesMetrics = {
   sampleCount: number;
 };
 
-function integrateKwh(
+/**
+ * Exported so a caller needing PER-PAIR energy (not just a whole-series
+ * total) can call this once per consecutive pair (e.g. `integrateKwh([a, b])`)
+ * and get exactly that pair's contribution, with the identical gap-tolerance
+ * rule applied - see Digital Twin's replay engine
+ * (`lib/digital-twin/replay-engine.ts`) for this exact use.
+ */
+export function integrateKwh(
   points: Array<{ timestamp: Date; kw: number | null }>,
 ): number {
   let totalKwh = 0;
