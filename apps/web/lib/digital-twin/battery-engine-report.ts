@@ -1,5 +1,4 @@
-import type { BatteryConfig } from "@/lib/digital-twin/battery-dispatch";
-import { replayBatteryScenario } from "@/lib/digital-twin/battery-replay-engine";
+import type { BatteryConfig, BatteryDispatchInterval } from "@/lib/digital-twin/battery-dispatch";
 import {
   buildIntervalDiagnostics,
   type ConstraintViolation,
@@ -8,7 +7,7 @@ import {
   validateEnergyBalance,
 } from "@/lib/digital-twin/battery-diagnostics";
 import { runOptimalityCheck, SYNTHETIC_OPTIMALITY_TEST_CASES, type OptimalityCheckResult } from "@/lib/digital-twin/battery-optimality-check";
-import { fetchPriceSeries, replayCapacityScenario } from "@/lib/digital-twin/replay-engine";
+import { fetchPriceSeries, replay, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -44,15 +43,40 @@ export type ReferenceScenarioResult = {
   sampleViolations: Array<EnergyBalanceViolation | ConstraintViolation>;
 };
 
-async function runReferenceScenario(definition: ReferenceScenarioDefinition): Promise<ReferenceScenarioResult> {
-  if (definition.battery === null) {
-    const outcome = await replayCapacityScenario({
-      plantId: definition.plantId,
-      start: definition.start,
-      end: definition.end,
-      scenario: { type: "capacity", newCapacityKw: definition.newCapacityKw },
-    });
+/**
+ * Adapts the orchestrator's unified per-interval shape back into
+ * `BatteryDispatchInterval[]` for `battery-diagnostics.ts`, which is only
+ * ever meaningful when a battery scenario actually ran (every field here is
+ * guaranteed non-null in that case - see `replay-engine.ts`'s
+ * `replayWithBattery`). `availablePvKwh` maps from `productionKwh` (the
+ * post-capacity-scaling value `runBatteryDispatch` itself dispatches
+ * against), not the unified outcome's own pre-scaling `availablePvKwh`.
+ */
+function toBatteryDispatchIntervals(intervals: ReplayOutcome["intervals"]): BatteryDispatchInterval[] {
+  return intervals.map((i) => ({
+    intervalStart: i.intervalStart,
+    availablePvKwh: i.productionKwh!,
+    consumptionKwh: i.consumptionKwh!,
+    chargeKwh: i.chargeKwh!,
+    dischargeKwh: i.dischargeKwh!,
+    exportedKwh: i.exportedKwh!,
+    importedKwh: i.importedKwh!,
+    socKwh: i.socKwh!,
+  }));
+}
 
+async function runReferenceScenario(definition: ReferenceScenarioDefinition): Promise<ReferenceScenarioResult> {
+  const outcome = await replay({
+    plantId: definition.plantId,
+    start: definition.start,
+    end: definition.end,
+    scenario: {
+      capacityScenario: { newCapacityKw: definition.newCapacityKw },
+      batteryScenario: definition.battery ?? undefined,
+    },
+  });
+
+  if (outcome.battery === null) {
     return {
       name: definition.name,
       topology: outcome.topology,
@@ -69,20 +93,15 @@ async function runReferenceScenario(definition: ReferenceScenarioDefinition): Pr
     };
   }
 
-  const outcome = await replayBatteryScenario({
-    plantId: definition.plantId,
-    start: definition.start,
-    end: definition.end,
-    newCapacityKw: definition.newCapacityKw,
-    battery: definition.battery,
-  });
+  const battery = definition.battery!;
   const priceSeries = await fetchPriceSeries(definition.start, definition.end);
+  const dispatchIntervals = toBatteryDispatchIntervals(outcome.intervals);
 
-  const diagnostics = buildIntervalDiagnostics(outcome.intervals, priceSeries, definition.battery);
-  const balanceViolations = validateEnergyBalance(diagnostics, definition.battery);
-  const constraintViolations = validateConstraints(diagnostics, definition.battery);
+  const diagnostics = buildIntervalDiagnostics(dispatchIntervals, priceSeries, battery);
+  const balanceViolations = validateEnergyBalance(diagnostics, battery);
+  const constraintViolations = validateConstraints(diagnostics, battery);
 
-  const eta = Math.sqrt(definition.battery.roundTripEfficiencyPercent / 100);
+  const eta = Math.sqrt(battery.roundTripEfficiencyPercent / 100);
   const roundTripLossesKwh =
     Math.round(
       diagnostics.reduce((sum, d) => sum + d.batteryChargeKwh * (1 - eta) + d.batteryDischargeKwh * (1 / eta - 1), 0) * 100,
@@ -94,9 +113,9 @@ async function runReferenceScenario(definition: ReferenceScenarioDefinition): Pr
     totalRevenueEur: outcome.revenue.available ? outcome.revenue.revenueEur : null,
     exportedKwh: outcome.totals.exportedKwh,
     importedKwh: outcome.totals.importedKwh,
-    chargeKwh: outcome.totals.chargeKwh,
-    dischargeKwh: outcome.totals.dischargeKwh,
-    batteryThroughputKwh: Math.round((outcome.totals.chargeKwh + outcome.totals.dischargeKwh) * 100) / 100,
+    chargeKwh: outcome.battery.chargedEnergyKwh,
+    dischargeKwh: outcome.battery.dischargedEnergyKwh,
+    batteryThroughputKwh: outcome.battery.throughputKwh,
     roundTripLossesKwh,
     energyBalanceViolationCount: balanceViolations.length,
     constraintViolationCount: constraintViolations.length,

@@ -9,8 +9,8 @@ export { pageHeading } from "./heading";
  * Platform Admin's capacity-scenario planning tool - a pure UI client of
  * the existing Digital Twin Simulation Engine (`lib/digital-twin/
  * replay-engine.ts`, ADR-018). This page performs no business
- * calculations itself: every number rendered comes from
- * `replayCapacityScenario` via `./actions.ts`. Reuses the exact same
+ * calculations itself: every number rendered comes from `replay`
+ * (capacity-only scenario) via `./actions.ts`. Reuses the exact same
  * cross-organization plant list Automation Lab already built
  * (`listAutomationLabPlants`) rather than a second plant query.
  */
