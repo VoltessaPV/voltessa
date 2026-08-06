@@ -6,7 +6,7 @@ import { replayCapacityScenario, type ReplayOutcome } from "@/lib/digital-twin/r
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { localDayBoundsUtc, localMonthBoundsUtc, localWeekBoundsUtc, previousPeriodBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
-import { computeConsumedFromPv, type SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
+import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
 
 const BULGARIA_TIMEZONE = "Europe/Sofia";
 
@@ -65,12 +65,24 @@ function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]):
     .map(([t, v]) => ({ intervalStart: new Date(t), exportedKwh: v.exportedKwh, importedKwh: v.importedKwh }));
 }
 
+/**
+ * Self-consumption is never recomputed independently - the replay engine
+ * reconstructs `historicalConsumption` exactly once, before the scenario
+ * runs, and every simulated interval afterward only changes production;
+ * export/import fall out of the single balance equation
+ * (`replay-engine.ts`'s `runCapacityScenario`). Self-consumption is
+ * therefore the direct consequence of that same balance -
+ * `newProduction - newExport` (equivalently `historicalConsumption -
+ * newImport`) - computed here only from the engine's own already-simulated
+ * totals, never by calling `computeConsumedFromPv` (or any other function)
+ * against raw/historical data during the simulation.
+ */
 function toMetrics(outcome: ReplayOutcome): DigitalTwinMetrics {
   return {
     productionKwh: outcome.totals.productionKwh,
     exportedKwh: outcome.totals.exportedKwh,
     importedKwh: outcome.totals.importedKwh,
-    selfConsumptionKwh: computeConsumedFromPv(outcome.totals.productionKwh, outcome.totals.exportedKwh) ?? 0,
+    selfConsumptionKwh: Math.round((outcome.totals.productionKwh - outcome.totals.exportedKwh) * 100) / 100,
     revenueEur: outcome.revenue.available ? outcome.revenue.revenueEur : null,
   };
 }
