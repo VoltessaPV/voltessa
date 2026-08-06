@@ -1,0 +1,127 @@
+import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
+import { localDayBoundsUtc } from "@/lib/market-price/timezone";
+import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
+
+/**
+ * Digital Twin Milestone 6 (Adaptive Visualization). Generalizes the exact
+ * bucketing/weighted-average-price technique Market's page.tsx already uses
+ * for its Week/Month/Year charts (`bucketSettlementForChart`/
+ * `buildAspChartSeries`, day/month granularity only, private to that page)
+ * to also support hourly buckets, so Digital Twin's charts can reuse one
+ * shared helper instead of a second copy of the same pattern. Purely a
+ * presentation-layer aggregation over already-computed settlement/price
+ * series - never re-runs a simulation or the Revenue Engine.
+ */
+export type ChartResolution = "native" | "hourly" | "daily";
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/**
+ * The adaptive resolution rule: 1 day or less -> native (whatever grid the
+ * caller already has, e.g. the 15-minute settlement grid); 2-7 days ->
+ * hourly; more than 7 days -> daily.
+ */
+export function resolveChartResolution(rangeStart: Date, rangeEnd: Date): ChartResolution {
+  const days = (rangeEnd.getTime() - rangeStart.getTime()) / DAY_MS;
+  if (days <= 1) return "native";
+  if (days <= 7) return "hourly";
+  return "daily";
+}
+
+/**
+ * An hour boundary in Europe/Sofia always coincides with a UTC hour
+ * boundary (its offset is always a whole number of hours, DST transitions
+ * included), so hourly bucketing needs no timezone-aware math - unlike a
+ * calendar day boundary, which does (`localDayBoundsUtc`).
+ */
+function bucketStart(instant: Date, resolution: "hourly" | "daily", timeZone: string): number {
+  if (resolution === "hourly") {
+    return Math.floor(instant.getTime() / HOUR_MS) * HOUR_MS;
+  }
+  return localDayBoundsUtc(instant, timeZone).start.getTime();
+}
+
+function mergeSum(existing: number | null | undefined, value: number | null): number | null {
+  return value === null ? (existing ?? null) : (existing ?? 0) + value;
+}
+
+/**
+ * Sums a settlement-energy series (export + import) into hourly or daily
+ * buckets. `resolution: "native"` returns `points` unchanged.
+ */
+export function aggregateSettlementSeriesForChart(
+  points: SettlementEnergyPoint[],
+  resolution: ChartResolution,
+  timeZone: string,
+): SettlementEnergyPoint[] {
+  if (resolution === "native") {
+    return points;
+  }
+
+  const buckets = new Map<number, { exportedKwh: number | null; importedKwh: number | null }>();
+
+  for (const point of points) {
+    const bucket = bucketStart(point.intervalStart, resolution, timeZone);
+    const existing = buckets.get(bucket) ?? { exportedKwh: null, importedKwh: null };
+
+    buckets.set(bucket, {
+      exportedKwh: mergeSum(existing.exportedKwh, point.exportedKwh),
+      importedKwh: mergeSum(existing.importedKwh, point.importedKwh),
+    });
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, v]) => ({ intervalStart: new Date(t), exportedKwh: v.exportedKwh, importedKwh: v.importedKwh }));
+}
+
+/**
+ * The chart's Average Selling Price line at the same hourly/daily
+ * resolution - `Σ(exportedKwh × price) / Σ(exportedKwh)` per bucket
+ * (identical formula to Market's `buildAspChartSeries`), weighted by
+ * `settlementSeries`'s own exported energy so Current and Simulated charts
+ * each show the price actually realized by THAT column's export profile,
+ * not a shared/blended figure. `resolution: "native"` returns `priceSeries`
+ * unchanged.
+ */
+export function aggregatePriceSeriesForChart(
+  priceSeries: MarketPricePoint[],
+  settlementSeries: Pick<SettlementEnergyPoint, "intervalStart" | "exportedKwh">[],
+  resolution: ChartResolution,
+  timeZone: string,
+): MarketPricePoint[] {
+  if (resolution === "native") {
+    return priceSeries;
+  }
+
+  const exportedByTime = new Map(settlementSeries.map((point) => [point.intervalStart.getTime(), point.exportedKwh]));
+
+  const revenueByBucket = new Map<number, number>();
+  const exportedByBucket = new Map<number, number>();
+
+  for (const point of priceSeries) {
+    if (point.price === null) {
+      continue;
+    }
+
+    const exportedKwh = exportedByTime.get(point.timestamp.getTime());
+    if (exportedKwh === undefined || exportedKwh === null) {
+      continue;
+    }
+
+    const bucket = bucketStart(point.timestamp, resolution, timeZone);
+    revenueByBucket.set(bucket, (revenueByBucket.get(bucket) ?? 0) + (exportedKwh * point.price) / 1000);
+    exportedByBucket.set(bucket, (exportedByBucket.get(bucket) ?? 0) + exportedKwh);
+  }
+
+  return [...exportedByBucket.keys()]
+    .sort((a, b) => a - b)
+    .map((bucket) => {
+      const exportedKwh = exportedByBucket.get(bucket) ?? 0;
+      const revenueEur = revenueByBucket.get(bucket) ?? 0;
+      const price = exportedKwh > 0 ? Math.round((revenueEur / (exportedKwh / 1000)) * 100) / 100 : null;
+
+      return { timestamp: new Date(bucket), price, exportEnabled: false };
+    });
+}

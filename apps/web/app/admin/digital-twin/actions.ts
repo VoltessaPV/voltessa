@@ -3,10 +3,17 @@
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 import { replayCapacityScenario, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
+import {
+  aggregatePriceSeriesForChart,
+  aggregateSettlementSeriesForChart,
+  resolveChartResolution,
+  type ChartResolution,
+} from "@/lib/market-price/chart-aggregation";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { localDayBoundsUtc, localMonthBoundsUtc, localWeekBoundsUtc, previousPeriodBoundsUtc } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
 import type { SettlementEnergyPoint } from "@/lib/telemetry/energy-metrics";
+import type { PlantTopology } from "@/lib/telemetry/plant-topology";
 
 const BULGARIA_TIMEZONE = "Europe/Sofia";
 
@@ -20,19 +27,30 @@ export type DigitalTwinMetrics = {
   revenueEur: number | null;
 };
 
+export type DigitalTwinChartSeries = {
+  price: MarketPricePoint[];
+  settlement: SettlementEnergyPoint[];
+};
+
 export type DigitalTwinResult =
   | {
       ok: true;
       rangeStart: Date;
       rangeEnd: Date;
+      topology: PlantTopology;
       currentCapacityKw: number;
       newCapacityKw: number;
       capacityFactor: number;
       current: DigitalTwinMetrics;
       simulated: DigitalTwinMetrics;
-      priceSeries: MarketPricePoint[];
-      currentSettlementSeries: SettlementEnergyPoint[];
-      simulatedSettlementSeries: SettlementEnergyPoint[];
+      /**
+       * Adaptive Visualization milestone: the one resolution both charts
+       * below are always aggregated to, so Current/Simulated stay visually
+       * comparable - never mixed granularities.
+       */
+      chartResolution: ChartResolution;
+      currentChart: DigitalTwinChartSeries;
+      simulatedChart: DigitalTwinChartSeries;
     }
   | { ok: false; error: string };
 
@@ -164,18 +182,36 @@ export async function runDigitalTwinSimulation(
       ? priceResult.prices.map((row) => ({ timestamp: row.timestamp, price: row.price, exportEnabled: false }))
       : [];
 
+    // Adaptive Visualization milestone (Milestone 6): aggregation happens
+    // strictly after the simulation, over its already-computed 15-minute
+    // settlement grid - never a second replay at a different resolution.
+    // Current and Simulated always share the same `chartResolution` so the
+    // two charts stay visually comparable; only their own export profile
+    // (via `aggregatePriceSeriesForChart`'s weighting) can make their price
+    // lines differ.
+    const chartResolution = resolveChartResolution(start, end);
+    const currentSettlement15Min = aggregateNativeIntervalsTo15Min(currentOutcome.intervals);
+    const simulatedSettlement15Min = aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals);
+
     return {
       ok: true,
       rangeStart: start,
       rangeEnd: end,
+      topology: currentOutcome.topology,
       currentCapacityKw,
       newCapacityKw,
       capacityFactor: newCapacityKw / currentCapacityKw,
       current: toMetrics(currentOutcome),
       simulated: toMetrics(simulatedOutcome),
-      priceSeries,
-      currentSettlementSeries: aggregateNativeIntervalsTo15Min(currentOutcome.intervals),
-      simulatedSettlementSeries: aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals),
+      chartResolution,
+      currentChart: {
+        price: aggregatePriceSeriesForChart(priceSeries, currentSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
+        settlement: aggregateSettlementSeriesForChart(currentSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
+      },
+      simulatedChart: {
+        price: aggregatePriceSeriesForChart(priceSeries, simulatedSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
+        settlement: aggregateSettlementSeriesForChart(simulatedSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
+      },
     };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Simulation failed" };
