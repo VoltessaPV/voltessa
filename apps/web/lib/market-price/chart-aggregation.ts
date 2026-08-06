@@ -35,7 +35,7 @@ export function resolveChartResolution(rangeStart: Date, rangeEnd: Date): ChartR
  * included), so hourly bucketing needs no timezone-aware math - unlike a
  * calendar day boundary, which does (`localDayBoundsUtc`).
  */
-function bucketStart(instant: Date, resolution: "hourly" | "daily", timeZone: string): number {
+export function bucketStart(instant: Date, resolution: "hourly" | "daily", timeZone: string): number {
   if (resolution === "hourly") {
     return Math.floor(instant.getTime() / HOUR_MS) * HOUR_MS;
   }
@@ -138,4 +138,42 @@ export function aggregatePriceSeriesForChart(
 
       return { timestamp: new Date(bucket), price, exportEnabled: false };
     });
+}
+
+export type SocPoint = {
+  intervalStart: Date;
+  socKwh: number | null;
+};
+
+/**
+ * Battery Digital Twin UI milestone. SOC is state, not an energy flow - it
+ * must never be summed or averaged across a coarser bucket (that would
+ * blend physically meaningless intermediate values). The only valid
+ * aggregation is "the last known SOC within the bucket", exactly like
+ * reading a fuel gauge at the end of a period rather than adding up the
+ * readings you saw along the way. Relies on `points` already being in
+ * chronological order (true for every `ReplayOutcome.intervals` this
+ * feeds from) so "last write wins" per bucket is correct. `resolution:
+ * "native"` returns `points` unchanged, matching every other aggregator in
+ * this file.
+ */
+export function aggregateSocSeriesForChart(
+  points: SocPoint[],
+  resolution: ChartResolution,
+  timeZone: string,
+): SocPoint[] {
+  if (resolution === "native") {
+    return points;
+  }
+
+  const lastByBucket = new Map<number, number | null>();
+
+  for (const point of points) {
+    const bucket = bucketStart(point.intervalStart, resolution, timeZone);
+    lastByBucket.set(bucket, point.socKwh);
+  }
+
+  return [...lastByBucket.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, socKwh]) => ({ intervalStart: new Date(t), socKwh }));
 }

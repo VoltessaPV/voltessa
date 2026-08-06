@@ -2,12 +2,17 @@
 
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { requirePlatformAdmin } from "@/lib/auth/session";
+import type { BatteryConfig } from "@/lib/digital-twin/battery-dispatch";
+import { type BatteryIntervalDiagnostic, buildIntervalDiagnostics } from "@/lib/digital-twin/battery-diagnostics";
+import { toBatteryDispatchIntervals } from "@/lib/digital-twin/battery-engine-report";
 import { replay, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
 import {
   aggregatePriceSeriesForChart,
   aggregateSettlementSeriesForChart,
+  aggregateSocSeriesForChart,
   resolveChartResolution,
   type ChartResolution,
+  type SocPoint,
 } from "@/lib/market-price/chart-aggregation";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import { localDayBoundsUtc, localMonthBoundsUtc, localWeekBoundsUtc, previousPeriodBoundsUtc } from "@/lib/market-price/timezone";
@@ -38,6 +43,23 @@ export type DigitalTwinChartSeries = {
   settlement: SettlementEnergyPoint[];
 };
 
+/**
+ * Battery Digital Twin UI milestone. Every field here is read straight off
+ * `ReplayOutcome.battery` (`lib/digital-twin/replay-engine.ts`) except
+ * `capacityKwh`, which is the battery size the caller configured (an input
+ * echoed back, not a simulation output - `ReplayOutcome` has no notion of
+ * "capacity", only what the battery actually did).
+ */
+export type DigitalTwinBatteryMetrics = {
+  capacityKwh: number;
+  chargedEnergyKwh: number;
+  dischargedEnergyKwh: number;
+  throughputKwh: number;
+  batteryLossesKwh: number;
+  peakSocKwh: number;
+  finalSocKwh: number;
+};
+
 export type DigitalTwinResult =
   | {
       ok: true;
@@ -49,6 +71,22 @@ export type DigitalTwinResult =
       capacityFactor: number;
       current: DigitalTwinMetrics;
       simulated: DigitalTwinMetrics;
+      /** null when the battery scenario is disabled - "Current" never has a battery, only "Simulated" ever can. */
+      simulatedBattery: DigitalTwinBatteryMetrics | null;
+      /**
+       * SOC is state, not an energy flow - `simulatedSocChart` is aggregated
+       * via `aggregateSocSeriesForChart`'s last-value-per-bucket rule, never
+       * summed/averaged like the settlement/price series. Empty when the
+       * battery scenario is disabled.
+       */
+      simulatedSocChart: SocPoint[];
+      /**
+       * Platform-admin-only "Show Battery Diagnostics" toggle's data - the
+       * engine's own already-computed per-interval diagnostics
+       * (`buildIntervalDiagnostics`, `lib/digital-twin/battery-diagnostics.ts`),
+       * exposed as-is. `null` when the battery scenario is disabled.
+       */
+      diagnostics: BatteryIntervalDiagnostic[] | null;
       /**
        * Adaptive Visualization milestone: the one resolution both charts
        * below are always aggregated to, so Current/Simulated stay visually
@@ -147,17 +185,28 @@ function resolveRange(
 
 /**
  * Digital Twin's only Server Action. Every number the page displays comes
- * from `replay` (called twice with a capacity-only scenario - once at the
- * plant's real current capacity, once at the administrator's chosen
- * capacity) plus the already-existing `computeConsumedFromPv` for
- * self-consumption. No business calculation happens in this file beyond
- * composing those existing, approved functions and resolving the requested
- * period via `lib/market-price/timezone.ts`'s existing calendar helpers.
+ * from `replay` (called twice - once at the plant's real current capacity
+ * with no battery for "Current", once at the administrator's chosen
+ * capacity, optionally with a battery scenario, for "Simulated") plus the
+ * already-existing `computeConsumedFromPv` for self-consumption. No
+ * business calculation happens in this file beyond composing those
+ * existing, approved functions and resolving the requested period via
+ * `lib/market-price/timezone.ts`'s existing calendar helpers.
+ *
+ * Battery Digital Twin UI milestone: `battery` is entirely optional and, by
+ * design, only ever applied to the "Simulated" replay - "Current" always
+ * reflects what actually happened, and no battery ever existed historically.
+ * `battery.capacityKwh` is the one value this file echoes back rather than
+ * reading from `ReplayOutcome` (see `DigitalTwinBatteryMetrics`'s doc
+ * comment) - everything else battery-related (charged/discharged energy,
+ * throughput, losses, SOC, per-interval diagnostics) comes directly from
+ * `simulatedOutcome.battery`/`simulatedOutcome.intervals`, never recomputed.
  */
 export async function runDigitalTwinSimulation(
   plantId: string,
   period: DigitalTwinPeriod,
   newCapacityKw: number,
+  battery: BatteryConfig | null,
   customStart?: string,
   customEnd?: string,
 ): Promise<DigitalTwinResult> {
@@ -178,7 +227,12 @@ export async function runDigitalTwinSimulation(
 
     const [currentOutcome, simulatedOutcome, priceResult] = await Promise.all([
       replay({ plantId, start, end, scenario: { capacityScenario: { newCapacityKw: currentCapacityKw } } }),
-      replay({ plantId, start, end, scenario: { capacityScenario: { newCapacityKw } } }),
+      replay({
+        plantId,
+        start,
+        end,
+        scenario: { capacityScenario: { newCapacityKw }, batteryScenario: battery ?? undefined },
+      }),
       dbMarketPriceProvider.getPricesInRange({ start, end }),
     ]);
 
@@ -196,10 +250,40 @@ export async function runDigitalTwinSimulation(
     // Current and Simulated always share the same `chartResolution` so the
     // two charts stay visually comparable; only their own export profile
     // (via `aggregatePriceSeriesForChart`'s weighting) can make their price
-    // lines differ.
+    // lines differ. When battery is enabled, `simulatedOutcome.intervals` is
+    // already the battery engine's own native 15-minute grid - bucketing it
+    // through the same 15-minute aggregator below is then a pure identity
+    // pass (each interval already starts on a 15-minute boundary), not a
+    // second calculation.
     const chartResolution = resolveChartResolution(start, end);
     const currentSettlement15Min = aggregateNativeIntervalsTo15Min(currentOutcome.intervals);
     const simulatedSettlement15Min = aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals);
+
+    const simulatedBattery: DigitalTwinBatteryMetrics | null =
+      battery && simulatedOutcome.battery
+        ? {
+            capacityKwh: battery.capacityKwh,
+            chargedEnergyKwh: simulatedOutcome.battery.chargedEnergyKwh,
+            dischargedEnergyKwh: simulatedOutcome.battery.dischargedEnergyKwh,
+            throughputKwh: simulatedOutcome.battery.throughputKwh,
+            batteryLossesKwh: simulatedOutcome.battery.batteryLossesKwh,
+            peakSocKwh: simulatedOutcome.battery.peakSocKwh,
+            finalSocKwh: simulatedOutcome.battery.finalSocKwh,
+          }
+        : null;
+
+    const simulatedSocChart: SocPoint[] = simulatedBattery
+      ? aggregateSocSeriesForChart(
+          simulatedOutcome.intervals.map((interval) => ({ intervalStart: interval.intervalStart, socKwh: interval.socKwh })),
+          chartResolution,
+          BULGARIA_TIMEZONE,
+        )
+      : [];
+
+    const diagnostics: BatteryIntervalDiagnostic[] | null =
+      battery && simulatedOutcome.battery
+        ? buildIntervalDiagnostics(toBatteryDispatchIntervals(simulatedOutcome.intervals), priceSeries, battery)
+        : null;
 
     return {
       ok: true,
@@ -211,6 +295,9 @@ export async function runDigitalTwinSimulation(
       capacityFactor: newCapacityKw / currentCapacityKw,
       current: toMetrics(currentOutcome),
       simulated: toMetrics(simulatedOutcome),
+      simulatedBattery,
+      simulatedSocChart,
+      diagnostics,
       chartResolution,
       currentChart: {
         price: aggregatePriceSeriesForChart(priceSeries, currentSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
