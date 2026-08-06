@@ -99,28 +99,42 @@ export function aggregatePriceSeriesForChart(
 
   const revenueByBucket = new Map<number, number>();
   const exportedByBucket = new Map<number, number>();
+  // The market price exists whether or not the plant exported anything -
+  // tracked independently of export so a zero-export bucket still gets a
+  // real price (the plain average of its known prices) instead of a gap.
+  const priceSumByBucket = new Map<number, number>();
+  const priceCountByBucket = new Map<number, number>();
 
   for (const point of priceSeries) {
     if (point.price === null) {
       continue;
     }
 
+    const bucket = bucketStart(point.timestamp, resolution, timeZone);
+    priceSumByBucket.set(bucket, (priceSumByBucket.get(bucket) ?? 0) + point.price);
+    priceCountByBucket.set(bucket, (priceCountByBucket.get(bucket) ?? 0) + 1);
+
     const exportedKwh = exportedByTime.get(point.timestamp.getTime());
     if (exportedKwh === undefined || exportedKwh === null) {
       continue;
     }
 
-    const bucket = bucketStart(point.timestamp, resolution, timeZone);
     revenueByBucket.set(bucket, (revenueByBucket.get(bucket) ?? 0) + (exportedKwh * point.price) / 1000);
     exportedByBucket.set(bucket, (exportedByBucket.get(bucket) ?? 0) + exportedKwh);
   }
 
-  return [...exportedByBucket.keys()]
+  return [...priceSumByBucket.keys()]
     .sort((a, b) => a - b)
     .map((bucket) => {
       const exportedKwh = exportedByBucket.get(bucket) ?? 0;
       const revenueEur = revenueByBucket.get(bucket) ?? 0;
-      const price = exportedKwh > 0 ? Math.round((revenueEur / (exportedKwh / 1000)) * 100) / 100 : null;
+      // Export-weighted price when the plant exported anything this
+      // bucket; otherwise the plain average market price - the price line
+      // must never gap just because the plant wasn't exporting.
+      const price =
+        exportedKwh > 0
+          ? Math.round((revenueEur / (exportedKwh / 1000)) * 100) / 100
+          : Math.round(((priceSumByBucket.get(bucket) ?? 0) / (priceCountByBucket.get(bucket) ?? 1)) * 100) / 100;
 
       return { timestamp: new Date(bucket), price, exportEnabled: false };
     });
