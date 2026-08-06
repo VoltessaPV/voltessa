@@ -11,6 +11,7 @@ import {
   FileClock,
   FlaskConical,
   LayoutDashboard,
+  Layers,
   LineChart,
   LogOut,
   Menu,
@@ -132,6 +133,11 @@ const adminNavigation = [
     label: "Automation Lab",
     href: "/admin/automation-lab",
     icon: FlaskConical,
+  },
+  {
+    label: "Digital Twin",
+    href: "/admin/digital-twin",
+    icon: Layers,
   },
 ];
 
