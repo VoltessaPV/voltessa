@@ -3,8 +3,10 @@
 import { Suspense, useMemo, useState, useTransition } from "react";
 
 import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
+import type { BatteryConfig } from "@/lib/digital-twin/battery-dispatch";
 import type { ChartResolution } from "@/lib/market-price/chart-aggregation";
 
+import { DynamicBatterySocChart } from "@/components/charts/BatterySocChart.dynamic";
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import {
   computeCapacityDerivedEnergyAxis,
@@ -15,6 +17,7 @@ import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dy
 import { MarketSummaryCard, type MarketSummaryCardRow } from "@/components/market/MarketSummaryCard";
 
 import { runDigitalTwinSimulation, type DigitalTwinPeriod, type DigitalTwinResult } from "./actions";
+import { BatteryDiagnosticsPanel } from "./BatteryDiagnosticsPanel";
 
 type Props = {
   plants: AutomationLabPlant[];
@@ -40,6 +43,19 @@ const PERIOD_OPTIONS: Array<{ id: DigitalTwinPeriod; label: string }> = [
 
 const SLIDER_MULTIPLIER_MAX = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+type BatteryDurationPreset = "2h" | "4h" | "custom";
+
+const BATTERY_DURATION_OPTIONS: Array<{ id: BatteryDurationPreset; label: string; hours: number | null }> = [
+  { id: "2h", label: "2-hour", hours: 2 },
+  { id: "4h", label: "4-hour", hours: 4 },
+  { id: "custom", label: "Custom", hours: null },
+];
+
+const DEFAULT_ROUND_TRIP_EFFICIENCY_PERCENT = "95.4";
+const DEFAULT_MIN_SOC_PERCENT = "10";
+/** Fixed at 100 per `BatteryConfig`'s own spec - not a user input, matching `battery-dispatch.ts`'s documented V1 assumption. */
+const MAX_SOC_PERCENT = 100;
 
 /**
  * Final UI Polish milestone (Milestone 7). One formatting convention for
@@ -195,12 +211,87 @@ export function DigitalTwinForm({ plants }: Props) {
   const sliderMax = currentCapacityKw ? currentCapacityKw * SLIDER_MULTIPLIER_MAX : 100;
   const sliderValue = Math.min(Math.max(Number.isFinite(newCapacityKw) ? newCapacityKw : 0, 0), sliderMax);
 
+  // Battery Digital Twin UI milestone. Every field here only feeds a
+  // `BatteryConfig` object passed to `runDigitalTwinSimulation` unchanged -
+  // the auto-derived capacity (duration x simulated capacity, matching
+  // `battery-engine-report.ts`'s own `buildDefaultBatteryConfig` reference
+  // convention) is the only arithmetic in this section, and it is exactly
+  // the same class of convenience math the capacity slider above already
+  // does client-side - never a business calculation over simulation data.
+  const [batteryEnabled, setBatteryEnabled] = useState(false);
+  const [durationPreset, setDurationPreset] = useState<BatteryDurationPreset>("2h");
+  const [customCapacityInput, setCustomCapacityInput] = useState("");
+  const [roundTripEfficiencyInput, setRoundTripEfficiencyInput] = useState(DEFAULT_ROUND_TRIP_EFFICIENCY_PERCENT);
+  const [minSocInput, setMinSocInput] = useState(DEFAULT_MIN_SOC_PERCENT);
+  const [maxChargePowerInput, setMaxChargePowerInput] = useState("");
+  const [maxDischargePowerInput, setMaxDischargePowerInput] = useState("");
+  const [allowGridCharging, setAllowGridCharging] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+
+  const durationHours = BATTERY_DURATION_OPTIONS.find((option) => option.id === durationPreset)?.hours ?? null;
+  const autoCapacityKwh =
+    durationHours !== null && Number.isFinite(newCapacityKw) && newCapacityKw > 0 ? newCapacityKw * durationHours : null;
+  const batteryCapacityKwh = durationPreset === "custom" ? Number(customCapacityInput) : autoCapacityKwh;
+
+  const maxChargePowerKw = maxChargePowerInput !== "" ? Number(maxChargePowerInput) : newCapacityKw;
+  const maxDischargePowerKw = maxDischargePowerInput !== "" ? Number(maxDischargePowerInput) : newCapacityKw;
+  const roundTripEfficiencyPercent = Number(roundTripEfficiencyInput);
+  const minSocPercent = Number(minSocInput);
+
+  const batteryConfig: BatteryConfig | null =
+    batteryEnabled &&
+    batteryCapacityKwh !== null &&
+    batteryCapacityKwh > 0 &&
+    Number.isFinite(roundTripEfficiencyPercent) &&
+    roundTripEfficiencyPercent > 0 &&
+    roundTripEfficiencyPercent <= 100 &&
+    Number.isFinite(minSocPercent) &&
+    minSocPercent >= 0 &&
+    minSocPercent < MAX_SOC_PERCENT &&
+    Number.isFinite(maxChargePowerKw) &&
+    maxChargePowerKw > 0 &&
+    Number.isFinite(maxDischargePowerKw) &&
+    maxDischargePowerKw > 0
+      ? {
+          capacityKwh: batteryCapacityKwh,
+          roundTripEfficiencyPercent,
+          minSocPercent,
+          maxSocPercent: MAX_SOC_PERCENT,
+          maxChargePowerKw,
+          maxDischargePowerKw,
+          allowGridCharging,
+        }
+      : null;
+
+  const batteryInputsInvalid = batteryEnabled && batteryConfig === null;
+
+  function resetBatteryDefaults(plantCapacityKw: number | null) {
+    setBatteryEnabled(false);
+    setDurationPreset("2h");
+    setCustomCapacityInput("");
+    setRoundTripEfficiencyInput(DEFAULT_ROUND_TRIP_EFFICIENCY_PERCENT);
+    setMinSocInput(DEFAULT_MIN_SOC_PERCENT);
+    setMaxChargePowerInput(plantCapacityKw !== null ? plantCapacityKw.toString() : "");
+    setMaxDischargePowerInput(plantCapacityKw !== null ? plantCapacityKw.toString() : "");
+    setAllowGridCharging(false);
+  }
+
   function handlePlantChange(id: string) {
     setPlantId(id);
     setResult(null);
     setError(null);
     const plant = plants.find((p) => p.id === id);
-    setNewCapacityInput(plant?.capacityKw !== null && plant?.capacityKw !== undefined ? plant.capacityKw.toString() : "");
+    const capacityKw = plant?.capacityKw ?? null;
+    setNewCapacityInput(capacityKw !== null ? capacityKw.toString() : "");
+    resetBatteryDefaults(capacityKw);
+  }
+
+  function handleEnableBattery(enabled: boolean) {
+    setBatteryEnabled(enabled);
+    if (enabled && maxChargePowerInput === "" && maxDischargePowerInput === "") {
+      setMaxChargePowerInput(currentCapacityKw !== null ? currentCapacityKw.toString() : "");
+      setMaxDischargePowerInput(currentCapacityKw !== null ? currentCapacityKw.toString() : "");
+    }
   }
 
   function run() {
@@ -218,6 +309,11 @@ export function DigitalTwinForm({ plants }: Props) {
       return;
     }
 
+    if (batteryInputsInvalid) {
+      setError("Enter valid battery parameters (capacity, efficiency, min SOC, and power all greater than zero)");
+      return;
+    }
+
     setError(null);
 
     startTransition(async () => {
@@ -225,6 +321,7 @@ export function DigitalTwinForm({ plants }: Props) {
         selectedPlant.id,
         period,
         newCapacityKw,
+        batteryConfig,
         customStart || undefined,
         customEnd || undefined,
       );
@@ -285,6 +382,9 @@ export function DigitalTwinForm({ plants }: Props) {
       additionalRevenueEur,
       revenueIncreasePercent,
       averageSellingPriceEurPerMwh: result.simulated.averageSellingPriceEurPerMwh,
+      // Battery Digital Twin UI milestone - straight from `ReplayOutcome.battery` via `simulatedBattery`, null when the battery scenario is disabled.
+      batteryThroughputKwh: result.simulatedBattery?.throughputKwh ?? null,
+      batteryLossesKwh: result.simulatedBattery?.batteryLossesKwh ?? null,
     };
   }, [result]);
 
@@ -469,6 +569,115 @@ export function DigitalTwinForm({ plants }: Props) {
         )}
       </section>
 
+      <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-medium">Battery scenario</h2>
+          <label className="flex items-center gap-2 text-sm text-white/70">
+            <input
+              type="checkbox"
+              checked={batteryEnabled}
+              onChange={(event) => handleEnableBattery(event.target.checked)}
+              className="h-4 w-4 accent-blue-500"
+            />
+            Enable Battery
+          </label>
+        </div>
+
+        {batteryEnabled && (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Battery duration
+              <select
+                className={selectClassName}
+                value={durationPreset}
+                onChange={(event) => setDurationPreset(event.target.value as BatteryDurationPreset)}
+              >
+                {BATTERY_DURATION_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id} style={optionStyle}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Battery capacity (kWh){durationPreset !== "custom" ? " — auto" : ""}
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                className={inputClassName}
+                value={durationPreset === "custom" ? customCapacityInput : (autoCapacityKwh?.toFixed(1) ?? "")}
+                readOnly={durationPreset !== "custom"}
+                onChange={(event) => setCustomCapacityInput(event.target.value)}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Round-trip efficiency (%)
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.1"
+                className={inputClassName}
+                value={roundTripEfficiencyInput}
+                onChange={(event) => setRoundTripEfficiencyInput(event.target.value)}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Minimum SOC (%)
+              <input
+                type="number"
+                min={0}
+                max={99}
+                step="1"
+                className={inputClassName}
+                value={minSocInput}
+                onChange={(event) => setMinSocInput(event.target.value)}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Maximum charge power (kW)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                className={inputClassName}
+                placeholder={currentCapacityKw !== null ? currentCapacityKw.toString() : ""}
+                value={maxChargePowerInput}
+                onChange={(event) => setMaxChargePowerInput(event.target.value)}
+              />
+            </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Maximum discharge power (kW)
+              <input
+                type="number"
+                min={0}
+                step="0.1"
+                className={inputClassName}
+                placeholder={currentCapacityKw !== null ? currentCapacityKw.toString() : ""}
+                value={maxDischargePowerInput}
+                onChange={(event) => setMaxDischargePowerInput(event.target.value)}
+              />
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-white/60">
+              <input
+                type="checkbox"
+                checked={allowGridCharging}
+                onChange={(event) => setAllowGridCharging(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+              Allow Grid Charging
+            </label>
+          </div>
+        )}
+      </section>
+
       {result?.ok && metricCards && investmentSummary && sharedAxes && (
         <section className="space-y-6">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -558,6 +767,18 @@ export function DigitalTwinForm({ plants }: Props) {
                     : "—"}
                 </dd>
               </div>
+              {investmentSummary.batteryThroughputKwh !== null && (
+                <div>
+                  <dt className="text-xs text-white/40">Battery throughput</dt>
+                  <dd className="text-white/80">{formatKwh(investmentSummary.batteryThroughputKwh)} kWh</dd>
+                </div>
+              )}
+              {investmentSummary.batteryLossesKwh !== null && (
+                <div>
+                  <dt className="text-xs text-white/40">Battery losses</dt>
+                  <dd className="text-white/80">{formatKwh(investmentSummary.batteryLossesKwh)} kWh</dd>
+                </div>
+              )}
             </dl>
           </section>
 
@@ -566,6 +787,42 @@ export function DigitalTwinForm({ plants }: Props) {
               <MarketSummaryCard key={metric.key} eyebrow={metric.label} rows={rows} />
             ))}
           </div>
+
+          {result.simulatedBattery && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <h3 className="text-sm font-semibold text-white">Battery KPIs</h3>
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-7">
+                <div>
+                  <dt className="text-xs text-white/40">Battery capacity</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.capacityKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Energy charged</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.chargedEnergyKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Energy discharged</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.dischargedEnergyKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Battery throughput</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.throughputKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Battery losses</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.batteryLossesKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Peak SOC</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.peakSocKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Final SOC</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.finalSocKwh)} kWh</dd>
+                </div>
+              </dl>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-white">Charts</h3>
@@ -617,6 +874,44 @@ export function DigitalTwinForm({ plants }: Props) {
               </div>
             </section>
           </div>
+
+          {result.simulatedBattery && (
+            <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
+              <h3 className="text-sm font-semibold text-white">Battery SOC (Simulated)</h3>
+              <div className="mt-2.5 h-[240px] sm:h-[280px]">
+                <Suspense fallback={<ChartSkeleton />}>
+                  <DynamicBatterySocChart
+                    series={result.simulatedSocChart}
+                    batteryCapacityKwh={result.simulatedBattery.capacityKwh}
+                    xAxisUnit={xAxisUnitFor(result.chartResolution)}
+                  />
+                </Suspense>
+              </div>
+            </section>
+          )}
+
+          {result.diagnostics && (
+            <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-white">Battery diagnostics</h3>
+                <label className="flex items-center gap-2 text-sm text-white/70">
+                  <input
+                    type="checkbox"
+                    checked={showDiagnostics}
+                    onChange={(event) => setShowDiagnostics(event.target.checked)}
+                    className="h-4 w-4 accent-blue-500"
+                  />
+                  Show Battery Diagnostics
+                </label>
+              </div>
+
+              {showDiagnostics && (
+                <div className="mt-4">
+                  <BatteryDiagnosticsPanel diagnostics={result.diagnostics} />
+                </div>
+              )}
+            </section>
+          )}
         </section>
       )}
     </div>

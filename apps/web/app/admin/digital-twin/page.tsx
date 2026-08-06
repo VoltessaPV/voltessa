@@ -22,9 +22,10 @@ export default async function DigitalTwinPage() {
   return (
     <div className="space-y-6">
       <p className="text-white/60">
-        Answer &quot;what if this plant was larger?&quot; against real historical telemetry - production,
-        import, export, self-consumption, and revenue, replayed at a hypothetical installed capacity.
-        Every number here comes from the same Simulation Engine, never a calculation in this page.
+        Answer &quot;what if this plant was larger?&quot; and &quot;should I invest in a battery, and if so,
+        what size?&quot; against real historical telemetry - production, import, export, self-consumption,
+        and revenue, replayed at a hypothetical installed capacity with an optional battery. Every number
+        here comes from the same Replay Engine and Battery Engine, never a calculation in this page.
       </p>
 
       <DigitalTwinForm plants={plants} />

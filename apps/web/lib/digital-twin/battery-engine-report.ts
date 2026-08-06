@@ -51,8 +51,14 @@ export type ReferenceScenarioResult = {
  * `replayWithBattery`). `availablePvKwh` maps from `productionKwh` (the
  * post-capacity-scaling value `runBatteryDispatch` itself dispatches
  * against), not the unified outcome's own pre-scaling `availablePvKwh`.
+ *
+ * Exported (Battery Digital Twin UI milestone) so the Digital Twin's own
+ * Server Action (`app/admin/digital-twin/actions.ts`) can feed the same
+ * already-computed simulation outcome into `buildIntervalDiagnostics` for
+ * its "Show Battery Diagnostics" toggle, instead of a second copy of this
+ * adapter - server-side reuse, not a UI/component import.
  */
-function toBatteryDispatchIntervals(intervals: ReplayOutcome["intervals"]): BatteryDispatchInterval[] {
+export function toBatteryDispatchIntervals(intervals: ReplayOutcome["intervals"]): BatteryDispatchInterval[] {
   return intervals.map((i) => ({
     intervalStart: i.intervalStart,
     availablePvKwh: i.productionKwh!,
