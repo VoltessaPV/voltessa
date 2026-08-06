@@ -82,7 +82,13 @@ function sumNullable(values: Array<number | null>): number {
   return Math.round(values.reduce((sum: number, v) => sum + (v ?? 0), 0) * 100) / 100;
 }
 
-async function fetchPriceSeries(start: Date, end: Date): Promise<MarketPricePoint[]> {
+/**
+ * Battery Simulation milestone: exported, unchanged, so
+ * `lib/digital-twin/battery-replay-engine.ts` reuses this exact price-shape
+ * adapter instead of a third copy (the Digital Twin UI's own actions.ts
+ * already has one duplicate of this same six-line mapping).
+ */
+export async function fetchPriceSeries(start: Date, end: Date): Promise<MarketPricePoint[]> {
   const result = await dbMarketPriceProvider.getPricesInRange({ start, end });
   if (!result.available) {
     return [];
@@ -105,7 +111,17 @@ async function fetchPriceSeries(start: Date, end: Date): Promise<MarketPricePoin
  * here - this is data preparation, immutable for every capacity factor
  * evaluated afterward.
  */
-async function buildHistoricalIntervals(
+/**
+ * Battery Simulation milestone: exported, unchanged, so the Battery
+ * Engine's Available PV reconstruction (`lib/digital-twin/
+ * available-pv-reconstruction.ts`) reuses this exact historical-telemetry
+ * loading/consumption-reconstruction step instead of a second
+ * implementation. The Battery Engine calls this with a WIDENED date range
+ * (beyond the requested simulation period) purely to have enough
+ * neighbouring days available for reconstruction - this function itself is
+ * untouched and has no idea a battery scenario exists.
+ */
+export async function buildHistoricalIntervals(
   plantId: string,
   start: Date,
   end: Date,
