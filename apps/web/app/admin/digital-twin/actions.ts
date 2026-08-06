@@ -25,6 +25,12 @@ export type DigitalTwinMetrics = {
   importedKwh: number;
   selfConsumptionKwh: number;
   revenueEur: number | null;
+  /**
+   * Final UI Polish milestone (Milestone 7). Read directly from the
+   * existing Revenue Engine's own output (`RevenueSummary.averagePriceEurPerMwh`,
+   * `lib/market-price/revenue.ts`) - never recalculated here.
+   */
+  averageSellingPriceEurPerMwh: number | null;
 };
 
 export type DigitalTwinChartSeries = {
@@ -102,6 +108,7 @@ function toMetrics(outcome: ReplayOutcome): DigitalTwinMetrics {
     importedKwh: outcome.totals.importedKwh,
     selfConsumptionKwh: Math.round((outcome.totals.productionKwh - outcome.totals.exportedKwh) * 100) / 100,
     revenueEur: outcome.revenue.available ? outcome.revenue.revenueEur : null,
+    averageSellingPriceEurPerMwh: outcome.revenue.available ? outcome.revenue.averagePriceEurPerMwh : null,
   };
 }
 

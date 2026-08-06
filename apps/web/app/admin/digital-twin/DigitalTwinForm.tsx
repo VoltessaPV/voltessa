@@ -6,6 +6,11 @@ import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
 import type { ChartResolution } from "@/lib/market-price/chart-aggregation";
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
+import {
+  computeCapacityDerivedEnergyAxis,
+  computeNiceEnergyAxis,
+  computePriceAxisDomain,
+} from "@/components/market/MarketPriceChart";
 import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
 import { MarketSummaryCard, type MarketSummaryCardRow } from "@/components/market/MarketSummaryCard";
 
@@ -23,6 +28,8 @@ const inputClassName =
   "rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-white/80 placeholder:text-white/30 [color-scheme:dark]";
 const buttonClassName =
   "rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-blue-600";
+const badgeClassName =
+  "inline-flex items-center rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-medium text-white/80";
 
 const PERIOD_OPTIONS: Array<{ id: DigitalTwinPeriod; label: string }> = [
   { id: "previous-day", label: "Previous day" },
@@ -32,8 +39,20 @@ const PERIOD_OPTIONS: Array<{ id: DigitalTwinPeriod; label: string }> = [
 ];
 
 const SLIDER_MULTIPLIER_MAX = 5;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Final UI Polish milestone (Milestone 7). One formatting convention for
+ * the whole page - energy/power to 1 decimal, money/price to 2 - so no
+ * value is ever shown as a raw, unrounded float. Every function here only
+ * formats a number `runDigitalTwinSimulation` (or simple arithmetic on its
+ * output) already produced; none of them compute a new business value.
+ */
 function formatKwh(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
+}
+
+function formatKw(value: number): string {
   return value.toLocaleString("en-US", { maximumFractionDigits: 1, minimumFractionDigits: 1 });
 }
 
@@ -41,12 +60,16 @@ function formatEur(value: number): string {
   return value.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 }
 
-function formatSignedKwh(value: number): string {
-  return `${value >= 0 ? "+" : ""}${formatKwh(value)}`;
+function formatAsp(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
 }
 
-function formatSignedEur(value: number): string {
-  return `${value >= 0 ? "+" : ""}${formatEur(value)}`;
+function formatSigned(value: number, format: (v: number) => string): string {
+  return `${value >= 0 ? "+" : ""}${format(value)}`;
+}
+
+function formatPercent(value: number): string {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
 function diffColorClass(diff: number): string {
@@ -55,26 +78,52 @@ function diffColorClass(diff: number): string {
   return "text-slate-400";
 }
 
+/**
+ * A Current/Simulated/Difference row set for one KPI card - the exact
+ * three lines the milestone's own worked example shows (e.g. "Current
+ * 26,711.1 kWh / Simulated 50,216.9 kWh / Difference +23,505.8 kWh
+ * (+88.0%)"). The percentage is omitted when `currentValue` isn't a
+ * meaningful baseline to divide by (null, zero, or negative - e.g. an
+ * Average Selling Price during a negative-price period).
+ */
+function buildComparisonRows(
+  currentValue: number | null,
+  simulatedValue: number | null,
+  unit: string,
+  format: (value: number) => string,
+): MarketSummaryCardRow[] {
+  const rows: MarketSummaryCardRow[] = [
+    { label: "Current", value: currentValue !== null ? `${format(currentValue)} ${unit}` : "—" },
+    { label: "Simulated", value: simulatedValue !== null ? `${format(simulatedValue)} ${unit}` : "—" },
+  ];
+
+  if (currentValue !== null && simulatedValue !== null) {
+    const diff = simulatedValue - currentValue;
+    const percent = currentValue > 0 ? ` (${formatPercent((diff / currentValue) * 100)})` : "";
+    rows.push({
+      label: "Difference",
+      value: `${formatSigned(diff, format)} ${unit}${percent}`,
+      valueColorClass: diffColorClass(diff),
+    });
+  }
+
+  return rows;
+}
+
 type MetricSpec = {
-  key: "productionKwh" | "importedKwh" | "exportedKwh" | "selfConsumptionKwh" | "revenueEur";
+  key: "productionKwh" | "importedKwh" | "exportedKwh" | "selfConsumptionKwh" | "revenueEur" | "averageSellingPriceEurPerMwh";
   label: string;
   unit: string;
   format: (value: number) => string;
-  formatSigned: (value: number) => string;
 };
 
 const METRICS: MetricSpec[] = [
-  { key: "productionKwh", label: "Production", unit: "kWh", format: formatKwh, formatSigned: formatSignedKwh },
-  { key: "importedKwh", label: "Import", unit: "kWh", format: formatKwh, formatSigned: formatSignedKwh },
-  { key: "exportedKwh", label: "Export", unit: "kWh", format: formatKwh, formatSigned: formatSignedKwh },
-  {
-    key: "selfConsumptionKwh",
-    label: "Self-consumption",
-    unit: "kWh",
-    format: formatKwh,
-    formatSigned: formatSignedKwh,
-  },
-  { key: "revenueEur", label: "Revenue", unit: "EUR", format: formatEur, formatSigned: formatSignedEur },
+  { key: "productionKwh", label: "Production", unit: "kWh", format: formatKwh },
+  { key: "importedKwh", label: "Import", unit: "kWh", format: formatKwh },
+  { key: "exportedKwh", label: "Export", unit: "kWh", format: formatKwh },
+  { key: "selfConsumptionKwh", label: "Self-consumption", unit: "kWh", format: formatKwh },
+  { key: "revenueEur", label: "Revenue", unit: "EUR", format: formatEur },
+  { key: "averageSellingPriceEurPerMwh", label: "Average Selling Price", unit: "EUR/MWh", format: formatAsp },
 ];
 
 function formatRangeLabel(start: Date, end: Date): string {
@@ -83,28 +132,28 @@ function formatRangeLabel(start: Date, end: Date): string {
   return `${formatter.format(start)} – ${formatter.format(inclusiveEnd)}`;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+function periodDayCount(start: Date, end: Date): number {
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / DAY_MS));
+}
 
 /**
- * Adaptive Visualization milestone (Milestone 6) - a purely presentational
- * label describing the resolution `runDigitalTwinSimulation` already chose
- * (`result.chartResolution`) and aggregated both charts to server-side.
- * This component never decides the resolution itself, only names it.
+ * Adaptive Visualization milestone (Milestone 6), badge text added in the
+ * Final UI Polish milestone - purely presentational naming of the
+ * resolution `runDigitalTwinSimulation` already chose and aggregated both
+ * charts to server-side. Never decided here.
  */
-function resolutionLabel(resolution: ChartResolution, rangeStart: Date, rangeEnd: Date): string {
-  const days = Math.max(1, Math.round((rangeEnd.getTime() - rangeStart.getTime()) / DAY_MS));
-  if (resolution === "native") return `Resolution: 15-minute (${days}-day period)`;
-  if (resolution === "hourly") return `Resolution: Hourly (${days}-day period)`;
-  return `Resolution: Daily (${days}-day period)`;
+function resolutionBadgeLabel(resolution: ChartResolution): string {
+  if (resolution === "native") return "15-minute";
+  if (resolution === "hourly") return "Hourly";
+  return "Daily";
 }
 
 /**
  * Maps the resolution to one of `MarketPriceChart`'s existing `xAxisUnit`
- * values without modifying that component (per spec). "time" locks the
- * energy axis to a 15-minute-interval-width, capacity-derived scale and
- * fixed 90-minute ticks - correct only for the native 15-minute grid. "day"
- * uses the auto-scaling, interval-width-agnostic axis (`computeNiceEnergyAxis`)
- * and recharts' own automatic tick placement - safe for both hourly- and
+ * values without modifying that component's tick-label behavior. "time"
+ * locks fixed 90-minute ticks - correct only for the native 15-minute
+ * grid, which always spans exactly one calendar day. "day" falls back to
+ * recharts' own automatic tick placement - safe for both hourly- and
  * daily-bucketed data, exactly like Market's own Week/Month views already
  * rely on for their day-bucketed charts.
  */
@@ -115,8 +164,9 @@ function xAxisUnitFor(resolution: ChartResolution): "time" | "day" {
 /**
  * The page renders no business logic - every field here either collects an
  * input (plant, period, hypothetical capacity) or displays exactly what
- * `runDigitalTwinSimulation` (`./actions.ts`) returned. The numeric
- * capacity input is the source of truth (per spec); the slider is a
+ * `runDigitalTwinSimulation` (`./actions.ts`) returned, or simple arithmetic
+ * on that output (differences, percentages, shared axis bounds). The
+ * numeric capacity input is the source of truth (per spec); the slider is a
  * convenience that clamps its own visible range to a practical multiplier
  * but never limits what the number field can submit.
  */
@@ -189,27 +239,13 @@ export function DigitalTwinForm({ plants }: Props) {
     });
   }
 
-  const metricRows = useMemo(() => {
+  const metricCards = useMemo(() => {
     if (!result?.ok) return null;
 
-    return METRICS.map((metric) => {
-      const currentValue = result.current[metric.key];
-      const simulatedValue = result.simulated[metric.key];
-      const diff = simulatedValue !== null && currentValue !== null ? simulatedValue - currentValue : null;
-
-      const rows: MarketSummaryCardRow[] = [
-        { label: "Current", value: currentValue !== null ? metric.format(currentValue) : "—" },
-      ];
-      if (diff !== null) {
-        rows.push({ label: "Difference", value: metric.formatSigned(diff), valueColorClass: diffColorClass(diff) });
-      }
-
-      return {
-        metric,
-        value: simulatedValue !== null ? metric.format(simulatedValue) : "—",
-        rows,
-      };
-    });
+    return METRICS.map((metric) => ({
+      metric,
+      rows: buildComparisonRows(result.current[metric.key], result.simulated[metric.key], metric.unit, metric.format),
+    }));
   }, [result]);
 
   /**
@@ -248,7 +284,39 @@ export function DigitalTwinForm({ plants }: Props) {
       importReductionKwh,
       additionalRevenueEur,
       revenueIncreasePercent,
+      averageSellingPriceEurPerMwh: result.simulated.averageSellingPriceEurPerMwh,
     };
+  }, [result]);
+
+  /**
+   * Shared chart axes - Current and Simulated must always render on
+   * identical energy/price scales so the visual comparison is meaningful.
+   * Computed once, from the UNION of both charts' own already-aggregated
+   * data, via the exact same axis math `MarketPriceChart` itself uses
+   * (`computeNiceEnergyAxis`/`computeCapacityDerivedEnergyAxis`/
+   * `computePriceAxisDomain`, all exported from that file) - never a new
+   * scaling rule invented here.
+   */
+  const sharedAxes = useMemo(() => {
+    if (!result?.ok) return null;
+
+    const energyAxis =
+      xAxisUnitFor(result.chartResolution) === "time"
+        ? computeCapacityDerivedEnergyAxis(Math.max(result.currentCapacityKw, result.newCapacityKw))
+        : computeNiceEnergyAxis(
+            Math.max(
+              0,
+              ...result.currentChart.settlement.map((point) => point.exportedKwh ?? 0),
+              ...result.simulatedChart.settlement.map((point) => point.exportedKwh ?? 0),
+            ),
+          );
+
+    const combinedKnownPrices = [...result.currentChart.price, ...result.simulatedChart.price]
+      .map((point) => point.price)
+      .filter((price): price is number => price !== null);
+    const priceAxis = computePriceAxisDomain(combinedKnownPrices);
+
+    return { energyAxis, priceAxis };
   }, [result]);
 
   if (plants.length === 0) {
@@ -340,7 +408,7 @@ export function DigitalTwinForm({ plants }: Props) {
             <div>
               <dt className="text-xs text-white/40">Current installed capacity</dt>
               <dd className="text-white/80">
-                {selectedPlant.capacityKw !== null ? `${selectedPlant.capacityKw} kWp` : "—"}
+                {selectedPlant.capacityKw !== null ? `${formatKw(selectedPlant.capacityKw)} kWp` : "—"}
               </dd>
             </div>
           </dl>
@@ -401,54 +469,56 @@ export function DigitalTwinForm({ plants }: Props) {
         )}
       </section>
 
-      {result?.ok && metricRows && investmentSummary && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-medium">Results</h2>
-            <p className="text-xs text-white/40">{formatRangeLabel(result.rangeStart, result.rangeEnd)}</p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {metricRows.map(({ metric, value, rows }) => (
-              <MarketSummaryCard key={metric.key} eyebrow={metric.label} value={value} valueUnit={metric.unit} rows={rows} />
-            ))}
+      {result?.ok && metricCards && investmentSummary && sharedAxes && (
+        <section className="space-y-6">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wider text-white/40">Simulation Period</p>
+              <p className="mt-0.5 text-sm font-medium text-white">
+                {formatRangeLabel(result.rangeStart, result.rangeEnd)}
+              </p>
+            </div>
+            <span className={badgeClassName}>
+              {periodDayCount(result.rangeStart, result.rangeEnd)} day
+              {periodDayCount(result.rangeStart, result.rangeEnd) === 1 ? "" : "s"}
+            </span>
           </div>
 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
             <h3 className="text-sm font-semibold text-white">Investment summary</h3>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
+            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
               <div>
                 <dt className="text-xs text-white/40">Current installed capacity</dt>
-                <dd className="text-white/80">{investmentSummary.currentCapacityKw} kWp</dd>
+                <dd className="text-white/80">{formatKw(investmentSummary.currentCapacityKw)} kWp</dd>
               </div>
               <div>
                 <dt className="text-xs text-white/40">Simulated installed capacity</dt>
-                <dd className="text-white/80">{investmentSummary.newCapacityKw} kWp</dd>
+                <dd className="text-white/80">{formatKw(investmentSummary.newCapacityKw)} kWp</dd>
               </div>
               <div>
                 <dt className="text-xs text-white/40">Capacity increase</dt>
-                <dd className="text-emerald-400">
-                  +{formatKwh(investmentSummary.capacityIncreaseKw)} kWp (+
-                  {investmentSummary.capacityIncreasePercent.toFixed(1)}%)
+                <dd className={diffColorClass(investmentSummary.capacityIncreaseKw)}>
+                  {formatSigned(investmentSummary.capacityIncreaseKw, formatKw)} kWp (
+                  {formatPercent(investmentSummary.capacityIncreasePercent)})
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-white/40">Additional production</dt>
                 <dd className={diffColorClass(investmentSummary.additionalProductionKwh)}>
-                  {formatSignedKwh(investmentSummary.additionalProductionKwh)} kWh
+                  {formatSigned(investmentSummary.additionalProductionKwh, formatKwh)} kWh
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-white/40">Additional export</dt>
                 <dd className={diffColorClass(investmentSummary.additionalExportKwh)}>
-                  {formatSignedKwh(investmentSummary.additionalExportKwh)} kWh
+                  {formatSigned(investmentSummary.additionalExportKwh, formatKwh)} kWh
                 </dd>
               </div>
               {investmentSummary.importReductionKwh !== null && (
                 <div>
                   <dt className="text-xs text-white/40">Import reduction</dt>
                   <dd className={diffColorClass(investmentSummary.importReductionKwh)}>
-                    {formatSignedKwh(investmentSummary.importReductionKwh)} kWh
+                    {formatSigned(investmentSummary.importReductionKwh, formatKwh)} kWh
                   </dd>
                 </div>
               )}
@@ -462,7 +532,7 @@ export function DigitalTwinForm({ plants }: Props) {
                   }
                 >
                   {investmentSummary.additionalRevenueEur !== null
-                    ? `${formatSignedEur(investmentSummary.additionalRevenueEur)} EUR`
+                    ? `${formatSigned(investmentSummary.additionalRevenueEur, formatEur)} EUR`
                     : "—"}
                 </dd>
               </div>
@@ -476,16 +546,30 @@ export function DigitalTwinForm({ plants }: Props) {
                   }
                 >
                   {investmentSummary.revenueIncreasePercent !== null
-                    ? `${investmentSummary.revenueIncreasePercent >= 0 ? "+" : ""}${investmentSummary.revenueIncreasePercent.toFixed(1)}%`
+                    ? formatPercent(investmentSummary.revenueIncreasePercent)
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Average Selling Price</dt>
+                <dd className="text-white/80">
+                  {investmentSummary.averageSellingPriceEurPerMwh !== null
+                    ? `${formatAsp(investmentSummary.averageSellingPriceEurPerMwh)} EUR/MWh`
                     : "—"}
                 </dd>
               </div>
             </dl>
           </section>
 
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+            {metricCards.map(({ metric, rows }) => (
+              <MarketSummaryCard key={metric.key} eyebrow={metric.label} rows={rows} />
+            ))}
+          </div>
+
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-white">Charts</h3>
-            <p className="text-xs text-white/40">{resolutionLabel(result.chartResolution, result.rangeStart, result.rangeEnd)}</p>
+            <span className={badgeClassName}>{resolutionBadgeLabel(result.chartResolution)}</span>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -504,6 +588,8 @@ export function DigitalTwinForm({ plants }: Props) {
                       exportedKwh,
                     }))}
                     installedCapacityKw={result.currentCapacityKw}
+                    sharedEnergyAxis={sharedAxes.energyAxis}
+                    sharedPriceAxis={sharedAxes.priceAxis}
                   />
                 </Suspense>
               </div>
@@ -524,6 +610,8 @@ export function DigitalTwinForm({ plants }: Props) {
                       exportedKwh,
                     }))}
                     installedCapacityKw={result.newCapacityKw}
+                    sharedEnergyAxis={sharedAxes.energyAxis}
+                    sharedPriceAxis={sharedAxes.priceAxis}
                   />
                 </Suspense>
               </div>

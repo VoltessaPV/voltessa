@@ -85,6 +85,22 @@ type MarketPriceChartProps = {
    * text must say which one is actually being plotted.
    */
   priceMetric?: "electricity" | "averageSelling";
+  /**
+   * Digital Twin Final UI Polish milestone. When two `MarketPriceChart`s
+   * must be visually comparable (Current vs. Simulated), each chart's own
+   * auto-computed energy-axis max/ticks would normally differ because
+   * their underlying data (and, for `xAxisUnit="time"`, their
+   * `installedCapacityKw`) differ. Passing the SAME `sharedEnergyAxis` -
+   * computed once by the caller from both charts' combined data via
+   * `computeNiceEnergyAxis`/`computeCapacityDerivedEnergyAxis` below -
+   * overrides this chart's own computation entirely, regardless of
+   * `xAxisUnit`. Omitted (the default), this chart behaves exactly as
+   * before: every existing caller (Market, the marketing preview) is
+   * unaffected.
+   */
+  sharedEnergyAxis?: { max: number; ticks: number[] };
+  /** Same idea as `sharedEnergyAxis`, for the left price axis. */
+  sharedPriceAxis?: { domain: [number, number]; ticks: number[] };
 };
 
 const X_AXIS_TICK_FORMATTERS: Record<"time" | "day" | "month", (time: number) => string> = {
@@ -107,7 +123,7 @@ const TODAY_SETTLEMENT_INTERVAL_HOURS = 15 / 60;
  * values like 173/347/521. Only used for Week/Month/Year — Today's scale
  * is untouched (see `TODAY_SETTLEMENT_INTERVAL_HOURS`).
  */
-function computeNiceEnergyAxis(maxDataValue: number): { max: number; ticks: number[] } {
+export function computeNiceEnergyAxis(maxDataValue: number): { max: number; ticks: number[] } {
   if (maxDataValue <= 0) {
     return { max: 0, ticks: [0] };
   }
@@ -127,6 +143,20 @@ function computeNiceEnergyAxis(maxDataValue: number): { max: number; ticks: numb
   return { max, ticks };
 }
 
+/**
+ * Digital Twin Final UI Polish milestone. Extracted, unchanged, from this
+ * component's own `xAxisUnit === "time"` energy-axis calculation - the
+ * exact same "installed capacity x one settlement interval's worth of
+ * hours" scale, exported so a caller needing a SHARED axis across two
+ * charts with different `installedCapacityKw` (Current vs. Simulated) can
+ * compute it once, e.g. from `Math.max(currentCapacityKw, newCapacityKw)`.
+ */
+export function computeCapacityDerivedEnergyAxis(installedCapacityKw: number): { max: number; ticks: number[] } {
+  const max = Math.round(installedCapacityKw * TODAY_SETTLEMENT_INTERVAL_HOURS * 100) / 100;
+  const step = Math.floor(installedCapacityKw / 12 / 5) * 5;
+  return { max, ticks: [0, step, step * 2, step * 3] };
+}
+
 /** One row per real price timestamp, carrying that same interval's exported energy (if any) — see `settlementEnergySeries`'s prop doc comment for why no resampling is needed. */
 type UnifiedDatum = {
   time: number;
@@ -140,7 +170,7 @@ type UnifiedDatum = {
  * fractional) endpoints. The domain itself is untouched by this - only
  * which values get a visible label changes.
  */
-function computeMultipleOf50Ticks(min: number, max: number): number[] {
+export function computeMultipleOf50Ticks(min: number, max: number): number[] {
   const ticks: number[] = [];
 
   for (let tick = Math.ceil(min / 50) * 50; tick <= max; tick += 50) {
@@ -148,6 +178,23 @@ function computeMultipleOf50Ticks(min: number, max: number): number[] {
   }
 
   return ticks;
+}
+
+/**
+ * Digital Twin Final UI Polish milestone. Extracted, unchanged, from this
+ * component's own price-axis domain calculation, so a caller can compute
+ * ONE shared domain from the union of two charts' known prices (Current +
+ * Simulated) and pass it to both via `sharedPriceAxis`.
+ */
+export function computePriceAxisDomain(knownPrices: number[]): { domain: [number, number]; ticks: number[] } {
+  const minKnownPrice = knownPrices.length > 0 ? Math.min(...knownPrices) : undefined;
+  const maxKnownPrice = knownPrices.length > 0 ? Math.max(...knownPrices) : undefined;
+  const domain: [number, number] =
+    minKnownPrice !== undefined && maxKnownPrice !== undefined
+      ? [minKnownPrice < 0 ? minKnownPrice - 10 : -10, maxKnownPrice + 20]
+      : [-10, 20];
+
+  return { domain, ticks: computeMultipleOf50Ticks(domain[0], domain[1]) };
 }
 
 /**
@@ -282,6 +329,8 @@ export function MarketPriceChart({
   xAxisUnit = "time",
   showThreshold = true,
   priceMetric = "electricity",
+  sharedEnergyAxis,
+  sharedPriceAxis,
 }: MarketPriceChartProps) {
   const t = useTranslations("market.priceChart");
   const hasEnergyData = Boolean(
@@ -307,11 +356,13 @@ export function MarketPriceChart({
   const niceEnergyAxis = hasEnergyAxis
     ? computeNiceEnergyAxis(Math.max(0, ...data.map((point) => point.exportedKwh ?? 0)))
     : { max: 0, ticks: [0] };
-  const maxExportedKwhPerInterval = hasEnergyAxis
-    ? xAxisUnit === "time"
-      ? Math.round((installedCapacityKw as number) * TODAY_SETTLEMENT_INTERVAL_HOURS * 100) / 100
-      : niceEnergyAxis.max
-    : 0;
+  const maxExportedKwhPerInterval = sharedEnergyAxis
+    ? sharedEnergyAxis.max
+    : hasEnergyAxis
+      ? xAxisUnit === "time"
+        ? computeCapacityDerivedEnergyAxis(installedCapacityKw as number).max
+        : niceEnergyAxis.max
+      : 0;
 
   // Left price axis: adapts to the selected day's own real ENTSO-E prices.
   // Maximum is always highest known price plus 20, unchanged. Minimum: on a
@@ -326,26 +377,21 @@ export function MarketPriceChart({
   const knownPrices = series
     .map((point) => point.price)
     .filter((price): price is number => price !== null);
-  const minKnownPrice = knownPrices.length > 0 ? Math.min(...knownPrices) : undefined;
-  const maxKnownPrice = knownPrices.length > 0 ? Math.max(...knownPrices) : undefined;
-  const priceAxisDomain: [number, number] =
-    minKnownPrice !== undefined && maxKnownPrice !== undefined
-      ? [minKnownPrice < 0 ? minKnownPrice - 10 : -10, maxKnownPrice + 20]
-      : [-10, 20];
-  const priceAxisTicks = computeMultipleOf50Ticks(priceAxisDomain[0], priceAxisDomain[1]);
+  const ownPriceAxis = computePriceAxisDomain(knownPrices);
+  const priceAxisDomain: [number, number] = sharedPriceAxis ? sharedPriceAxis.domain : ownPriceAxis.domain;
+  const priceAxisTicks = sharedPriceAxis ? sharedPriceAxis.ticks : ownPriceAxis.ticks;
 
   // Right export-energy axis ticks: for Today, four round steps derived
   // from the plant's own AC capacity, unchanged from before this
   // milestone. For Week/Month/Year, `computeNiceEnergyAxis` already
   // computed a tick set consistent with its own nice domain max above.
-  const energyAxisStep = hasEnergyAxis
-    ? Math.floor((installedCapacityKw as number) / 12 / 5) * 5
-    : 0;
-  const energyAxisTicks = hasEnergyAxis
-    ? xAxisUnit === "time"
-      ? [0, energyAxisStep, energyAxisStep * 2, energyAxisStep * 3]
-      : niceEnergyAxis.ticks
-    : undefined;
+  const energyAxisTicks = sharedEnergyAxis
+    ? sharedEnergyAxis.ticks
+    : hasEnergyAxis
+      ? xAxisUnit === "time"
+        ? computeCapacityDerivedEnergyAxis(installedCapacityKw as number).ticks
+        : niceEnergyAxis.ticks
+      : undefined;
 
   const now = Date.now();
   const domainStart = data[0]?.time;
