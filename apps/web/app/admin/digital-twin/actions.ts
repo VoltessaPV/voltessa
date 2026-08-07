@@ -115,9 +115,10 @@ export type DigitalTwinResult =
  * here (not exported from `replay-engine.ts`, per the explicit instruction
  * not to touch the Simulation Engine for this milestone) purely to feed
  * `MarketPriceChart`'s existing prop shape. Mechanical bucketing only - the
- * `ReplayIntervalOutcome[]` it consumes already comes entirely from
- * `replay` (capacity-only scenario, native 5-minute resolution), no new
- * calculation happens here.
+ * `ReplayIntervalOutcome[]` it consumes always comes from `replay` at
+ * native 5-minute resolution (both the no-battery and, since the
+ * Zero-Export dispatch fix, the battery-enabled path), no new calculation
+ * happens here.
  */
 function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]): SettlementEnergyPoint[] {
   const bucketMs = 15 * 60 * 1000;
@@ -293,16 +294,15 @@ export async function runDigitalTwinSimulation(
       : [];
 
     // Adaptive Visualization milestone (Milestone 6): aggregation happens
-    // strictly after the simulation, over its already-computed 15-minute
-    // settlement grid - never a second replay at a different resolution.
+    // strictly after the simulation, over its already-computed native
+    // interval grid - never a second replay at a different resolution.
     // Current and Simulated always share the same `chartResolution` so the
     // two charts stay visually comparable; only their own export profile
     // (via `aggregatePriceSeriesForChart`'s weighting) can make their price
-    // lines differ. When battery is enabled, `simulatedOutcome.intervals` is
-    // already the battery engine's own native 15-minute grid - bucketing it
-    // through the same 15-minute aggregator below is then a pure identity
-    // pass (each interval already starts on a 15-minute boundary), not a
-    // second calculation.
+    // lines differ. Since the Zero-Export dispatch fix, both the no-battery
+    // and battery-enabled paths return `ReplayOutcome.intervals` at native
+    // 5-minute resolution - `aggregateNativeIntervalsTo15Min` below does
+    // real bucketing for both, not a pure identity pass for either.
     const chartResolution = resolveChartResolution(start, end);
     const currentSettlement15Min = aggregateNativeIntervalsTo15Min(currentOutcome.intervals);
     const simulatedSettlement15Min = aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals);

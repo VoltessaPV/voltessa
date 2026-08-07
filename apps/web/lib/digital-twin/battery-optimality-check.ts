@@ -127,6 +127,9 @@ function toEngineInputs(testCase: OptimalityTestCase): { intervals: AvailablePvI
     intervalStart: new Date(baseTimeMs + i * bucketMs),
     availablePvKwh: pv,
     consumptionKwh: testCase.consumptionKwh[i]!,
+    // None of these synthetic scenarios exercise the Zero-Export dispatch
+    // fix - they validate the unmodified free-optimization search only.
+    isZeroExport: false,
   }));
 
   const priceSeries: MarketPricePoint[] = testCase.priceEurPerMwh.map((price, i) => ({

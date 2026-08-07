@@ -67,6 +67,8 @@ export function toBatteryDispatchIntervals(intervals: ReplayOutcome["intervals"]
     dischargeKwh: i.dischargeKwh!,
     exportedKwh: i.exportedKwh!,
     importedKwh: i.importedKwh!,
+    mandatoryChargeKwh: i.mandatoryChargeKwh!,
+    curtailedKwh: i.curtailedKwh!,
     socKwh: i.socKwh!,
   }));
 }

@@ -26,6 +26,7 @@ const ACTION_COLOR_CLASS: Record<BatteryIntervalDiagnostic["action"], string> = 
   "Charge from Grid": "text-amber-400",
   Discharge: "text-blue-400",
   Export: "text-white/70",
+  Curtailed: "text-rose-400",
 };
 
 export function BatteryDiagnosticsPanel({ diagnostics }: Props) {

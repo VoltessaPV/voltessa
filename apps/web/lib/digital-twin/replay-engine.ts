@@ -1,9 +1,5 @@
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
-import {
-  aggregateAvailablePvTo15Min,
-  reconstructAvailablePv,
-  type AvailablePvInterval,
-} from "@/lib/digital-twin/available-pv-reconstruction";
+import { reconstructAvailablePv, type AvailablePvInterval } from "@/lib/digital-twin/available-pv-reconstruction";
 import { type BatteryConfig, type BatteryDispatchInterval, runBatteryDispatch } from "@/lib/digital-twin/battery-dispatch";
 import { buildHistoricalIntervals } from "@/lib/digital-twin/historical-intervals";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
@@ -43,11 +39,16 @@ import { getPlantTopology, type PlantTopology } from "@/lib/telemetry/plant-topo
  * `max(0, ...)` balance is not the same as clamping a summed balance
  * whenever the sign flips within an aggregation window.
  *
- * The battery path reuses `reconstructAvailablePv` /
- * `aggregateAvailablePvTo15Min` / `runBatteryDispatch` completely unchanged
- * from the Battery Dispatch Engine milestone - the same 15-minute dispatch
- * resolution already validated by `battery-diagnostics.ts` and
- * `battery-optimality-check.ts`.
+ * The battery path (Zero-Export dispatch fix) now dispatches on
+ * `reconstructAvailablePv`'s native 5-minute timeline directly -
+ * `runBatteryDispatch` itself derives the correct power-limit math from
+ * that native spacing (see its own doc comment). 15-minute aggregation
+ * happens only afterward, to build the settlement series the Revenue
+ * Engine needs (`aggregateDispatchToSettlementIntervals`, mirroring the
+ * no-battery path's own `aggregateToSettlementIntervals`) - `ReplayOutcome
+ * .intervals` itself stays native 5-minute for both paths now, consistent
+ * with `actions.ts`'s own `aggregateNativeIntervalsTo15Min` already
+ * expecting a native-resolution input regardless of scenario.
  */
 
 export type CapacityScenarioConfig = {
@@ -70,12 +71,11 @@ export type ScenarioInterval = {
 
 /**
  * The single per-interval shape `ReplayOutcome.intervals` returns,
- * regardless of which layers ran. Resolution differs by path (native
- * 5-minute for no-battery, 15-minute for battery-enabled - the battery
- * engine's own already-validated native dispatch resolution, matching the
- * settlement grid) - each path is honest about its own native granularity
- * rather than forcing a shared one that would either violate byte-identical
- * no-battery output or discard real battery dispatch resolution.
+ * regardless of which layers ran. Native 5-minute resolution for both
+ * paths (Zero-Export dispatch fix) - the battery path no longer aggregates
+ * to 15 minutes before returning its own intervals; that aggregation now
+ * happens only for the separate settlement series fed to the Revenue
+ * Engine (see `aggregateDispatchToSettlementIntervals`).
  */
 export type ReplayIntervalOutcome = {
   intervalStart: Date;
@@ -86,6 +86,10 @@ export type ReplayIntervalOutcome = {
   importedKwh: number | null;
   chargeKwh: number | null;
   dischargeKwh: number | null;
+  /** Zero-Export dispatch fix. Null when no battery scenario was run. */
+  mandatoryChargeKwh: number | null;
+  /** Zero-Export dispatch fix. Null when no battery scenario was run. */
+  curtailedKwh: number | null;
   socKwh: number | null;
 };
 
@@ -226,6 +230,7 @@ async function replayNoBattery(params: {
         intervalStart: interval.intervalStart,
         availablePvKwh: interval.historicalProduction,
         consumptionKwh: interval.historicalConsumption,
+        isZeroExport: false,
       }
     );
   });
@@ -244,6 +249,8 @@ async function replayNoBattery(params: {
     importedKwh: interval.newImport,
     chargeKwh: null,
     dischargeKwh: null,
+    mandatoryChargeKwh: null,
+    curtailedKwh: null,
     socKwh: null,
   }));
 
@@ -262,6 +269,36 @@ async function replayNoBattery(params: {
   };
 }
 
+/**
+ * Zero-Export dispatch fix. `runBatteryDispatch` now runs on the native
+ * (5-minute) `AvailablePvInterval` timeline directly - this sums that
+ * native-resolution dispatch output into the standard 15-minute settlement
+ * grid, exactly mirroring `aggregateToSettlementIntervals`'s own bucketing
+ * for the no-battery path, so `computeExportRevenue` (which resolves each
+ * settlement point against the 15-minute ENTSO-E price series) still gets
+ * correctly-aligned input. `ReplayOutcome.intervals` itself is built
+ * separately, directly from the native `dispatch` array - this function
+ * exists only to feed the Revenue Engine.
+ */
+function aggregateDispatchToSettlementIntervals(dispatch: BatteryDispatchInterval[]): SettlementEnergyPoint[] {
+  const bucketMs = SETTLEMENT_INTERVAL_MINUTES * 60 * 1000;
+  const buckets = new Map<number, { exportedKwh: number; importedKwh: number }>();
+
+  for (const interval of dispatch) {
+    const bucketStart = Math.floor(interval.intervalStart.getTime() / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketStart) ?? { exportedKwh: 0, importedKwh: 0 };
+
+    buckets.set(bucketStart, {
+      exportedKwh: existing.exportedKwh + interval.exportedKwh,
+      importedKwh: existing.importedKwh + interval.importedKwh,
+    });
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, v]) => ({ intervalStart: new Date(t), exportedKwh: v.exportedKwh, importedKwh: v.importedKwh }));
+}
+
 async function replayWithBattery(params: {
   plantId: string;
   organizationId: string;
@@ -278,21 +315,23 @@ async function replayWithBattery(params: {
     fetchPriceSeries(start, end),
   ]);
 
-  const fifteenMinAvailablePv = aggregateAvailablePvTo15Min(nativeAvailablePv);
-  const dispatch: BatteryDispatchInterval[] = runBatteryDispatch(fifteenMinAvailablePv, capacityFactor, priceSeries, batteryScenario);
+  const dispatch: BatteryDispatchInterval[] = runBatteryDispatch(nativeAvailablePv, capacityFactor, priceSeries, batteryScenario);
 
-  const revenue = computeExportRevenue(priceSeries, dispatch);
+  const settlementIntervals = aggregateDispatchToSettlementIntervals(dispatch);
+  const revenue = computeExportRevenue(priceSeries, settlementIntervals);
 
   const intervals: ReplayIntervalOutcome[] = dispatch.map((interval, index) => ({
     intervalStart: interval.intervalStart,
     // dispatch.availablePvKwh is already capacity-scaled (runBatteryDispatch's own output contract) - this is "production", the post-scaling PV.
     productionKwh: interval.availablePvKwh,
-    availablePvKwh: fifteenMinAvailablePv[index]?.availablePvKwh ?? null,
+    availablePvKwh: nativeAvailablePv[index]?.availablePvKwh ?? null,
     consumptionKwh: interval.consumptionKwh,
     exportedKwh: interval.exportedKwh,
     importedKwh: interval.importedKwh,
     chargeKwh: interval.chargeKwh,
     dischargeKwh: interval.dischargeKwh,
+    mandatoryChargeKwh: interval.mandatoryChargeKwh,
+    curtailedKwh: interval.curtailedKwh,
     socKwh: interval.socKwh,
   }));
 
@@ -309,7 +348,7 @@ async function replayWithBattery(params: {
     topology,
     totals: {
       productionKwh: sumNullable(dispatch.map((i) => i.availablePvKwh)),
-      availablePvKwh: sumNullable(fifteenMinAvailablePv.map((i) => i.availablePvKwh)),
+      availablePvKwh: sumNullable(nativeAvailablePv.map((i) => i.availablePvKwh)),
       consumptionKwh: sumNullable(dispatch.map((i) => i.consumptionKwh)),
       exportedKwh: sumNullable(dispatch.map((i) => i.exportedKwh)),
       importedKwh: sumNullable(dispatch.map((i) => i.importedKwh)),

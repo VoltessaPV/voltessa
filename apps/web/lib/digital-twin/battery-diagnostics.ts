@@ -11,7 +11,7 @@ import type { BatteryConfig, BatteryDispatchInterval } from "@/lib/digital-twin/
  * depends on a request/response cycle.
  */
 
-export type BatteryDispatchAction = "Idle" | "Charge from PV" | "Charge from Grid" | "Discharge" | "Export";
+export type BatteryDispatchAction = "Idle" | "Charge from PV" | "Charge from Grid" | "Discharge" | "Export" | "Curtailed";
 
 export type BatteryIntervalDiagnostic = {
   intervalStart: Date;
@@ -21,6 +21,10 @@ export type BatteryIntervalDiagnostic = {
   gridExportKwh: number;
   batteryChargeKwh: number;
   batteryDischargeKwh: number;
+  /** Zero-Export dispatch fix. The portion of `batteryChargeKwh` forced by the mandatory-absorption/grid-priority business rule rather than freely chosen. */
+  mandatoryChargeKwh: number;
+  /** Zero-Export dispatch fix. Reconstructed Available PV that was physically available but neither consumed, charged, nor exported this interval. */
+  curtailedKwh: number;
   socBeforeKwh: number;
   socAfterKwh: number;
   marketPriceEurPerMwh: number | null;
@@ -43,20 +47,35 @@ function classifyAction(
   interval: BatteryDispatchInterval,
   chargeFromGridKwh: number,
 ): { action: BatteryDispatchAction; reason: string } {
+  const curtailNote =
+    interval.curtailedKwh > TOLERANCE_KWH
+      ? ` ${interval.curtailedKwh.toFixed(2)} kWh of Available PV curtailed this interval (Zero Export - not stored, not exported).`
+      : "";
+
   if (interval.chargeKwh > TOLERANCE_KWH) {
     if (chargeFromGridKwh > TOLERANCE_KWH) {
       return {
         action: "Charge from Grid",
-        reason: `Charging ${interval.chargeKwh.toFixed(2)} kWh, ${chargeFromGridKwh.toFixed(2)} kWh sourced from grid import.`,
+        reason: `Charging ${interval.chargeKwh.toFixed(2)} kWh, ${chargeFromGridKwh.toFixed(2)} kWh sourced from grid import.${curtailNote}`,
       };
     }
-    return { action: "Charge from PV", reason: `Charging ${interval.chargeKwh.toFixed(2)} kWh from PV surplus rather than exporting it immediately.` };
+    return {
+      action: "Charge from PV",
+      reason: `Charging ${interval.chargeKwh.toFixed(2)} kWh from PV surplus rather than exporting it immediately.${curtailNote}`,
+    };
   }
 
   if (interval.dischargeKwh > TOLERANCE_KWH) {
     return {
       action: "Discharge",
       reason: `Discharging ${interval.dischargeKwh.toFixed(2)} kWh to the grid/consumption - judged more valuable now than holding for later.`,
+    };
+  }
+
+  if (interval.curtailedKwh > TOLERANCE_KWH) {
+    return {
+      action: "Curtailed",
+      reason: `Export blocked (Zero Export); ${interval.curtailedKwh.toFixed(2)} kWh of PV surplus curtailed - battery already at capacity/power limit.`,
     };
   }
 
@@ -91,7 +110,17 @@ export function buildIntervalDiagnostics(
 
   return intervals.map((interval): BatteryIntervalDiagnostic => {
     const surplusKwh = Math.max(0, interval.availablePvKwh - interval.consumptionKwh);
-    const chargeFromPvKwh = Math.min(interval.chargeKwh, surplusKwh);
+    // Zero-Export dispatch fix: when curtailment consumes the entire
+    // Available PV despite a real surplus existing, the grid-priority rule
+    // (negative price + grid charging enabled) fired - every kWh of
+    // chargeKwh is grid-sourced by construction, even though PV was
+    // physically available (see `computeMandatoryAbsorption` in
+    // `battery-dispatch.ts` - Case 1's residual is always strictly less
+    // than surplus whenever any mandatory charge occurred, so this signal
+    // cannot arise from Case 1). Otherwise, charge is PV-sourced up to the
+    // surplus, exactly as before this fix.
+    const gridPriorityFired = surplusKwh > TOLERANCE_KWH && interval.curtailedKwh >= interval.availablePvKwh - TOLERANCE_KWH;
+    const chargeFromPvKwh = gridPriorityFired ? 0 : Math.min(interval.chargeKwh, surplusKwh);
     const chargeFromGridKwh = Math.max(0, interval.chargeKwh - chargeFromPvKwh);
 
     const { action, reason } = classifyAction(interval, chargeFromGridKwh);
@@ -107,6 +136,8 @@ export function buildIntervalDiagnostics(
       gridExportKwh: interval.exportedKwh,
       batteryChargeKwh: interval.chargeKwh,
       batteryDischargeKwh: interval.dischargeKwh,
+      mandatoryChargeKwh: interval.mandatoryChargeKwh,
+      curtailedKwh: interval.curtailedKwh,
       socBeforeKwh: Math.round(socBefore * 100) / 100,
       socAfterKwh: interval.socKwh,
       marketPriceEurPerMwh: price,
@@ -136,9 +167,15 @@ const BALANCE_TOLERANCE_KWH = 0.05;
  * Energy In = Energy Out + Storage Delta + Losses:
  *
  *   Energy In      = availablePv + gridImport
- *   Energy Out     = consumption + gridExport
+ *   Energy Out     = consumption + gridExport + curtailed
  *   Storage Delta  = socAfter - socBefore
  *   Losses         = charge x (1 - etaCharge) + discharge x (1/etaDischarge - 1)
+ *
+ * `curtailed` (Zero-Export dispatch fix) is Available PV that was
+ * physically present but neither consumed, stored, nor exported - without
+ * it in Energy Out, every interval with real curtailment would look like a
+ * balance violation, when the energy is genuinely, correctly accounted for
+ * as lost rather than missing.
  *
  * `Losses` is computed here from `battery.roundTripEfficiencyPercent`
  * alone - it does not read anything `battery-dispatch.ts` computed
@@ -157,7 +194,7 @@ export function validateEnergyBalance(
 
   for (const d of diagnostics) {
     const energyIn = d.availablePvKwh + d.gridImportKwh;
-    const energyOut = d.consumptionKwh + d.gridExportKwh;
+    const energyOut = d.consumptionKwh + d.gridExportKwh + d.curtailedKwh;
     const storageDelta = d.socAfterKwh - d.socBeforeKwh;
     const losses = d.batteryChargeKwh * (1 - eta) + d.batteryDischargeKwh * (1 / eta - 1);
     const discrepancy = energyIn - energyOut - storageDelta - losses;
@@ -192,7 +229,8 @@ export type ConstraintViolation = {
   detail: string;
 };
 
-const INTERVAL_HOURS = 15 / 60;
+/** Fallback interval duration when fewer than two diagnostics are supplied to derive spacing from. */
+const DEFAULT_INTERVAL_HOURS = 5 / 60;
 
 /** All seven constraint checks the milestone lists, each independently derived from `battery` config - none of them trust the engine's own internal bounds-checking. */
 export function validateConstraints(diagnostics: BatteryIntervalDiagnostic[], battery: BatteryConfig): ConstraintViolation[] {
@@ -200,8 +238,17 @@ export function validateConstraints(diagnostics: BatteryIntervalDiagnostic[], ba
 
   const minSocKwh = (battery.minSocPercent / 100) * battery.capacityKwh;
   const maxSocKwh = (battery.maxSocPercent / 100) * battery.capacityKwh;
-  const maxChargeKwh = battery.maxChargePowerKw * INTERVAL_HOURS;
-  const maxDischargeKwh = battery.maxDischargePowerKw * INTERVAL_HOURS;
+  // Zero-Export dispatch fix: `runBatteryDispatch` no longer runs at a
+  // fixed 15-minute cadence - derive the actual interval duration from the
+  // diagnostics' own spacing (native 5-minute for real dispatch output,
+  // 15-minute for `battery-optimality-check.ts`'s synthetic test data),
+  // exactly mirroring `runBatteryDispatch`'s own derivation.
+  const intervalHours =
+    diagnostics.length >= 2
+      ? (diagnostics[1]!.intervalStart.getTime() - diagnostics[0]!.intervalStart.getTime()) / 3_600_000
+      : DEFAULT_INTERVAL_HOURS;
+  const maxChargeKwh = battery.maxChargePowerKw * intervalHours;
+  const maxDischargeKwh = battery.maxDischargePowerKw * intervalHours;
 
   for (const d of diagnostics) {
     if (
