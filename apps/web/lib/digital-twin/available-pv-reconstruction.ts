@@ -18,6 +18,16 @@ export type AvailablePvInterval = {
   intervalStart: Date;
   availablePvKwh: number | null;
   consumptionKwh: number | null;
+  /**
+   * Zero-Export dispatch fix. Whether Voltessa's own automation had this
+   * plant in Zero Export mode at this instant - threaded through from the
+   * same `isLimitedAt`/`isZeroExportAt` check this function already runs
+   * internally to decide whether to reconstruct, rather than discarding it.
+   * `runBatteryDispatch` (`battery-dispatch.ts`) needs this to distinguish
+   * curtailed-and-physically-blocked-from-export PV from ordinary
+   * freely-exportable PV surplus.
+   */
+  isZeroExport: boolean;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -100,6 +110,7 @@ export async function reconstructAvailablePv(params: {
         intervalStart: interval.intervalStart,
         availablePvKwh: interval.historicalProduction,
         consumptionKwh: interval.historicalConsumption,
+        isZeroExport: false,
       };
     }
 
@@ -126,6 +137,7 @@ export async function reconstructAvailablePv(params: {
         intervalStart: interval.intervalStart,
         availablePvKwh: Math.round(average * 100) / 100,
         consumptionKwh: interval.historicalConsumption,
+        isZeroExport: true,
       };
     }
 
@@ -138,7 +150,12 @@ export async function reconstructAvailablePv(params: {
 
         const production = productionAt(candidateInstant);
         if (production !== null) {
-          return { intervalStart: interval.intervalStart, availablePvKwh: production, consumptionKwh: interval.historicalConsumption };
+          return {
+            intervalStart: interval.intervalStart,
+            availablePvKwh: production,
+            consumptionKwh: interval.historicalConsumption,
+            isZeroExport: true,
+          };
         }
       }
     }
@@ -147,36 +164,7 @@ export async function reconstructAvailablePv(params: {
       intervalStart: interval.intervalStart,
       availablePvKwh: interval.historicalProduction,
       consumptionKwh: interval.historicalConsumption,
+      isZeroExport: true,
     };
   });
-}
-
-/**
- * Sums native 5-minute Available PV intervals into the standard 15-minute
- * settlement grid - the same mechanical bucketing shape used throughout
- * this codebase (e.g. `aggregateSettlementSeriesForChart`), applied here to
- * a different input type. The Battery Engine dispatches at 15-minute
- * resolution, matching `MarketPrice`'s own native ENTSO-E granularity -
- * there is no finer price signal to arbitrage against, so there is nothing
- * to gain from dispatching every 5 minutes instead.
- */
-export function aggregateAvailablePvTo15Min(intervals: AvailablePvInterval[]): AvailablePvInterval[] {
-  const bucketMs = 15 * 60 * 1000;
-  const buckets = new Map<number, { availablePvKwh: number | null; consumptionKwh: number | null }>();
-
-  for (const interval of intervals) {
-    const bucketStart = Math.floor(interval.intervalStart.getTime() / bucketMs) * bucketMs;
-    const existing = buckets.get(bucketStart) ?? { availablePvKwh: null, consumptionKwh: null };
-
-    buckets.set(bucketStart, {
-      availablePvKwh:
-        interval.availablePvKwh !== null ? (existing.availablePvKwh ?? 0) + interval.availablePvKwh : existing.availablePvKwh,
-      consumptionKwh:
-        interval.consumptionKwh !== null ? (existing.consumptionKwh ?? 0) + interval.consumptionKwh : existing.consumptionKwh,
-    });
-  }
-
-  return [...buckets.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([t, v]) => ({ intervalStart: new Date(t), availablePvKwh: v.availablePvKwh, consumptionKwh: v.consumptionKwh }));
 }
