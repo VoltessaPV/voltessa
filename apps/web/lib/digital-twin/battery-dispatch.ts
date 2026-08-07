@@ -422,17 +422,35 @@ export function runBatteryDispatch(
     };
   }
 
-  let value = new Array<number>(N + 1);
-  for (let j = 0; j <= N; j += 1) {
-    const socKwh = minSocKwh + j * stepKwh;
-    value[j] = (Math.max(0, socKwh - minSocKwh) * etaDischarge * referencePrice) / 1000;
+  /**
+   * Continuous Forward Reconstruction. Backward induction (this loop) is
+   * completely unchanged - same recursion, same objective, same grid,
+   * still populates `policy[t][j]` for every grid state exactly as before
+   * (diagnostics/regression/validation continue to read it; forward
+   * reconstruction below no longer does). The one structural change: the
+   * value table for every `t` is now retained (`valueByT`) instead of a
+   * rolling two-buffer that discarded everything except the final array -
+   * forward reconstruction runs as a separate, later pass (0 -> T-1, after
+   * backward induction has finished T-1 -> 0), so it needs `V_{t+1}`
+   * available for whichever `t` it's actually at, which the old rolling
+   * buffer never kept. This is a memory-only change (`T x (N+1)` floats) -
+   * the Bellman table itself is not being redefined, only preserved.
+   */
+  const valueByT: number[][] = new Array(T + 1);
+  {
+    const terminal = new Array<number>(N + 1);
+    for (let j = 0; j <= N; j += 1) {
+      const socKwh = minSocKwh + j * stepKwh;
+      terminal[j] = (Math.max(0, socKwh - minSocKwh) * etaDischarge * referencePrice) / 1000;
+    }
+    valueByT[T] = terminal;
   }
 
   const policy: Int32Array[] = new Array(T);
 
   for (let t = T - 1; t >= 0; t -= 1) {
-    const nextValue = value;
-    value = new Array<number>(N + 1);
+    const nextValue = valueByT[t + 1]!;
+    const value = new Array<number>(N + 1);
     const policyRow = new Int32Array(N + 1);
 
     const surplusT = Math.max(0, netPv[t]!);
@@ -521,39 +539,199 @@ export function runBatteryDispatch(
       policyRow[j] = bestK;
     }
 
+    valueByT[t] = value;
     policy[t] = policyRow;
   }
 
-  const results: BatteryDispatchInterval[] = new Array(T);
-  let currentIndex = 0;
+  /**
+   * Continuous Forward Reconstruction (the actual replay). The Bellman grid
+   * approximates the value function - it was never meant to define which
+   * SOC values are physically reachable. So `policy[t][j]` (still populated
+   * above, still available for diagnostics/regression/validation) is not
+   * consulted here: the physical battery state is propagated as a genuine
+   * continuous number, and every interval's decision is re-evaluated fresh
+   * from that exact state, using the (unchanged, grid-discretized) value
+   * tables only as an interpolated continuation-value oracle.
+   */
 
-  for (let t = 0; t < T; t += 1) {
-    const socKwh = minSocKwh + currentIndex * stepKwh;
-    const targetIndex = policy[t]![currentIndex]!;
-    const targetSoc = minSocKwh + targetIndex * stepKwh;
+  /** Linear interpolation of a discretized value array at a continuous SOC. Clamped at the grid ends - decisions never leave [minSocKwh, maxSocKwh] by construction, so this never actually extrapolates. */
+  function interpolateValue(valueArray: number[], socKwh: number): number {
+    const j = (socKwh - minSocKwh) / stepKwh;
+    const jLo = Math.max(0, Math.min(N - 1, Math.floor(j)));
+    const frac = Math.min(1, Math.max(0, j - jLo));
+    return valueArray[jLo]! * (1 - frac) + valueArray[jLo + 1]! * frac;
+  }
 
-    let chargeKwh = 0;
-    let dischargeKwh = 0;
-    if (targetIndex > currentIndex) {
-      chargeKwh = (targetSoc - socKwh) / etaCharge;
-    } else if (targetIndex < currentIndex) {
-      dischargeKwh = (socKwh - targetSoc) * etaDischarge;
+  /** Net grid exchange (export positive) of moving continuously from `fromSocKwh` to `toSocKwh` this interval - the same physical model as backward induction's own candidate evaluation, just unbound from the grid. */
+  function gridExchangeFor(t: number, fromSocKwh: number, toSocKwh: number): number {
+    if (toSocKwh > fromSocKwh + 1e-9) {
+      const chargeKwh = (toSocKwh - fromSocKwh) / etaCharge;
+      return netPv[t]! - chargeKwh;
+    }
+    if (toSocKwh < fromSocKwh - 1e-9) {
+      const dischargeKwh = (fromSocKwh - toSocKwh) * etaDischarge;
+      return netPv[t]! + dischargeKwh;
+    }
+    return netPv[t]!;
+  }
+
+  /**
+   * g(x) = ImmediateReward(x) + InterpolatedFutureValue(x) - the single rule
+   * every Case 3 candidate is evaluated by: the idle point, every reachable
+   * grid breakpoint, and both feasibility boundaries alike. No candidate is
+   * treated specially and there is no separate code path for any of them.
+   */
+  function evaluateCandidate(t: number, fromSocKwh: number, nextValue: number[], targetSocKwh: number): number {
+    const reward = (price[t]! * gridExchangeFor(t, fromSocKwh, targetSocKwh)) / 1000;
+    return reward + interpolateValue(nextValue, targetSocKwh);
+  }
+
+  /**
+   * Continuous counterpart of `computeMandatoryTarget`, evaluated from the
+   * true physical SOC rather than a grid state - same dominance proof (see
+   * module doc comment), so still no value lookup needed for the mandatory
+   * target itself.
+   */
+  function computeMandatoryTargetContinuous(
+    t: number,
+    socKwh: number,
+    surplus: number,
+  ): { targetSoc: number; mandatoryChargeKwh: number; curtailedKwh: number; gridExchangeMandatory: number } {
+    const powerCapSoc = Math.min(maxSocKwh, socKwh + maxChargeKwhPerInterval * etaCharge);
+    const targetSoc = useGridPriority[t] ? powerCapSoc : Math.min(powerCapSoc, socKwh + surplus * etaCharge);
+    const mandatoryChargeKwh = Math.max(0, (targetSoc - socKwh) / etaCharge);
+
+    if (useGridPriority[t]) {
+      return {
+        targetSoc,
+        mandatoryChargeKwh,
+        curtailedKwh: availablePv[t]!,
+        gridExchangeMandatory: -(consumptionAt[t]! + mandatoryChargeKwh),
+      };
     }
 
+    return {
+      targetSoc,
+      mandatoryChargeKwh,
+      curtailedKwh: Math.max(0, surplus - mandatoryChargeKwh),
+      gridExchangeMandatory: 0,
+    };
+  }
+
+  const results: BatteryDispatchInterval[] = new Array(T);
+  let currentSocKwh = minSocKwh;
+
+  for (let t = 0; t < T; t += 1) {
+    const s = currentSocKwh;
+    const nextValue = valueByT[t + 1]!;
     const surplusT = Math.max(0, netPv[t]!);
 
+    let targetSoc: number;
     let mandatoryChargeKwh = 0;
     let curtailedKwh = 0;
     let gridExchange: number;
 
     if (isZeroExport[t] && surplusT > 0) {
-      const mandatory = computeMandatoryTarget(t, currentIndex, surplusT);
+      // Case 1 / Case 2 - closed-form, continuous, no value lookup (dominance proof, see module doc comment).
+      const mandatory = computeMandatoryTargetContinuous(t, s, surplusT);
+      targetSoc = mandatory.targetSoc;
       mandatoryChargeKwh = mandatory.mandatoryChargeKwh;
       curtailedKwh = mandatory.curtailedKwh;
-      const additionalChargeKwh = Math.max(0, chargeKwh - mandatoryChargeKwh);
-      gridExchange = mandatory.gridExchangeMandatory - additionalChargeKwh;
+      gridExchange = mandatory.gridExchangeMandatory;
+
+      // Optional grid-financed extension beyond the mandatory PV-absorption
+      // target is a genuine economic trade-off (unlike the mandatory target
+      // itself), so it is genuinely searched - mirrors backward induction's
+      // own optional-extension loop, now over the continuous domain.
+      if (config.allowGridCharging && !useGridPriority[t]) {
+        const upperBoundSoc = Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge);
+
+        let bestSoc = targetSoc;
+        let bestValue = evaluateCandidate(t, s, nextValue, targetSoc);
+
+        const kLo = Math.max(0, Math.ceil((targetSoc - minSocKwh) / stepKwh));
+        const kHi = Math.min(N, Math.floor((upperBoundSoc - minSocKwh) / stepKwh));
+        for (let k = kLo; k <= kHi; k += 1) {
+          const candidateSoc = minSocKwh + k * stepKwh;
+          if (candidateSoc <= targetSoc + 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
+            continue;
+          }
+          const v = evaluateCandidate(t, s, nextValue, candidateSoc);
+          if (v > bestValue) {
+            bestValue = v;
+            bestSoc = candidateSoc;
+          }
+        }
+        {
+          const v = evaluateCandidate(t, s, nextValue, upperBoundSoc);
+          if (v > bestValue) {
+            bestValue = v;
+            bestSoc = upperBoundSoc;
+          }
+        }
+
+        if (bestSoc > targetSoc + 1e-9) {
+          const totalChargeKwh = (bestSoc - s) / etaCharge;
+          const additionalChargeKwh = Math.max(0, totalChargeKwh - mandatoryChargeKwh);
+          targetSoc = bestSoc;
+          gridExchange = mandatory.gridExchangeMandatory - additionalChargeKwh;
+        }
+      }
     } else {
-      gridExchange = netPv[t]! - chargeKwh + dischargeKwh;
+      // Case 3 - a single continuous optimization variable x = nextSocKwh,
+      // no separate "charge decision" and "discharge decision". Candidates:
+      // the idle point, every value-function breakpoint (grid point) inside
+      // the feasible interval, and both feasible boundaries - all evaluated
+      // by the exact same `evaluateCandidate` rule.
+      const upperBoundSoc = config.allowGridCharging
+        ? Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge)
+        : Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge, s + surplusT * etaCharge);
+
+      const lowerBoundSoc = isZeroExport[t]
+        ? Math.max(minSocKwh, s - maxDischargeKwhPerInterval / etaDischarge, s - Math.max(0, -netPv[t]!) / etaDischarge)
+        : Math.max(minSocKwh, s - maxDischargeKwhPerInterval / etaDischarge);
+
+      let bestSoc = s;
+      let bestValue = evaluateCandidate(t, s, nextValue, s);
+
+      const kLo = Math.max(0, Math.ceil((lowerBoundSoc - minSocKwh) / stepKwh));
+      const kHi = Math.min(N, Math.floor((upperBoundSoc - minSocKwh) / stepKwh));
+      for (let k = kLo; k <= kHi; k += 1) {
+        const candidateSoc = minSocKwh + k * stepKwh;
+        if (candidateSoc < lowerBoundSoc - 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
+          continue;
+        }
+        const v = evaluateCandidate(t, s, nextValue, candidateSoc);
+        if (v > bestValue) {
+          bestValue = v;
+          bestSoc = candidateSoc;
+        }
+      }
+      {
+        const v = evaluateCandidate(t, s, nextValue, lowerBoundSoc);
+        if (v > bestValue) {
+          bestValue = v;
+          bestSoc = lowerBoundSoc;
+        }
+      }
+      {
+        const v = evaluateCandidate(t, s, nextValue, upperBoundSoc);
+        if (v > bestValue) {
+          bestValue = v;
+          bestSoc = upperBoundSoc;
+        }
+      }
+
+      targetSoc = bestSoc;
+      gridExchange = gridExchangeFor(t, s, targetSoc);
+    }
+
+    let chargeKwh = 0;
+    let dischargeKwh = 0;
+    if (targetSoc > s + 1e-9) {
+      chargeKwh = (targetSoc - s) / etaCharge;
+    } else if (targetSoc < s - 1e-9) {
+      dischargeKwh = (s - targetSoc) * etaDischarge;
     }
 
     const exportedKwh = Math.max(0, gridExchange);
@@ -572,7 +750,7 @@ export function runBatteryDispatch(
       socKwh: Math.round(targetSoc * 100) / 100,
     };
 
-    currentIndex = targetIndex;
+    currentSocKwh = targetSoc;
   }
 
   return results;
