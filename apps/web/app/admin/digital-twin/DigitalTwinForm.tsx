@@ -820,6 +820,22 @@ export function DigitalTwinForm({ plants }: Props) {
                   <dt className="text-xs text-white/40">Final SOC</dt>
                   <dd className="text-white/80">{formatKwh(result.simulatedBattery.finalSocKwh)} kWh</dd>
                 </div>
+                <div>
+                  <dt className="text-xs text-white/40">Average Charging Price</dt>
+                  <dd className="text-white/80">
+                    {result.simulatedBattery.avgChargingPriceEurPerMwh !== null
+                      ? `${formatAsp(result.simulatedBattery.avgChargingPriceEurPerMwh)} EUR/MWh`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Average Discharging Price</dt>
+                  <dd className="text-white/80">
+                    {result.simulatedBattery.avgDischargingPriceEurPerMwh !== null
+                      ? `${formatAsp(result.simulatedBattery.avgDischargingPriceEurPerMwh)} EUR/MWh`
+                      : "—"}
+                  </dd>
+                </div>
               </dl>
             </div>
           )}
@@ -877,13 +893,17 @@ export function DigitalTwinForm({ plants }: Props) {
 
           {result.simulatedBattery && (
             <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
-              <h3 className="text-sm font-semibold text-white">Battery SOC (Simulated)</h3>
+              <h3 className="text-sm font-semibold text-white">
+                {result.chartResolution !== "daily" ? "Battery SOC & Market Price (Simulated)" : "Battery SOC (Simulated)"}
+              </h3>
               <div className="mt-2.5 h-[240px] sm:h-[280px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicBatterySocChart
                     series={result.simulatedSocChart}
                     batteryCapacityKwh={result.simulatedBattery.capacityKwh}
                     xAxisUnit={xAxisUnitFor(result.chartResolution)}
+                    priceSeries={result.chartResolution !== "daily" ? result.simulatedChart.price : undefined}
+                    priceAxis={result.chartResolution !== "daily" ? sharedAxes.priceAxis : undefined}
                   />
                 </Suspense>
               </div>

@@ -49,6 +49,16 @@ export type DigitalTwinChartSeries = {
  * `capacityKwh`, which is the battery size the caller configured (an input
  * echoed back, not a simulation output - `ReplayOutcome` has no notion of
  * "capacity", only what the battery actually did).
+ *
+ * `avgChargingPriceEurPerMwh`/`avgDischargingPriceEurPerMwh` (Battery Price
+ * KPIs milestone) are the one exception to "every field is a direct
+ * ReplayOutcome read" - they're the energy-weighted average ENTSO-E market
+ * price over exactly the intervals where the battery charged/discharged,
+ * computed by `computeWeightedBatteryPrice` below straight from
+ * `simulatedOutcome.intervals` and the same `priceSeries` this file already
+ * fetches - never from `revenue`/`intervalRevenueEur` (which nets
+ * export/import), per that milestone's explicit "use market prices
+ * directly" requirement. `null` when no charging/discharging occurred.
  */
 export type DigitalTwinBatteryMetrics = {
   capacityKwh: number;
@@ -58,6 +68,8 @@ export type DigitalTwinBatteryMetrics = {
   batteryLossesKwh: number;
   peakSocKwh: number;
   finalSocKwh: number;
+  avgChargingPriceEurPerMwh: number | null;
+  avgDischargingPriceEurPerMwh: number | null;
 };
 
 export type DigitalTwinResult =
@@ -149,6 +161,42 @@ function toMetrics(outcome: ReplayOutcome): DigitalTwinMetrics {
     revenueEur: outcome.revenue.available ? outcome.revenue.revenueEur : null,
     averageSellingPriceEurPerMwh: outcome.revenue.available ? outcome.revenue.averagePriceEurPerMwh : null,
   };
+}
+
+/**
+ * Battery Price KPIs milestone. Energy-weighted average market price over
+ * exactly the intervals where `key` (charge or discharge) was positive and
+ * the market price is known - `Σ(energy x price) / Σ(energy)`, per the
+ * milestone's explicit formula. Reads `priceSeries` (the same raw ENTSO-E
+ * series this file already fetches) directly, never `revenue`/
+ * `intervalRevenueEur` - this must never be derived from realized revenue.
+ */
+function computeWeightedBatteryPrice(
+  intervals: ReplayOutcome["intervals"],
+  priceSeries: MarketPricePoint[],
+  key: "chargeKwh" | "dischargeKwh",
+): number | null {
+  const priceByTime = new Map(priceSeries.map((point) => [point.timestamp.getTime(), point.price]));
+
+  let weightedSum = 0;
+  let totalEnergyKwh = 0;
+
+  for (const interval of intervals) {
+    const energyKwh = interval[key];
+    if (energyKwh === null || energyKwh <= 0) {
+      continue;
+    }
+
+    const price = priceByTime.get(interval.intervalStart.getTime());
+    if (price === undefined || price === null) {
+      continue;
+    }
+
+    weightedSum += energyKwh * price;
+    totalEnergyKwh += energyKwh;
+  }
+
+  return totalEnergyKwh > 0 ? Math.round((weightedSum / totalEnergyKwh) * 100) / 100 : null;
 }
 
 function resolveRange(
@@ -269,6 +317,8 @@ export async function runDigitalTwinSimulation(
             batteryLossesKwh: simulatedOutcome.battery.batteryLossesKwh,
             peakSocKwh: simulatedOutcome.battery.peakSocKwh,
             finalSocKwh: simulatedOutcome.battery.finalSocKwh,
+            avgChargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "chargeKwh"),
+            avgDischargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "dischargeKwh"),
           }
         : null;
 
