@@ -1,11 +1,11 @@
 "use client";
 
-import { Line } from "recharts";
+import { Bar, Line } from "recharts";
 
 import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
 import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaDate, formatSofiaTime } from "@/components/charts/chart-style";
-import type { SocPoint } from "@/lib/market-price/chart-aggregation";
+import type { BatteryFlowPoint, SocPoint } from "@/lib/market-price/chart-aggregation";
 
 /**
  * Battery Digital Twin UI milestone. SOC is state, not an energy flow - this
@@ -34,12 +34,16 @@ type BatterySocChartProps = {
   priceSeries?: MarketPricePoint[];
   /** Same shared-axis domain/ticks the page's two MarketPriceChart panels already use (`computePriceAxisDomain`) - visual consistency across every chart on the page. */
   priceAxis?: { domain: [number, number]; ticks: number[] };
+  /** Charge/discharge per bucket, on their own axis - omitted entirely (no bars, no legend entry, no axis) when not supplied. */
+  flowSeries?: BatteryFlowPoint[];
 };
 
 type SocPriceDatum = {
   time: number;
   socKwh: number | null;
   price: number | null;
+  chargeKwh: number | null;
+  dischargeKwh: number | null;
 };
 
 /** ENTSO-E's native day-ahead cadence - the bucket width a "native" (single-day) chart's price points each hold for. */
@@ -66,9 +70,20 @@ const HOUR_MS = 60 * 60 * 1000;
  * sweep alongside `series`'s own ascending order is enough - no need for a
  * second, less efficient lookup structure.
  */
-function buildSocPriceData(series: SocPoint[], priceSeries: MarketPricePoint[] | undefined, bucketMs: number): SocPriceDatum[] {
+function buildSocPriceData(
+  series: SocPoint[],
+  priceSeries: MarketPricePoint[] | undefined,
+  bucketMs: number,
+  flowSeries: BatteryFlowPoint[] | undefined,
+): SocPriceDatum[] {
   const sortedPrices = priceSeries ? [...priceSeries].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()) : [];
   let priceIndex = 0;
+
+  // Unlike `priceSeries`, `flowSeries` is always aggregated by the same
+  // caller to the exact same bucket grid `series` (SOC) already is - both
+  // come from the same native dispatch intervals via the same
+  // `chartResolution` - so an exact-timestamp join is correct here.
+  const flowByTime = new Map((flowSeries ?? []).map((point) => [point.intervalStart.getTime(), point]));
 
   return series.map((point) => {
     const time = point.intervalStart.getTime();
@@ -82,7 +97,9 @@ function buildSocPriceData(series: SocPoint[], priceSeries: MarketPricePoint[] |
     const price =
       current && bucketStartMs !== undefined && bucketStartMs <= time && time < bucketStartMs + bucketMs ? current.price : null;
 
-    return { time, socKwh: point.socKwh, price };
+    const flow = flowByTime.get(time);
+
+    return { time, socKwh: point.socKwh, price, chargeKwh: flow?.chargeKwh ?? null, dischargeKwh: flow?.dischargeKwh ?? null };
   });
 }
 
@@ -105,6 +122,9 @@ function SocPriceTooltip({
 
   const socKwh = payload.find((entry) => entry.dataKey === "socKwh")?.value ?? null;
   const price = payload.find((entry) => entry.dataKey === "price")?.value ?? null;
+  const chargeKwh = payload.find((entry) => entry.dataKey === "chargeKwh")?.value ?? null;
+  const dischargeKwh = payload.find((entry) => entry.dataKey === "dischargeKwh")?.value ?? null;
+  const hasAnything = socKwh !== null || (hasPrice && price !== null) || (chargeKwh ?? 0) > 0 || (dischargeKwh ?? 0) > 0;
 
   return (
     <div className={CHART_TOOLTIP_CLASSNAME}>
@@ -115,25 +135,42 @@ function SocPriceTooltip({
           {socKwh.toFixed(2)} kWh
         </p>
       )}
+      {(chargeKwh ?? 0) > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-emerald-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          Charge {chargeKwh!.toFixed(2)} kWh
+        </p>
+      )}
+      {(dischargeKwh ?? 0) > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-red-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+          Discharge {dischargeKwh!.toFixed(2)} kWh
+        </p>
+      )}
       {hasPrice && price !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-blue-400">
           <span className="h-1.5 w-1.5 rounded-full bg-blue-400" />
           {price} EUR/MWh
         </p>
       )}
-      {socKwh === null && !(hasPrice && price !== null) && <p className="mt-1 text-slate-500">No data</p>}
+      {!hasAnything && <p className="mt-1 text-slate-500">No data</p>}
     </div>
   );
 }
 
-export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time", priceSeries, priceAxis }: BatterySocChartProps) {
+export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time", priceSeries, priceAxis, flowSeries }: BatterySocChartProps) {
   const hasPrice = Boolean(priceSeries && priceAxis);
+  const hasFlow = Boolean(flowSeries && flowSeries.length > 0);
   const bucketMs = xAxisUnit === "time" ? NATIVE_PRICE_BUCKET_MS : HOUR_MS;
-  const data: SocPriceDatum[] = buildSocPriceData(series, priceSeries, bucketMs);
+  const data: SocPriceDatum[] = buildSocPriceData(series, priceSeries, bucketMs, flowSeries);
 
   const domainStart = data[0]?.time;
   const xTicks = xAxisUnit === "time" && domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
   const xAxisTickFormatter = xAxisUnit === "time" ? formatSofiaTime : formatSofiaDate;
+
+  const maxFlowKwh = hasFlow
+    ? Math.max(1, ...data.map((d) => Math.max(d.chargeKwh ?? 0, d.dischargeKwh ?? 0)))
+    : 1;
 
   const yAxes: ChartFrameYAxis[] = [
     {
@@ -154,6 +191,21 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           },
         ]
       : []),
+    // Charge/discharge share one axis, scaled to whichever this chart's own
+    // data actually reaches - deliberately independent of the SOC axis
+    // (a state, not a flow, on a completely different scale) rather than
+    // forcing bars sized in single-digit kWh onto a hundreds-of-kWh domain.
+    ...(hasFlow
+      ? [
+          {
+            yAxisId: "flow",
+            orientation: "right" as const,
+            unitLabel: "kWh/interval",
+            domain: [0, maxFlowKwh] as [number, number],
+            allowDataOverflow: true,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -163,6 +215,20 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           <span className="h-0.5 w-3 rounded-full bg-amber-400" />
           Battery SOC
         </span>
+
+        {hasFlow && (
+          <>
+            <span className="h-3 w-px bg-white/10" />
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-2.5 w-2.5 rounded-sm bg-emerald-400" />
+              Charge
+            </span>
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-2.5 w-2.5 rounded-sm bg-red-400" />
+              Discharge
+            </span>
+          </>
+        )}
 
         {hasPrice && (
           <>
@@ -183,6 +249,13 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           xTicks={xTicks}
           tickFormatter={xAxisTickFormatter}
         >
+          {hasFlow && (
+            <Bar yAxisId="flow" dataKey="chargeKwh" fill="#34d399" fillOpacity={0.75} radius={[2, 2, 0, 0]} isAnimationActive animationDuration={700} />
+          )}
+          {hasFlow && (
+            <Bar yAxisId="flow" dataKey="dischargeKwh" fill="#f87171" fillOpacity={0.75} radius={[2, 2, 0, 0]} isAnimationActive animationDuration={700} />
+          )}
+
           <Line
             yAxisId="soc"
             type="monotone"
