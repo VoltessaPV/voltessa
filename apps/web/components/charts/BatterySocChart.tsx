@@ -42,6 +42,50 @@ type SocPriceDatum = {
   price: number | null;
 };
 
+/** ENTSO-E's native day-ahead cadence - the bucket width a "native" (single-day) chart's price points each hold for. */
+const NATIVE_PRICE_BUCKET_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * SOC/Market Price chart bug fix. `series` is native (post-PR #57, every 5
+ * minutes); `priceSeries` is either ENTSO-E's own native 15-minute cadence
+ * (`xAxisUnit === "time"`, a single-day chart) or already hourly-bucketed
+ * (`xAxisUnit === "day"`, the only other case this component ever receives
+ * a price series for - `DigitalTwinForm.tsx` never passes one for a
+ * `"daily"`-resolution, >7-day chart). Joining these two grids by exact
+ * timestamp equality (the original approach) silently dropped 2 of every 3
+ * SOC points' price on a single-day chart, since only every third 5-minute
+ * SOC sample lands on a 15-minute price timestamp.
+ *
+ * A market price is a step function - it holds for its whole bucket, not
+ * just its own leading instant - so the correct join for a SOC point is
+ * "the latest known price bucket at or before this SOC point's own
+ * timestamp," not an exact match. This is not an approximation: it is
+ * exactly what the price was at that moment. `priceSeries` is assumed
+ * sorted ascending (true for every caller here), so a single forward
+ * sweep alongside `series`'s own ascending order is enough - no need for a
+ * second, less efficient lookup structure.
+ */
+function buildSocPriceData(series: SocPoint[], priceSeries: MarketPricePoint[] | undefined, bucketMs: number): SocPriceDatum[] {
+  const sortedPrices = priceSeries ? [...priceSeries].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()) : [];
+  let priceIndex = 0;
+
+  return series.map((point) => {
+    const time = point.intervalStart.getTime();
+
+    while (priceIndex + 1 < sortedPrices.length && sortedPrices[priceIndex + 1]!.timestamp.getTime() <= time) {
+      priceIndex += 1;
+    }
+
+    const current = sortedPrices[priceIndex];
+    const bucketStartMs = current?.timestamp.getTime();
+    const price =
+      current && bucketStartMs !== undefined && bucketStartMs <= time && time < bucketStartMs + bucketMs ? current.price : null;
+
+    return { time, socKwh: point.socKwh, price };
+  });
+}
+
 function SocPriceTooltip({
   active,
   payload,
@@ -84,13 +128,8 @@ function SocPriceTooltip({
 
 export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time", priceSeries, priceAxis }: BatterySocChartProps) {
   const hasPrice = Boolean(priceSeries && priceAxis);
-  const priceByTime = new Map((priceSeries ?? []).map((point) => [point.timestamp.getTime(), point.price]));
-
-  const data: SocPriceDatum[] = series.map((point) => ({
-    time: point.intervalStart.getTime(),
-    socKwh: point.socKwh,
-    price: priceByTime.get(point.intervalStart.getTime()) ?? null,
-  }));
+  const bucketMs = xAxisUnit === "time" ? NATIVE_PRICE_BUCKET_MS : HOUR_MS;
+  const data: SocPriceDatum[] = buildSocPriceData(series, priceSeries, bucketMs);
 
   const domainStart = data[0]?.time;
   const xTicks = xAxisUnit === "time" && domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
