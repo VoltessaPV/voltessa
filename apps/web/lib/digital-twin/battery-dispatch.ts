@@ -83,53 +83,77 @@ import type { AvailablePvInterval } from "@/lib/digital-twin/available-pv-recons
  * nothing about that decomposition is hidden or has to be guessed at by a
  * caller.
  *
- * Zero-Export dispatch fix. During an active Zero Export interval, export
- * is not a financial choice the optimizer weighs against price - it is
- * physically impossible, and reconstructed Available PV surplus that isn't
- * absorbed by the battery is curtailed (lost) rather than sold. Three
- * cases, applied per native interval (see `intervalHours` below - this
- * function no longer assumes a fixed 15-minute cadence; it derives the
- * actual interval duration from `intervals[]`'s own spacing, so a caller
- * dispatching at native 5-minute resolution and this file's own
- * optimality-check test harness, which still uses 15-minute-spaced
- * synthetic data, both get correct power-limit math):
+ * Zero-Export dispatch fix - constrained-MDP architecture. This is a
+ * single Bellman recursion for every native interval, normal or Zero
+ * Export alike:
+ *
+ *   V_t(j) = max over feasible k of [ price_t · gridExchange_t(j,k) / 1000 ] + V_{t+1}(k)
+ *
+ * The only thing that changes between interval types is which `k` are
+ * feasible from `j` - never a second objective, never a separate reward
+ * term for curtailment. Two physics constraints narrow the feasible set,
+ * applied uniformly regardless of what triggered them:
+ *
+ * - `allowGridCharging = false` removes any `k` whose charge would require
+ *   grid import - `chargeCeilingK` below computes the resulting ceiling,
+ *   and it is the SAME computation whether the cause is this config flag
+ *   (any interval) or Zero Export's own PV-only mandatory absorption
+ *   (Case 1) - both are "no grid import," just from different sources.
+ * - Zero Export removes any `k` whose discharge would require export -
+ *   `dischargeFloorK` below computes the resulting floor. Outside Zero
+ *   Export this constraint doesn't exist - a pure price-arbitrage
+ *   discharge into a surplus interval is always legal.
+ *
+ * `curtailedKwh` is never a decision - it is the deterministic residual of
+ * the energy balance once `k` (hence `chargeKwh`) is fixed:
+ * `availablePv = consumption + chargeKwh − dischargeKwh + gridExchange +
+ * curtailedKwh`, with `gridExchange` pinned to 0 by the constraints above.
+ * It carries no reward or penalty anywhere in the recursion - the model
+ * that would need one (crediting/penalizing curtailed energy directly) was
+ * considered and rejected: it either double-counts the same kWh's real,
+ * later discharge reward, or - once corrected to not double-count -
+ * reduces to nothing beyond what the ordinary price search already
+ * computes from `V_{t+1}` on its own.
+ *
+ * Two Zero-Export cases result, both still governed by the same recursion
+ * and the same feasible-set logic - not a second optimization phase:
  *
  * - CASE 1 (`!config.allowGridCharging`, or grid charging is allowed but
- *   price >= 0): whenever reconstructed surplus PV exists
- *   (availablePv - consumption > 0), the battery MUST first absorb
- *   min(surplus, chargePowerLimit, remainingCapacity) - price-independent,
- *   computed BEFORE any free optimization, as a per-state floor on the
- *   grid index the search may land on. Only the residual beyond that floor
- *   is curtailed (priced at 0, never as an export). The unchanged existing
- *   search still runs from that floor upward (e.g. an optional additional
- *   grid-charge, if `allowGridCharging` and a future price makes it
- *   worthwhile) - the optimizer never decides whether to store the
- *   mandatory portion; that decision is already made.
- * - CASE 2 (`config.allowGridCharging && price < 0`): negative prices have
- *   absolute economic priority. Charging 1 kWh from the grid at a negative
- *   price earns revenue in addition to the same stored-energy benefit that
- *   charging the identical kWh from PV would have earned for free - so
- *   grid-sourced charging strictly dominates PV-sourced charging whenever
- *   price < 0, regardless of magnitude. The battery therefore charges
- *   maximally from the grid (bounded only by charge power / remaining
- *   capacity), local consumption is also served from that same import
- *   rather than from PV, and the entire interval's reconstructed PV is
- *   curtailed. This only applies when there is PV surplus to begin with
- *   (availablePv - consumption > 0) - a plain deficit interval already
- *   goes through the unmodified free search below, which already correctly
- *   evaluates grid-charging at a negative price on its own economic merits
- *   without needing to override anything.
- * - CASE 3 (not Zero Export, or Zero Export with no surplus): unchanged.
- *   A Zero-Export interval with a consumption deficit (no surplus) still
- *   runs the existing idle/charge/discharge search freely - but, since
- *   export remains physically impossible, the discharge candidate range is
- *   bounded so it can never push `gridExchange` positive (discharge is
- *   capped at the deficit itself, never allowed to become a sale into a
- *   blocked export).
+ *   price >= 0): the feasible charge ceiling is `chargeCeilingK` applied
+ *   with the interval's own PV surplus as the affordability limit - PV is
+ *   the only financing source. Landing at that ceiling is not searched for
+ *   among alternatives; it is reached directly, because every feasible `k`
+ *   up to it shares the identical reward (0 - no grid exchange, since PV
+ *   financing keeps gridExchange at exactly 0) and `V_{t+1}` is
+ *   non-decreasing in SOC, so the ceiling always weakly dominates every
+ *   other feasible k - "mandatory absorption" is this dominance, not a
+ *   rule bolted on beside the recursion. An optional extension beyond that
+ *   ceiling remains genuinely searched (`allowGridCharging` grid-financed
+ *   top-up, if a future price makes it worthwhile).
+ * - CASE 2 (`config.allowGridCharging && price < 0`): this is the one
+ *   place the recursion is NOT left to discover the optimum on its own.
+ *   It is an explicit business policy, computed directly: charging 1 kWh
+ *   from the grid at a negative price earns revenue for the identical
+ *   stored-energy benefit that charging the same kWh from PV would have
+ *   earned for free, so grid-sourced charging strictly dominates
+ *   PV-sourced charging whenever price < 0 - the policy intentionally
+ *   overrides normal PV priority rather than relying on the general search
+ *   to arrive at the same place, because the outcome (100% of PV
+ *   curtailed even though free storage is being used) is exactly the kind
+ *   of decision this codebase requires to stay explainable rather than
+ *   emergent (see `docs/VISION.md`'s "every automated action must be
+ *   explainable"). This only applies when there is PV surplus to begin
+ *   with; a plain deficit interval has no PV to override and goes through
+ *   the ordinary feasible-set search below, unmodified.
+ * - Outside those two cases (not Zero Export, or Zero Export with no
+ *   surplus): the ordinary feasible-set search runs - `chargeCeilingK`
+ *   applied only when `!allowGridCharging`, `dischargeFloorK` applied only
+ *   when Zero Export is active (deficit-bounded, since discharging beyond
+ *   the deficit would be a blocked export).
  *
- * `mandatoryChargeKwh` and `curtailedKwh` are new first-class output
- * fields (see `BatteryDispatchInterval`) so a caller can distinguish
- * "PV forced into the battery by this rule" and "grid-priority charge"
+ * `mandatoryChargeKwh` and `curtailedKwh` are first-class output fields
+ * (see `BatteryDispatchInterval`) so a caller can distinguish "PV forced
+ * into the battery by feasible-set dominance or the grid-priority policy"
  * from ordinary optimizer-chosen (`chargeKwh - mandatoryChargeKwh`)
  * charging, and from energy that was genuinely lost to curtailment.
  */
@@ -175,18 +199,17 @@ export type BatteryDispatchInterval = {
   exportedKwh: number;
   importedKwh: number;
   /**
-   * Zero-Export dispatch fix. The portion of `chargeKwh` forced by the
-   * hard business rule rather than freely chosen by the optimizer - either
-   * mandatory PV absorption (Case 1) or grid-priority charging at a
-   * negative price (Case 2). 0 outside Zero Export.
+   * Zero-Export dispatch fix. The portion of `chargeKwh` forced by feasible-
+   * set dominance (Case 1) or the grid-priority policy (Case 2) rather than
+   * freely chosen among genuine alternatives. 0 outside Zero Export.
    */
   mandatoryChargeKwh: number;
   /**
    * Zero-Export dispatch fix. Reconstructed Available PV that was
    * physically available this interval but neither consumed locally,
-   * charged into the battery, nor exported - lost because export was
-   * blocked (Case 1's unabsorbed residual) or deliberately foregone in
-   * favor of grid import (Case 2). 0 outside Zero Export.
+   * charged into the battery, nor exported - a deterministic residual of
+   * the energy balance (see this file's module doc comment), never a
+   * chosen or priced quantity. 0 outside Zero Export.
    */
   curtailedKwh: number;
   /** State of charge at the END of this interval. State, not an energy flow - never sum or average this across a coarser view; see this file's aggregation note. */
@@ -310,6 +333,7 @@ export function runBatteryDispatch(
     const priceBucket = Math.floor(intervals[t]!.intervalStart.getTime() / PRICE_BUCKET_MS) * PRICE_BUCKET_MS;
     price[t] = priceByTime.get(priceBucket) ?? 0;
     isZeroExport[t] = intervals[t]!.isZeroExport;
+    // Explicit business policy (Case 2), not a search outcome - see module doc comment.
     useGridPriority[t] = config.allowGridCharging && price[t]! < 0;
   }
 
@@ -317,36 +341,66 @@ export function runBatteryDispatch(
   const referencePrice = knownPrices.length > 0 ? knownPrices.reduce((sum, v) => sum + v, 0) / knownPrices.length : 0;
 
   /**
-   * Zero-Export mandatory absorption (Case 1) / grid-priority charging
-   * (Case 2) for one (t, j) state, only meaningful when there is PV
-   * surplus this interval - callers must guard on `surplus > 0`. Returns
-   * the grid index the mandatory step lands on, the charge it represents,
-   * how much PV is curtailed, and the grid exchange (import negative) that
-   * results purely from the mandatory step itself (before any further
-   * optional search).
+   * Largest grid index reachable from `j` by charging, given a fixed
+   * affordability limit (the "no grid import" feasible-set constraint) and
+   * a power/capacity ceiling `powerCapK`. The SAME bound, regardless of
+   * why it's being asked for: Case 1's mandatory absorption calls this
+   * with `affordableKwh = surplus` (PV is the only financing source
+   * there); the ordinary free search calls it with `affordableKwh =
+   * max(0, netPv[t])` whenever `!config.allowGridCharging` - both are "how
+   * far can PV alone finance this," just triggered by different callers.
    */
-  function computeMandatoryAbsorption(
+  function chargeCeilingK(j: number, socKwh: number, powerCapK: number, affordableKwh: number): number {
+    let upper = j;
+    for (let k = j + 1; k <= powerCapK; k += 1) {
+      const targetSoc = minSocKwh + k * stepKwh;
+      const chargeKwh = (targetSoc - socKwh) / etaCharge;
+      if (chargeKwh > affordableKwh + 1e-9) {
+        break;
+      }
+      upper = k;
+    }
+    return upper;
+  }
+
+  /**
+   * Smallest grid index reachable from `j` by discharging, given a fixed
+   * cap on how much may be discharged (the "no export" feasible-set
+   * constraint during a Zero-Export deficit interval - discharging beyond
+   * the deficit itself would be a blocked export) and a power/capacity
+   * floor `powerFloorK`. Outside Zero Export this constraint doesn't
+   * exist, so callers there simply never invoke this.
+   */
+  function dischargeFloorK(j: number, socKwh: number, powerFloorK: number, maxDischargeableKwh: number): number {
+    let lower = j;
+    for (let k = j - 1; k >= powerFloorK; k -= 1) {
+      const targetSoc = minSocKwh + k * stepKwh;
+      const dischargeKwh = (socKwh - targetSoc) * etaDischarge;
+      if (dischargeKwh > maxDischargeableKwh + 1e-9) {
+        break;
+      }
+      lower = k;
+    }
+    return lower;
+  }
+
+  /**
+   * The Case 1 / Case 2 mandatory target for one (t, j) state - only
+   * called when `isZeroExport[t]` and there is PV surplus this interval.
+   * Not a search: see the module doc comment for why landing here always
+   * weakly dominates every other feasible k (Case 1) or is the explicit
+   * policy target (Case 2). `curtailedKwh` is derived from the energy
+   * balance, never chosen independently.
+   */
+  function computeMandatoryTarget(
     t: number,
     j: number,
     surplus: number,
   ): { kMandatory: number; mandatoryChargeKwh: number; curtailedKwh: number; gridExchangeMandatory: number } {
     const socKwh = minSocKwh + j * stepKwh;
-    const powerCapacityCeilingK = Math.min(N, j + maxChargeSteps);
+    const powerChargeCapK = Math.min(N, j + maxChargeSteps);
 
-    let kMandatory: number;
-    if (useGridPriority[t]) {
-      kMandatory = powerCapacityCeilingK;
-    } else {
-      kMandatory = j;
-      for (let k = j + 1; k <= powerCapacityCeilingK; k += 1) {
-        const targetSoc = minSocKwh + k * stepKwh;
-        const chargeKwh = (targetSoc - socKwh) / etaCharge;
-        if (chargeKwh > surplus + 1e-9) {
-          break;
-        }
-        kMandatory = k;
-      }
-    }
+    const kMandatory = useGridPriority[t] ? powerChargeCapK : chargeCeilingK(j, socKwh, powerChargeCapK, surplus);
 
     const targetSocMandatory = minSocKwh + kMandatory * stepKwh;
     const mandatoryChargeKwh = Math.max(0, (targetSocMandatory - socKwh) / etaCharge);
@@ -382,22 +436,29 @@ export function runBatteryDispatch(
     const policyRow = new Int32Array(N + 1);
 
     const surplusT = Math.max(0, netPv[t]!);
-    const deficitT = Math.max(0, -netPv[t]!);
 
     for (let j = 0; j <= N; j += 1) {
       const socKwh = minSocKwh + j * stepKwh;
+      const powerChargeCapK = Math.min(N, j + maxChargeSteps);
+      const powerDischargeFloorK = Math.max(0, j - maxDischargeSteps);
+
       let best = -Infinity;
       let bestK = j;
 
       if (isZeroExport[t] && surplusT > 0) {
-        const { kMandatory, mandatoryChargeKwh, gridExchangeMandatory } = computeMandatoryAbsorption(t, j, surplusT);
+        // Case 1 / Case 2 - see module doc comment. Landing here is not
+        // searched for; it is the dominant (Case 1) or policy-mandated
+        // (Case 2) feasible target.
+        const { kMandatory, mandatoryChargeKwh, gridExchangeMandatory } = computeMandatoryTarget(t, j, surplusT);
 
         best = (price[t]! * gridExchangeMandatory) / 1000 + nextValue[kMandatory]!;
         bestK = kMandatory;
 
+        // Optional extension beyond the mandatory target - genuinely
+        // searched, since additional grid-financed charging is a real
+        // economic choice, not a physics constraint.
         if (config.allowGridCharging) {
-          const chargeUpperK = Math.min(N, j + maxChargeSteps);
-          for (let k = kMandatory + 1; k <= chargeUpperK; k += 1) {
+          for (let k = kMandatory + 1; k <= powerChargeCapK; k += 1) {
             const targetSoc = minSocKwh + k * stepKwh;
             const totalChargeKwh = (targetSoc - socKwh) / etaCharge;
             const additionalChargeKwh = totalChargeKwh - mandatoryChargeKwh;
@@ -409,10 +470,14 @@ export function runBatteryDispatch(
             }
           }
         }
-      } else if (isZeroExport[t]) {
-        // Deficit or exact balance - nothing to protect via mandatory
-        // absorption, but export is still physically blocked, so discharge
-        // must never be allowed to push gridExchange positive.
+      } else {
+        // The ordinary feasible-set search - identical recursion whether
+        // this is a normal interval or a Zero-Export deficit interval.
+        // Physics narrows the bounds, nothing else changes:
+        //  - chargeCeilingK applied only when grid charging is disallowed
+        //    (PV-affordability limit).
+        //  - dischargeFloorK applied only during Zero Export (deficit
+        //    limit - anything beyond it would be a blocked export).
 
         // Idle
         {
@@ -421,59 +486,13 @@ export function runBatteryDispatch(
           bestK = j;
         }
 
-        // Charge (only ever grid-sourced here, since surplus is 0)
-        if (config.allowGridCharging) {
-          const chargeUpperK = Math.min(N, j + maxChargeSteps);
-          for (let k = j + 1; k <= chargeUpperK; k += 1) {
-            const targetSoc = minSocKwh + k * stepKwh;
-            const chargeKwh = (targetSoc - socKwh) / etaCharge;
-            const gridExchange = netPv[t]! - chargeKwh;
-            const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
-            if (candidateValue > best) {
-              best = candidateValue;
-              bestK = k;
-            }
-          }
-        }
-
-        // Discharge - bounded to the deficit itself; beyond that would be a
-        // sale into an export that Zero Export physically blocks.
-        const dischargeLowerK = Math.max(0, j - maxDischargeSteps);
-        for (let k = j - 1; k >= dischargeLowerK; k -= 1) {
-          const targetSoc = minSocKwh + k * stepKwh;
-          const dischargeKwh = (socKwh - targetSoc) * etaDischarge;
-          if (dischargeKwh > deficitT + 1e-9) {
-            break;
-          }
-          const gridExchange = netPv[t]! + dischargeKwh;
-          const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
-          if (candidateValue > best) {
-            best = candidateValue;
-            bestK = k;
-          }
-        }
-      } else {
-        // Not Zero Export - unchanged from before the Zero-Export dispatch fix.
-
-        // Idle - no battery action this interval; export any surplus, import any deficit directly.
-        {
-          const gridExchange = netPv[t]!;
-          const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[j]!;
-          best = candidateValue;
-          bestK = j;
-        }
-
-        // Charge - move to a higher grid level. `chargeKwh` is monotonically
-        // increasing in k, so once it exceeds the available bound we can
-        // stop scanning further k values.
-        const chargeUpperK = Math.min(N, j + maxChargeSteps);
+        // Charge
+        const chargeUpperK = config.allowGridCharging
+          ? powerChargeCapK
+          : chargeCeilingK(j, socKwh, powerChargeCapK, Math.max(0, netPv[t]!));
         for (let k = j + 1; k <= chargeUpperK; k += 1) {
           const targetSoc = minSocKwh + k * stepKwh;
           const chargeKwh = (targetSoc - socKwh) / etaCharge;
-          if (!config.allowGridCharging && chargeKwh > Math.max(0, netPv[t]!) + 1e-9) {
-            break;
-          }
-
           const gridExchange = netPv[t]! - chargeKwh;
           const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
           if (candidateValue > best) {
@@ -482,11 +501,10 @@ export function runBatteryDispatch(
           }
         }
 
-        // Discharge - move to a lower grid level. Never restricted to only
-        // covering a local deficit; a pure price-arbitrage sale into a
-        // surplus interval is always a legal action, per this engine's
-        // objective (maximum financial return, not maximum self-consumption).
-        const dischargeLowerK = Math.max(0, j - maxDischargeSteps);
+        // Discharge
+        const dischargeLowerK = isZeroExport[t]
+          ? dischargeFloorK(j, socKwh, powerDischargeFloorK, Math.max(0, -netPv[t]!))
+          : powerDischargeFloorK;
         for (let k = j - 1; k >= dischargeLowerK; k -= 1) {
           const targetSoc = minSocKwh + k * stepKwh;
           const dischargeKwh = (socKwh - targetSoc) * etaDischarge;
@@ -529,7 +547,7 @@ export function runBatteryDispatch(
     let gridExchange: number;
 
     if (isZeroExport[t] && surplusT > 0) {
-      const mandatory = computeMandatoryAbsorption(t, currentIndex, surplusT);
+      const mandatory = computeMandatoryTarget(t, currentIndex, surplusT);
       mandatoryChargeKwh = mandatory.mandatoryChargeKwh;
       curtailedKwh = mandatory.curtailedKwh;
       const additionalChargeKwh = Math.max(0, chargeKwh - mandatoryChargeKwh);
