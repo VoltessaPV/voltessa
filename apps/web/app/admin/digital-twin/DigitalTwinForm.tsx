@@ -894,7 +894,9 @@ export function DigitalTwinForm({ plants }: Props) {
           {result.simulatedBattery && (
             <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)] sm:p-4">
               <h3 className="text-sm font-semibold text-white">
-                {result.chartResolution !== "daily" ? "Battery SOC & Market Price (Simulated)" : "Battery SOC (Simulated)"}
+                {result.chartResolution !== "daily"
+                  ? "Battery SOC, Charge/Discharge & Market Price (Simulated)"
+                  : "Battery SOC & Charge/Discharge (Simulated)"}
               </h3>
               <div className="mt-2.5 h-[240px] sm:h-[280px]">
                 <Suspense fallback={<ChartSkeleton />}>
@@ -904,6 +906,7 @@ export function DigitalTwinForm({ plants }: Props) {
                     xAxisUnit={xAxisUnitFor(result.chartResolution)}
                     priceSeries={result.chartResolution !== "daily" ? result.simulatedChart.price : undefined}
                     priceAxis={result.chartResolution !== "daily" ? sharedAxes.priceAxis : undefined}
+                    flowSeries={result.simulatedFlowChart}
                   />
                 </Suspense>
               </div>

@@ -142,7 +142,8 @@ export type BatteryEngineReport = {
   overallPass: boolean;
 };
 
-function buildDefaultBatteryConfig(plantCapacityKw: number, durationHours: number, allowGridCharging: boolean): BatteryConfig {
+/** Exported (ENTSO-E Price Visualization milestone) so the forward-looking price overview can build the same default battery shape as these reference scenarios, rather than a second literal. */
+export function buildDefaultBatteryConfig(plantCapacityKw: number, durationHours: number, allowGridCharging: boolean): BatteryConfig {
   return {
     capacityKwh: plantCapacityKw * durationHours,
     roundTripEfficiencyPercent: 95.4,

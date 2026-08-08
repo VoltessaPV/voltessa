@@ -177,3 +177,43 @@ export function aggregateSocSeriesForChart(
     .sort(([a], [b]) => a - b)
     .map(([t, socKwh]) => ({ intervalStart: new Date(t), socKwh }));
 }
+
+export type BatteryFlowPoint = {
+  intervalStart: Date;
+  chargeKwh: number | null;
+  dischargeKwh: number | null;
+};
+
+/**
+ * Battery SOC & Market Price visualization. `chargeKwh`/`dischargeKwh` are
+ * energy flows, not state - unlike SOC, the correct aggregation is a sum
+ * over the bucket, identical in shape to `aggregateSettlementSeriesForChart`
+ * (export/import) - just a different pair of fields off the same native
+ * dispatch intervals. `resolution: "native"` returns `points` unchanged,
+ * matching every other aggregator in this file.
+ */
+export function aggregateFlowSeriesForChart(
+  points: BatteryFlowPoint[],
+  resolution: ChartResolution,
+  timeZone: string,
+): BatteryFlowPoint[] {
+  if (resolution === "native") {
+    return points;
+  }
+
+  const buckets = new Map<number, { chargeKwh: number | null; dischargeKwh: number | null }>();
+
+  for (const point of points) {
+    const bucket = bucketStart(point.intervalStart, resolution, timeZone);
+    const existing = buckets.get(bucket) ?? { chargeKwh: null, dischargeKwh: null };
+
+    buckets.set(bucket, {
+      chargeKwh: mergeSum(existing.chargeKwh, point.chargeKwh),
+      dischargeKwh: mergeSum(existing.dischargeKwh, point.dischargeKwh),
+    });
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, v]) => ({ intervalStart: new Date(t), chargeKwh: v.chargeKwh, dischargeKwh: v.dischargeKwh }));
+}

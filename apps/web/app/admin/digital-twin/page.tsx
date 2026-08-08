@@ -2,6 +2,7 @@ import { listAutomationLabPlants } from "@/lib/admin/automation-lab-queries";
 import { requirePlatformAdmin } from "@/lib/auth/session";
 
 import { DigitalTwinForm } from "./DigitalTwinForm";
+import { EntsoePriceOverview } from "./EntsoePriceOverview";
 
 export { pageHeading } from "./heading";
 
@@ -27,6 +28,8 @@ export default async function DigitalTwinPage() {
         and revenue, replayed at a hypothetical installed capacity with an optional battery. Every number
         here comes from the same Replay Engine and Battery Engine, never a calculation in this page.
       </p>
+
+      <EntsoePriceOverview plants={plants} />
 
       <DigitalTwinForm plants={plants} />
     </div>

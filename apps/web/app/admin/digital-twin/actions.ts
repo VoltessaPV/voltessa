@@ -7,10 +7,12 @@ import { type BatteryIntervalDiagnostic, buildIntervalDiagnostics } from "@/lib/
 import { toBatteryDispatchIntervals } from "@/lib/digital-twin/battery-engine-report";
 import { replay, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
 import {
+  aggregateFlowSeriesForChart,
   aggregatePriceSeriesForChart,
   aggregateSettlementSeriesForChart,
   aggregateSocSeriesForChart,
   resolveChartResolution,
+  type BatteryFlowPoint,
   type ChartResolution,
   type SocPoint,
 } from "@/lib/market-price/chart-aggregation";
@@ -92,6 +94,13 @@ export type DigitalTwinResult =
        * battery scenario is disabled.
        */
       simulatedSocChart: SocPoint[];
+      /**
+       * Charge/discharge per bucket, aggregated (summed - an energy flow,
+       * not a state) to the exact same `chartResolution` grid
+       * `simulatedSocChart` already uses, so the two can be joined by exact
+       * timestamp on the chart. Empty when the battery scenario is disabled.
+       */
+      simulatedFlowChart: BatteryFlowPoint[];
       /**
        * Platform-admin-only "Show Battery Diagnostics" toggle's data - the
        * engine's own already-computed per-interval diagnostics
@@ -330,6 +339,18 @@ export async function runDigitalTwinSimulation(
         )
       : [];
 
+    const simulatedFlowChart: BatteryFlowPoint[] = simulatedBattery
+      ? aggregateFlowSeriesForChart(
+          simulatedOutcome.intervals.map((interval) => ({
+            intervalStart: interval.intervalStart,
+            chargeKwh: interval.chargeKwh,
+            dischargeKwh: interval.dischargeKwh,
+          })),
+          chartResolution,
+          BULGARIA_TIMEZONE,
+        )
+      : [];
+
     const diagnostics: BatteryIntervalDiagnostic[] | null =
       battery && simulatedOutcome.battery
         ? buildIntervalDiagnostics(toBatteryDispatchIntervals(simulatedOutcome.intervals), priceSeries, battery)
@@ -347,6 +368,7 @@ export async function runDigitalTwinSimulation(
       simulated: toMetrics(simulatedOutcome),
       simulatedBattery,
       simulatedSocChart,
+      simulatedFlowChart,
       diagnostics,
       chartResolution,
       currentChart: {
