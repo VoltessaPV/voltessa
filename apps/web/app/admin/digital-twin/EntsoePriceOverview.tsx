@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState, useTransition } from "react";
+import { Suspense, useEffect, useState, useTransition } from "react";
 
 import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
 import { buildDefaultBatteryConfig } from "@/lib/digital-twin/battery-engine-report";
@@ -62,14 +62,20 @@ export function EntsoePriceOverview({ plants }: Props) {
     });
   }
 
-  // Load once, on first render, for the default plant/horizon - mirrors
+  // Load once, on mount, for the default plant/horizon - mirrors
   // DigitalTwinForm's own "load on mount" convention rather than requiring
-  // an explicit first click.
-  const [hasLoaded, setHasLoaded] = useState(false);
-  if (!hasLoaded && plantId) {
-    setHasLoaded(true);
-    run(plantId, horizon, showOptimizerOverlay);
-  }
+  // an explicit first click. Must run in an effect, not the render body -
+  // `run` starts a transition (a side effect), and React only permits
+  // `startTransition` during an event handler or effect, never during
+  // render (including the server's initial render pass) - calling it
+  // directly in the render body threw `startTransition cannot be called
+  // during server rendering` on every request, taking the whole page down.
+  useEffect(() => {
+    if (plantId) {
+      run(plantId, horizon, showOptimizerOverlay);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally mount-only, using the initial state values
+  }, []);
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
