@@ -224,13 +224,15 @@ export type AvailablePvEnergyPoint = {
 };
 
 /**
- * Available-PV visualization fix. Reconstructed Available PV - the same
- * first-class, Zero-Export-independent quantity `runBatteryDispatch`
- * dispatches against (`available-pv-reconstruction.ts`) - summed into
- * hourly/daily buckets exactly like `aggregateSettlementSeriesForChart`'s
- * exported/imported energy, so both series land on the identical grid for
- * the "Current (historical)" chart. `resolution: "native"` returns `points`
- * unchanged.
+ * Available-PV visualization fix. NOT total reconstructed Available PV -
+ * the caller (`app/admin/digital-twin/actions.ts`'s
+ * `computeAdditionalAvailablePvKwh`) already computes only the additional
+ * energy physically available but suppressed by historical Zero Export
+ * (zero for every non-Zero-Export interval) before this function ever sees
+ * it; this is a generic sum-into-hourly/daily-buckets aggregator, identical
+ * in shape to `aggregateSettlementSeriesForChart`'s exported/imported
+ * energy, so both series land on the identical grid for the "Current
+ * (historical)" chart. `resolution: "native"` returns `points` unchanged.
  */
 export function aggregateAvailablePvSeriesForChart(
   points: AvailablePvEnergyPoint[],

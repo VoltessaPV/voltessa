@@ -90,6 +90,18 @@ export type ReplayIntervalOutcome = {
   mandatoryChargeKwh: number | null;
   /** Zero-Export dispatch fix. Null when no battery scenario was run. */
   curtailedKwh: number | null;
+  /**
+   * Available-PV chart semantics fix. Whether Voltessa's own automation had
+   * this plant in Zero Export at this interval - threaded straight from
+   * `AvailablePvInterval.isZeroExport` (`available-pv-reconstruction.ts`),
+   * the actual historical Zero-Export constraint, never inferred from price/
+   * export/production/time-of-day. The one property that lets a caller
+   * distinguish "this interval's `availablePvKwh` differs from historical
+   * production because Zero Export forced a reconstruction" from "PV surplus
+   * simply wasn't exported due to self-consumption" - see
+   * `app/admin/digital-twin/actions.ts`'s `computeAdditionalAvailablePvKwh`.
+   */
+  isZeroExport: boolean;
   socKwh: number | null;
 };
 
@@ -252,6 +264,7 @@ async function replayNoBattery(params: {
     mandatoryChargeKwh: null,
     curtailedKwh: null,
     socKwh: null,
+    isZeroExport: availablePv[index]?.isZeroExport ?? false,
   }));
 
   return {
@@ -333,6 +346,7 @@ async function replayWithBattery(params: {
     mandatoryChargeKwh: interval.mandatoryChargeKwh,
     curtailedKwh: interval.curtailedKwh,
     socKwh: interval.socKwh,
+    isZeroExport: nativeAvailablePv[index]?.isZeroExport ?? false,
   }));
 
   const eta = Math.sqrt(batteryScenario.roundTripEfficiencyPercent / 100);

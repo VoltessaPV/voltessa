@@ -46,11 +46,16 @@ export type DigitalTwinChartSeries = {
   price: MarketPricePoint[];
   settlement: SettlementEnergyPoint[];
   /**
-   * Available-PV visualization fix. Reconstructed Available PV (independent
-   * of historical Zero Export, never derived from simulated battery output)
-   * for the "Current (historical)" `MarketPriceChart` panel only - always
-   * `undefined` on `simulatedChart`, which never renders this series. Same
-   * `chartResolution` grid as `settlement`.
+   * Available-PV chart semantics fix. NOT total reconstructed Available PV -
+   * only the additional energy physically available but suppressed by
+   * historical Zero Export, above whatever was actually exported (see
+   * `computeAdditionalAvailablePvKwh` below) - exactly zero for every
+   * interval Zero Export wasn't active, driven by the actual historical
+   * Zero-Export constraint, never inferred from price/production/time-of-day.
+   * Never derived from simulated battery output. "Current (historical)"
+   * `MarketPriceChart` panel only - always `undefined` on `simulatedChart`,
+   * which never renders this series. Same `chartResolution` grid as
+   * `settlement`.
    */
   availablePv?: AvailablePvEnergyPoint[];
 };
@@ -198,24 +203,52 @@ function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]):
 }
 
 /**
- * Available-PV visualization fix. Same native-5-minute -> 15-minute
- * bucketing as `aggregateNativeIntervalsTo15Min` above, kept as its own
- * function (rather than extending that one's return type) since
- * `availablePvKwh` is unrelated to `SettlementEnergyPoint` - only the
- * "Current (historical)" panel ever reads this. Reads `availablePvKwh`
- * directly off `ReplayOutcome.intervals` - the reconstructed value
- * `available-pv-reconstruction.ts` produces, independent of historical Zero
- * Export - never `productionKwh` (post-capacity-scaling) or any
- * battery/simulated field.
+ * Available-PV chart semantics fix. The grey chart series is NOT total
+ * reconstructed PV production - it is ONLY the additional energy that
+ * physically existed but was suppressed by historical Zero Export, above
+ * whatever was actually exported. Zero outside Zero Export by construction
+ * (gated on `interval.isZeroExport`, threaded from
+ * `AvailablePvInterval.isZeroExport` - the actual historical constraint,
+ * never inferred from price/export/production/time-of-day), so an ordinary
+ * self-consumption gap (production exceeding export because some PV was
+ * consumed locally, nothing to do with Zero Export) never shows up here.
+ *
+ * For a Zero-Export interval: `reconstructedUnrestrictedExportKwh =
+ * max(0, availablePvKwh - consumptionKwh)` - the same "surplus over local
+ * load" quantity this codebase already uses everywhere else (`netPv` in
+ * battery-dispatch.ts, `runCapacityScenario`'s own balance) - and the
+ * additional amount is `max(0, reconstructedUnrestrictedExportKwh -
+ * exportedKwh)`, i.e. strictly the portion ABOVE the real historical export.
+ * A partial Zero-Export boundary is handled for free: `isZeroExport` is
+ * evaluated per native 5-minute interval, so a 15-minute bucket straddling a
+ * transition naturally sums a partial contribution from only its
+ * Zero-Export sub-intervals.
+ */
+function computeAdditionalAvailablePvKwh(interval: ReplayOutcome["intervals"][number]): number {
+  if (!interval.isZeroExport) {
+    return 0;
+  }
+  const availablePvKwh = interval.availablePvKwh ?? 0;
+  const consumptionKwh = interval.consumptionKwh ?? 0;
+  const exportedKwh = interval.exportedKwh ?? 0;
+  const reconstructedUnrestrictedExportKwh = Math.max(0, availablePvKwh - consumptionKwh);
+  return Math.max(0, reconstructedUnrestrictedExportKwh - exportedKwh);
+}
+
+/**
+ * Same native-5-minute -> 15-minute bucketing as
+ * `aggregateNativeIntervalsTo15Min` above, kept as its own function (rather
+ * than extending that one's return type) since this series is unrelated to
+ * `SettlementEnergyPoint` - only the "Current (historical)" panel ever
+ * reads this, via `computeAdditionalAvailablePvKwh` above.
  */
 function aggregateAvailablePvTo15Min(intervals: ReplayOutcome["intervals"]): AvailablePvEnergyPoint[] {
   const bucketMs = 15 * 60 * 1000;
-  const buckets = new Map<number, number | null>();
+  const buckets = new Map<number, number>();
 
   for (const interval of intervals) {
     const bucketStart = Math.floor(interval.intervalStart.getTime() / bucketMs) * bucketMs;
-    const existing = buckets.get(bucketStart);
-    buckets.set(bucketStart, interval.availablePvKwh !== null ? (existing ?? 0) + interval.availablePvKwh : existing ?? null);
+    buckets.set(bucketStart, (buckets.get(bucketStart) ?? 0) + computeAdditionalAvailablePvKwh(interval));
   }
 
   return [...buckets.entries()]
