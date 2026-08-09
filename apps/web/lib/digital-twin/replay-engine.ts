@@ -247,7 +247,29 @@ async function replayNoBattery(params: {
     );
   });
 
-  const scenarioIntervals = runCapacityScenario(availablePv, capacityFactor);
+  // "Current (historical)" reporting fix. `capacityFactor === 1` means no
+  // capacity scenario was actually requested (`actions.ts`'s "Current" call
+  // always passes `newCapacityKw: currentCapacityKw`) - there is nothing
+  // hypothetical to compute, so this must report exactly what actually
+  // happened: the real historical export/import (`historicalExportKwh`/
+  // `historicalImportKwh`, straight from the meter's counter difference),
+  // never `runCapacityScenario`'s production/consumption balance. That
+  // balance recompute is correct and necessary for a genuine capacity
+  // resize (a differently-sized plant's export can't just be last year's
+  // real number), but at factor 1 it silently let Zero-Export's
+  // reconstructed availablePvKwh (intentionally LARGER than what was
+  // physically exported, during Zero Export) leak into "Current"'s own
+  // reported export/production/revenue - inflating them far past the real
+  // historical figures the Market page shows for the same day.
+  const scenarioIntervals: ScenarioInterval[] =
+    capacityFactor === 1
+      ? historicalIntervals.map((interval) => ({
+          intervalStart: interval.intervalStart,
+          newProduction: interval.historicalProduction,
+          newExport: interval.historicalExportKwh,
+          newImport: interval.historicalImportKwh,
+        }))
+      : runCapacityScenario(availablePv, capacityFactor);
   const settlementIntervals = aggregateToSettlementIntervals(scenarioIntervals);
   const settlementTotals = sumSettlementEnergy(settlementIntervals);
   const revenue = computeExportRevenue(priceSeries, settlementIntervals);

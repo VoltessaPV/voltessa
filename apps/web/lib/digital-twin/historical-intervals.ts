@@ -20,6 +20,21 @@ export type HistoricalInterval = {
   intervalStart: Date;
   historicalProduction: number | null;
   historicalConsumption: number | null;
+  /**
+   * "Current (historical)" reporting fix. The REAL historical export/import
+   * for this interval - `getPlantSettlementEnergySeries`'s meter-counter
+   * difference (Prosumer) or `historicalProduction` itself (Producer, no
+   * meter to separate production from export). Distinct from any later
+   * pipeline stage's reconstructed/recomputed export: a capacity scenario
+   * genuinely resizing the plant must recompute export from a production/
+   * consumption balance (the old plant's real export doesn't apply to a
+   * hypothetically larger one), but "Current" (`capacityFactor === 1`, no
+   * scenario at all) must report what actually happened, unmodified by
+   * Zero-Export PV reconstruction - see `replay-engine.ts`'s
+   * `replayNoBattery`.
+   */
+  historicalExportKwh: number | null;
+  historicalImportKwh: number | null;
 };
 
 const NATIVE_INTERVAL_MINUTES = 5;
@@ -58,7 +73,13 @@ export async function buildHistoricalIntervals(
             ])
           : null;
 
-      return { intervalStart: previous.timestamp, historicalProduction, historicalConsumption: 0 };
+      return {
+        intervalStart: previous.timestamp,
+        historicalProduction,
+        historicalConsumption: 0,
+        historicalExportKwh: historicalProduction,
+        historicalImportKwh: 0,
+      };
     });
 
     return { topology, intervals };
@@ -92,7 +113,13 @@ export async function buildHistoricalIntervals(
         ? historicalProduction - historicalExport + historicalImport
         : null;
 
-    return { intervalStart: previous.timestamp, historicalProduction, historicalConsumption };
+    return {
+      intervalStart: previous.timestamp,
+      historicalProduction,
+      historicalConsumption,
+      historicalExportKwh: historicalExport,
+      historicalImportKwh: historicalImport,
+    };
   });
 
   return { topology, intervals };
