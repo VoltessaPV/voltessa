@@ -801,16 +801,6 @@ export function DigitalTwinForm({ plants }: Props) {
               />
             </label>
 
-            <label className="flex items-center gap-2 text-sm text-white/60">
-              <input
-                type="checkbox"
-                checked={allowGridCharging}
-                onChange={(event) => setAllowGridCharging(event.target.checked)}
-                className="h-4 w-4 accent-blue-500"
-              />
-              Allow Grid Charging
-            </label>
-
             <label className="flex flex-col gap-1 text-sm text-white/60">
               Battery lifetime (EFC)
               <input
@@ -821,6 +811,16 @@ export function DigitalTwinForm({ plants }: Props) {
                 value={batteryLifetimeEfcInput}
                 onChange={(event) => setBatteryLifetimeEfcInput(event.target.value)}
               />
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-white/60">
+              <input
+                type="checkbox"
+                checked={allowGridCharging}
+                onChange={(event) => setAllowGridCharging(event.target.checked)}
+                className="h-4 w-4 accent-blue-500"
+              />
+              Allow Grid Charging
             </label>
           </div>
         )}
