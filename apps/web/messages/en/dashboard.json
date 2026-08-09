@@ -85,7 +85,11 @@
     }
   },
   "forecast": {
-    "description": "Production forecasting is on the roadmap."
+    "subtitle": "Expected PV generation, 15-minute resolution",
+    "unavailable": "Forecast unavailable",
+    "peak": "Peak",
+    "expectedEnergy": "Expected energy",
+    "nextHours": "Next {hours}h · physically available PV, independent of Zero Export"
   },
   "lastTelemetry": {
     "label": "Last telemetry:",

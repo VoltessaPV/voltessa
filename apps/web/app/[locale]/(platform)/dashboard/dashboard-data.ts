@@ -123,6 +123,8 @@ import {
 } from "@/lib/telemetry/canonical";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
+import { generatePvForecast } from "@/lib/forecast/pv-forecast-engine";
+import type { PvForecastResult } from "@/lib/forecast/types";
 
 import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
 import { getProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
@@ -244,6 +246,15 @@ export type DashboardPageData =
       eventLog: MarketEventLogEntry[];
       /** `null` whenever the plant has no configured coordinates, or Open-Meteo is unavailable — see `fetchSolarWeatherSafe`. */
       weather: SolarWeather | null;
+      /**
+       * PV Generation Forecast milestone (`lib/forecast/pv-forecast-engine.ts`)
+       * — `null` whenever the plant is missing coordinates/capacity, the
+       * period isn't "today" (a forecast is inherently about "now onward",
+       * same Category-A convention as `inverters`/`nowAnnotation` above), or
+       * every underlying data source failed. Never a mockup — see
+       * `fetchPvForecastSafe`.
+       */
+      forecast: PvForecastResult | null;
     } & DashboardToolbarState);
 
 /**
@@ -481,6 +492,33 @@ async function fetchSolarWeatherSafe(
   }
 }
 
+/**
+ * `generatePvForecast` already degrades each of its own inputs individually
+ * (a weather/calibration/analog-day failure narrows the forecast rather
+ * than throwing) — this wrapper only handles the case none of that
+ * matters: no configured coordinates/capacity at all, or an unexpected
+ * failure in the orchestration itself. Same "never break the Dashboard"
+ * convention as `fetchSolarWeatherSafe`.
+ */
+async function fetchPvForecastSafe(params: {
+  plantId: string;
+  organizationId: string;
+  latitude: number | null;
+  longitude: number | null;
+  capacityKw: number | null;
+}): Promise<PvForecastResult | null> {
+  const { plantId, organizationId, latitude, longitude, capacityKw } = params;
+  if (latitude === null || longitude === null || capacityKw === null) {
+    return null;
+  }
+
+  try {
+    return await generatePvForecast({ plantId, organizationId, latitude, longitude, capacityKw });
+  } catch {
+    return null;
+  }
+}
+
 export async function getDashboardPageData(
   organizationId: string,
   automationSettings: {
@@ -559,7 +597,7 @@ export async function getDashboardPageData(
   // instead (see `buildPeriodChartSeries`) — fetching a full period's worth
   // of 5-minute samples for that would be a wasted query, so it's skipped
   // entirely whenever `period !== "today"`.
-  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather] =
+  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather, forecast] =
     await Promise.all([
       getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
       getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
@@ -584,6 +622,18 @@ export async function getDashboardPageData(
         plant.latitude?.toNumber() ?? null,
         plant.longitude?.toNumber() ?? null,
       ),
+      // Category A ("current state"), same convention as inverters/
+      // `nowAnnotation` above — a forecast is inherently "now onward", so a
+      // browsed historical day never shows one.
+      isToday
+        ? fetchPvForecastSafe({
+            plantId: plant.id,
+            organizationId,
+            latitude: plant.latitude?.toNumber() ?? null,
+            longitude: plant.longitude?.toNumber() ?? null,
+            capacityKw: plant.capacityKw?.toNumber() ?? null,
+          })
+        : Promise.resolve(null),
     ]);
 
   const revenue: RevenueSummary = marketData.dataAvailable
@@ -705,5 +755,6 @@ export async function getDashboardPageData(
     market: { currentPrice, exportRecommended, threshold },
     eventLog: marketData.dataAvailable ? marketData.eventLog : [],
     weather,
+    forecast,
   };
 }

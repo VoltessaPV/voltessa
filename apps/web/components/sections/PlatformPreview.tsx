@@ -25,6 +25,7 @@ import {
   SNAPSHOT_PRODUCTION_DATA,
 } from "@/lib/demo/landing-snapshot";
 import { useElementWidth } from "@/lib/hooks/useElementWidth";
+import { FORECAST_MODEL_VERSION, type PvForecastResult } from "@/lib/forecast/types";
 import type { SolarWeather, SolarWeatherPoint } from "@/lib/weather/openMeteo";
 
 import BrowserBar from "../dashboard/BrowserBar";
@@ -135,6 +136,46 @@ function buildSampleSolarWeather(): SolarWeather {
 
 const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
 
+/**
+ * Same reasoning as `buildSampleSolarWeather` above — `GlidepathCard`'s real
+ * `PvForecastResult` prop has no per-organization data this file can
+ * freeze, and computing the real forecast here would mean this file
+ * performing live I/O (weather fetch, historical DB reads), which it
+ * deliberately never does. Hand-written illustrative sample data instead, a
+ * plausible bell-shaped midday curve shaped exactly like `PvForecastResult`
+ * so it renders through the identical, unmodified `GlidepathCard`
+ * component production uses.
+ */
+function buildSamplePvForecast(): PvForecastResult {
+  const now = new Date();
+  const shape = [30, 55, 80, 100, 112, 118, 112, 100, 80, 55, 30, 10];
+
+  return {
+    modelVersion: FORECAST_MODEL_VERSION,
+    weatherSource: "open-meteo",
+    generatedAt: now,
+    plantId: "sample",
+    intervalMinutes: 15,
+    intervals: shape.map((forecastKw, index) => ({
+      timestamp: new Date(now.getTime() + index * 15 * 60 * 1000),
+      forecastKw,
+      forecastKwh: forecastKw * 0.25,
+      capacityClipped: false,
+      components: { physicalWeatherKw: forecastKw, calibrationFactor: 1, analogKw: null, analogWeight: 0, glidePathFactor: 1 },
+    })),
+    diagnostics: {
+      calibrationSampleCount: 0,
+      calibrationLookbackDays: 0,
+      analogDayDates: [],
+      analogWeight: 0,
+      recentBias: 1,
+      weatherFallbackUsed: false,
+    },
+  };
+}
+
+const SAMPLE_PV_FORECAST = buildSamplePvForecast();
+
 function DashboardPanel() {
   return (
     <PageContainer className="space-y-3">
@@ -174,7 +215,7 @@ function DashboardPanel() {
       <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
         <InvertersCard inverters={data.inverters} />
         <WeatherCard weather={SAMPLE_SOLAR_WEATHER} />
-        <GlidepathCard />
+        <GlidepathCard forecast={SAMPLE_PV_FORECAST} />
         <MarketEventLog entries={data.eventLog} />
       </section>
     </PageContainer>

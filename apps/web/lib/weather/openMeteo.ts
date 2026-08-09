@@ -24,6 +24,17 @@
  */
 
 const OPEN_METEO_BASE_URL = "https://api.open-meteo.com/v1/forecast";
+/**
+ * Open-Meteo's own historical-observations sibling API — same provider,
+ * same hourly field names/units, different host (Open-Meteo splits
+ * forecast and archive data across two endpoints). Used only by
+ * `getHistoricalSolarWeather` below, for the PV forecast engine's
+ * calibration/analog-day/backtest needs (`lib/forecast/*`) — genuine
+ * walk-forward backtesting requires real historical irradiance for days
+ * that have already happened, which the forecast endpoint (max
+ * `forecast_days`) cannot provide.
+ */
+const OPEN_METEO_ARCHIVE_BASE_URL = "https://archive-api.open-meteo.com/v1/archive";
 const HOURLY_FIELDS = [
   "shortwave_radiation",
   "cloud_cover",
@@ -35,6 +46,8 @@ const HOURLY_FIELDS = [
 const FORECAST_DAYS = 2;
 /** ~10-15 minutes, per this widget's own freshness requirement — there is no reason to call Open-Meteo on every Dashboard render. */
 const WEATHER_CACHE_REVALIDATE_SECONDS = 900;
+/** Historical archive data never changes once published — safe to cache far longer than the live forecast. */
+const ARCHIVE_CACHE_REVALIDATE_SECONDS = 86_400;
 
 export class OpenMeteoApiError extends Error {
   constructor(message: string) {
@@ -222,4 +235,99 @@ export async function getSolarWeather(
     },
     hourly: points,
   };
+}
+
+function parseHourlyPoints(hourly: unknown, sourceLabel: string): SolarWeatherPoint[] {
+  if (!isOpenMeteoHourlyResponse(hourly)) {
+    throw new OpenMeteoApiError(`${sourceLabel} response is missing expected hourly fields`);
+  }
+
+  const length = hourly.time.length;
+
+  if (
+    hourly.shortwave_radiation.length !== length ||
+    hourly.cloud_cover.length !== length ||
+    hourly.temperature_2m.length !== length ||
+    hourly.wind_speed_10m.length !== length ||
+    hourly.weather_code.length !== length
+  ) {
+    throw new OpenMeteoApiError(`${sourceLabel} hourly arrays have inconsistent lengths`);
+  }
+
+  return hourly.time.map((timeStr, index) => {
+    const irradiance = hourly.shortwave_radiation[index];
+    const cloudCover = hourly.cloud_cover[index];
+    const temperature = hourly.temperature_2m[index];
+    const windSpeed = hourly.wind_speed_10m[index];
+    const weatherCode = hourly.weather_code[index];
+
+    if (
+      irradiance === undefined ||
+      cloudCover === undefined ||
+      temperature === undefined ||
+      windSpeed === undefined ||
+      weatherCode === undefined
+    ) {
+      throw new OpenMeteoApiError(`${sourceLabel} hourly response is missing a value at index ${index}`);
+    }
+
+    return {
+      time: new Date(`${timeStr}Z`),
+      irradiance,
+      cloudCover,
+      temperature,
+      windSpeed,
+      weatherCode,
+    };
+  });
+}
+
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Historical observed weather for one location over `[startDate, endDate]`
+ * (inclusive, UTC calendar days), from Open-Meteo's archive API — the same
+ * provider `getSolarWeather` uses, a different endpoint for past dates
+ * (Open-Meteo's forecast endpoint only serves the current/next
+ * `forecast_days`, never history). Used exclusively by the PV forecast
+ * engine (`lib/forecast/*`) for historical calibration, analog-day
+ * selection, and walk-forward backtesting — never by any live UI card.
+ *
+ * Same `OpenMeteoApiError`-throws-on-failure contract as `getSolarWeather`;
+ * callers here are backend forecast/backtest code, not a page render, so
+ * there is no equivalent "degrade to null" wrapper — a caller that can't
+ * tolerate missing historical weather should let this throw.
+ */
+export async function getHistoricalSolarWeather(
+  latitude: number,
+  longitude: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<SolarWeatherPoint[]> {
+  const url = new URL(OPEN_METEO_ARCHIVE_BASE_URL);
+  url.searchParams.set("latitude", latitude.toString());
+  url.searchParams.set("longitude", longitude.toString());
+  url.searchParams.set("hourly", HOURLY_FIELDS.join(","));
+  url.searchParams.set("timezone", "UTC");
+  url.searchParams.set("wind_speed_unit", "ms");
+  url.searchParams.set("start_date", formatDateOnly(startDate));
+  url.searchParams.set("end_date", formatDateOnly(endDate));
+
+  const response = await fetch(url.toString(), {
+    next: { revalidate: ARCHIVE_CACHE_REVALIDATE_SECONDS },
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new OpenMeteoApiError(
+      `Open-Meteo archive API request failed with status ${response.status}: ${body.slice(0, 500)}`,
+    );
+  }
+
+  const payload: unknown = await response.json();
+  const hourly = (payload as Record<string, unknown> | null)?.hourly;
+
+  return parseHourlyPoints(hourly, "Open-Meteo archive");
 }
