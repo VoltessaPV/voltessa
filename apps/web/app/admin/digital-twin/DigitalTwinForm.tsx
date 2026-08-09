@@ -72,6 +72,46 @@ const DEFAULT_MIN_SOC_PERCENT = "10";
 const MAX_SOC_PERCENT = 100;
 
 /**
+ * Conservative Battery Lifetime Planning Model milestone. A fixed, simple
+ * planning horizon (aligned with the KSTAR reference material's stated
+ * 10-year performance warranty, but NOT itself a manufacturer guarantee -
+ * see the in-UI disclosure text) with a linear usable-capacity retention
+ * curve from 100% at year 0 down to `END_OF_HORIZON_RETENTION_FRACTION` at
+ * year `PLANNING_HORIZON_YEARS`. Deliberately not configurable and not
+ * exposed as a UI input - a modeling assumption for conservative financial
+ * planning, not a new battery engineering parameter.
+ */
+const PLANNING_HORIZON_YEARS = 10;
+const END_OF_HORIZON_RETENTION_FRACTION = 0.8;
+
+/**
+ * `retention(year) = 1.0 - (1 - endOfHorizonRetention) x year / horizonYears`
+ * - the exact simple linear curve requested: 100% at year 0, 80% at year 10,
+ * monotonically declining in between. `year` is the whole-year index (1..10)
+ * being projected, not a continuous time value.
+ */
+function capacityRetentionAtYear(year: number): number {
+  return 1 - (1 - END_OF_HORIZON_RETENTION_FRACTION) * (year / PLANNING_HORIZON_YEARS);
+}
+
+/**
+ * Lifetime revenue = sum of each planning year's projected revenue, where
+ * each year's revenue is the Year-1 simulation-derived baseline scaled by
+ * that year's modeled capacity retention - declining battery capacity means
+ * declining ability to generate arbitrage revenue. This is a revenue
+ * PROJECTION only; it never subtracts Battery Wear Cost or CAPEX (the
+ * Investor Accounting Rule - degradation is reported separately, never
+ * deducted from revenue).
+ */
+function sumProjectedLifetimeRevenue(year1AnnualRevenueEur: number): number {
+  let total = 0;
+  for (let year = 1; year <= PLANNING_HORIZON_YEARS; year += 1) {
+    total += year1AnnualRevenueEur * capacityRetentionAtYear(year);
+  }
+  return total;
+}
+
+/**
  * Final UI Polish milestone (Milestone 7). One formatting convention for
  * the whole page - energy/power to 1 decimal, money/price to 2 - so no
  * value is ever shown as a raw, unrounded float. Every function here only
@@ -480,45 +520,61 @@ export function DigitalTwinForm({ plants }: Props) {
   }, [result]);
 
   /**
-   * Investor Lifetime Economics milestone. Cycle-life and lifetime-revenue
-   * projection for the investor-facing "Battery lifetime & revenue" card -
-   * pure arithmetic on already-simulated output
-   * (`result.simulatedBattery.throughputKwh`/`usableCapacityKwh`/
-   * `batteryLifetimeEfc`, `investmentSummary.additionalRevenueEur`), never a
-   * second simulation. EFC counting matches `computeDegradationCostPerKwh`'s
-   * own definition exactly: one equivalent full cycle = `2 *
-   * usableCapacityKwh` kWh of throughput. Annual/lifetime revenue are always
-   * GROSS of Battery Wear Cost/CAPEX - the Investor Accounting Rule: those
-   * figures are reported separately (cycles used/lifetime used %/remaining
-   * cycles here, Battery Wear Cost in the Battery KPIs diagnostic row) and
-   * never subtracted from revenue.
+   * Conservative Battery Lifetime Planning Model milestone. Replaces the
+   * prior naive "remainingCycles / observedEfcPerDay" linear extrapolation
+   * (which could project unrealistic 15-25+ year lifetimes from a low
+   * observed cycling rate, and implicitly assumed the battery retains its
+   * original usable capacity forever) with a fixed, conservative planning
+   * horizon: EFC utilization is still reported exactly as before (cycles
+   * used/lifetime used %/cycles remaining - pure throughput/usable-capacity
+   * arithmetic, unchanged), but the DISPLAYED "estimated planning life" is
+   * now capped at `PLANNING_HORIZON_YEARS`, and the revenue PROJECTION comes
+   * from a simple linear capacity-retention curve
+   * (`capacityRetentionAtYear`) over that same fixed horizon - never an
+   * unbounded extrapolation of the observed cycling rate. Annual revenue
+   * displayed is still the plain, unscaled simulation-derived figure (Year-1
+   * baseline); only the 10-year LIFETIME sum applies the declining
+   * retention curve. Gross of Battery Wear Cost/CAPEX throughout - the
+   * Investor Accounting Rule: degradation is reported separately (cycles
+   * used/lifetime used %/planning life here, Battery Wear Cost in the
+   * Battery KPIs diagnostic row) and never subtracted from revenue.
    */
   const batteryLifetime = useMemo(() => {
     if (!result?.ok || !result.simulatedBattery || !investmentSummary) return null;
 
     const { throughputKwh, usableCapacityKwh, batteryLifetimeEfc: lifetimeEfc } = result.simulatedBattery;
     const cyclesUsed = usableCapacityKwh > 0 ? throughputKwh / (2 * usableCapacityKwh) : 0;
+    // EFC utilization against the configured reference cycle life - NOT a
+    // claim about physical capacity degradation (that's the separate
+    // capacity-retention curve below).
     const lifetimeUsedPercent = lifetimeEfc > 0 ? (cyclesUsed / lifetimeEfc) * 100 : 0;
     const remainingCycles = Math.max(0, lifetimeEfc - cyclesUsed);
 
     const simulationDays = periodDayCount(result.rangeStart, result.rangeEnd);
-    // Guard against divide-by-zero: no cycling this run means no cycling
-    // rate to project a remaining life from - an honest "can't project"
-    // state, never an Infinity/NaN.
     const averageEfcPerDay = cyclesUsed > 0 ? cyclesUsed / simulationDays : 0;
-    const remainingDays = averageEfcPerDay > 0 ? remainingCycles / averageEfcPerDay : null;
+    // Conservative planning cap: the EFC-implied life to reach the
+    // configured reference is only ever used when it's SHORTER than the
+    // 10-year performance horizon; a low (or zero) observed cycling rate
+    // never produces an unrealistic 15+ year projection - it's capped at
+    // the horizon instead, per the Conservative Battery Lifetime Planning
+    // Model's explicit requirement.
+    const efcImpliedLifeYears = averageEfcPerDay > 0 ? remainingCycles / averageEfcPerDay / 365 : Infinity;
+    const planningLifeYears = Math.min(efcImpliedLifeYears, PLANNING_HORIZON_YEARS);
+    const planningLifeDays = planningLifeYears * 365;
 
+    // Year-1 baseline - the plain, unscaled simulation-derived annualized
+    // revenue. Displayed as-is; only the 10-year lifetime sum below applies
+    // the capacity-retention curve.
     const { additionalRevenueEur } = investmentSummary;
     const annualRevenueEur = additionalRevenueEur !== null ? (additionalRevenueEur / simulationDays) * 365 : null;
-    const lifetimeRevenueEur =
-      annualRevenueEur !== null && remainingDays !== null ? annualRevenueEur * (remainingDays / 365) : null;
+    const lifetimeRevenueEur = annualRevenueEur !== null ? sumProjectedLifetimeRevenue(annualRevenueEur) : null;
 
     return {
       batteryLifetimeEfc: lifetimeEfc,
       cyclesUsed,
       lifetimeUsedPercent,
       remainingCycles,
-      remainingDays,
+      planningLifeDays,
       annualRevenueEur,
       lifetimeRevenueEur,
     };
@@ -995,14 +1051,8 @@ export function DigitalTwinForm({ plants }: Props) {
               </dl>
 
               <p className="mt-3 text-sm text-white/70">
-                {batteryLifetime.remainingDays !== null ? (
-                  <>
-                    Estimated remaining life at simulated cycling rate:{" "}
-                    <span className="font-medium text-white">{formatRemainingLife(batteryLifetime.remainingDays)}</span>
-                  </>
-                ) : (
-                  "No battery cycling observed in this simulation - remaining life cannot be projected."
-                )}
+                Estimated planning life:{" "}
+                <span className="font-medium text-white">{formatRemainingLife(batteryLifetime.planningLifeDays)}</span>
               </p>
 
               {/* Battery revenue */}
@@ -1026,7 +1076,10 @@ export function DigitalTwinForm({ plants }: Props) {
                 </div>
               </dl>
               <p className="mt-2 text-xs text-white/40">
-                At the simulated operating/cycling rate - a projection, not a manufacturer warranty.
+                Planning model: {PLANNING_HORIZON_YEARS}-year performance horizon with capacity retention modeled from 100% to{" "}
+                {Math.round(END_OF_HORIZON_RETENTION_FRACTION * 100)}%. {formatEfc(batteryLifetime.batteryLifetimeEfc)} EFC is the
+                configurable reference cycle life. Revenue projections decline with modeled battery capacity. This is a
+                conservative planning assumption, not a manufacturer degradation guarantee.
               </p>
             </section>
           )}
