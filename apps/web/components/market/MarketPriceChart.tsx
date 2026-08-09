@@ -51,18 +51,19 @@ type MarketPriceChartProps = {
   /**
    * Available-PV visualization fix (Digital Twin's "Current (historical)"
    * panel only - every other caller of this shared component omits this
-   * prop and is completely unaffected). Reconstructed Available PV -
-   * independent of historical Zero Export, never derived from simulated
-   * battery output (`available-pv-reconstruction.ts`) - on the exact same
-   * grid as `settlementEnergySeries`. Rendered as a two-segment stacked bar
-   * with `exportedKwh`: a grey bottom segment for
-   * `max(0, availablePvKwh - exportedKwh)` (physically available energy
-   * that was NOT exported - exactly what Zero Export suppresses) and the
-   * existing green top segment for `exportedKwh` unchanged, so the total
-   * stacked bar height always equals `availablePvKwh` and the grey portion
-   * alone is directly the "energy that existed but wasn't exported" this
-   * chart exists to surface. Omitted entirely (no grey segment, no legend
-   * entry, no axis change) when not supplied.
+   * prop and is completely unaffected). NOT total reconstructed PV
+   * production - the caller (`app/admin/digital-twin/actions.ts`'s
+   * `computeAdditionalAvailablePvKwh`) has already computed exactly the
+   * additional energy that physically existed but was suppressed by
+   * historical Zero Export, above whatever was actually exported - zero for
+   * every interval Zero Export wasn't active, by construction. This
+   * component renders that value as-is, as a grey segment stacked ON TOP of
+   * the existing green `exportedKwh` segment (never re-subtracted here -
+   * the incoming value already IS the "additional" amount), so the total
+   * stacked bar height is `exportedKwh + additionalAvailablePvKwh` -
+   * historical export plus the reconstructed Zero-Export opportunity above
+   * it. Omitted entirely (no grey segment, no legend entry, no axis change)
+   * when not supplied.
    */
   availablePvEnergySeries?: { intervalStart: Date; availablePvKwh: number | null }[];
   /**
@@ -179,10 +180,15 @@ type UnifiedDatum = {
   time: number;
   price: number | null;
   exportedKwh: number | null;
-  /** Total reconstructed Available PV - see `availablePvEnergySeries`'s prop doc comment. `null` when that prop is omitted or has no value for this timestamp. */
+  /**
+   * Additional energy suppressed by historical Zero Export, ABOVE
+   * `exportedKwh` - see `availablePvEnergySeries`'s prop doc comment. Already
+   * exactly zero outside Zero Export (computed by the caller), so this is
+   * rendered as-is, never re-derived here. `null` when that prop is omitted
+   * or has no value for this timestamp - the grey segment simply doesn't
+   * render for that point.
+   */
   availablePvKwh: number | null;
-  /** `max(0, availablePvKwh - exportedKwh)` - the grey stacked-bar segment's own value. `null` whenever `availablePvKwh` is null, so the grey segment simply doesn't render for that point. */
-  unexportedAvailablePvKwh: number | null;
 };
 
 /**
@@ -247,7 +253,6 @@ function buildUnifiedData(
       price: point.price,
       exportedKwh,
       availablePvKwh,
-      unexportedAvailablePvKwh: availablePvKwh === null ? null : Math.max(0, availablePvKwh - (exportedKwh ?? 0)),
     };
   });
 }
@@ -385,7 +390,6 @@ export function MarketPriceChart({
         price: point.price,
         exportedKwh: null,
         availablePvKwh: null,
-        unexportedAvailablePvKwh: null,
       }));
 
   // Historical Analytics Refinement milestone: Today keeps its exact
@@ -393,9 +397,11 @@ export function MarketPriceChart({
   // interval's worth of hours) unchanged; Week/Month/Year now auto-scale
   // to the real visible data via `computeNiceEnergyAxis` instead, since a
   // capacity-derived domain for a whole day/month of exports made every
-  // bar look tiny against mostly-empty axis space.
+  // bar look tiny against mostly-empty axis space. `availablePvKwh` (when
+  // present) stacks ON TOP of `exportedKwh` - the axis must fit their SUM,
+  // not their max, or a Zero-Export bucket's grey segment would overflow.
   const niceEnergyAxis = hasEnergyAxis
-    ? computeNiceEnergyAxis(Math.max(0, ...data.map((point) => Math.max(point.exportedKwh ?? 0, point.availablePvKwh ?? 0))))
+    ? computeNiceEnergyAxis(Math.max(0, ...data.map((point) => (point.exportedKwh ?? 0) + (point.availablePvKwh ?? 0))))
     : { max: 0, ticks: [0] };
   const maxExportedKwhPerInterval = sharedEnergyAxis
     ? sharedEnergyAxis.max
@@ -568,18 +574,6 @@ export function MarketPriceChart({
             animationDuration={700}
           />
 
-          {hasAvailablePv && (
-            <Bar
-              yAxisId="energy"
-              dataKey="unexportedAvailablePvKwh"
-              stackId="energy"
-              fill="#9ca3af"
-              fillOpacity={0.5}
-              isAnimationActive
-              animationDuration={700}
-            />
-          )}
-
           {hasEnergyAxis && (
             <Bar
               yAxisId="energy"
@@ -587,6 +581,19 @@ export function MarketPriceChart({
               stackId="energy"
               fill="#34d399"
               fillOpacity={0.65}
+              radius={hasAvailablePv ? undefined : [2, 2, 0, 0]}
+              isAnimationActive
+              animationDuration={700}
+            />
+          )}
+
+          {hasAvailablePv && (
+            <Bar
+              yAxisId="energy"
+              dataKey="availablePvKwh"
+              stackId="energy"
+              fill="#9ca3af"
+              fillOpacity={0.5}
               radius={[2, 2, 0, 0]}
               isAnimationActive
               animationDuration={700}
