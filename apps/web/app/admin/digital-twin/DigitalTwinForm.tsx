@@ -916,6 +916,7 @@ export function DigitalTwinForm({ plants }: Props) {
                       intervalStart,
                       exportedKwh,
                     }))}
+                    availablePvEnergySeries={result.currentChart.availablePv}
                     installedCapacityKw={result.currentCapacityKw}
                     sharedEnergyAxis={sharedAxes.energyAxis}
                     sharedPriceAxis={sharedAxes.priceAxis}

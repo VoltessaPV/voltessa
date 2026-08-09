@@ -7,11 +7,13 @@ import { type BatteryIntervalDiagnostic, buildIntervalDiagnostics } from "@/lib/
 import { toBatteryDispatchIntervals } from "@/lib/digital-twin/battery-engine-report";
 import { replay, type ReplayOutcome } from "@/lib/digital-twin/replay-engine";
 import {
+  aggregateAvailablePvSeriesForChart,
   aggregateFlowSeriesForChart,
   aggregatePriceSeriesForChart,
   aggregateSettlementSeriesForChart,
   aggregateSocSeriesForChart,
   resolveChartResolution,
+  type AvailablePvEnergyPoint,
   type BatteryFlowPoint,
   type ChartResolution,
   type SocPoint,
@@ -43,6 +45,14 @@ export type DigitalTwinMetrics = {
 export type DigitalTwinChartSeries = {
   price: MarketPricePoint[];
   settlement: SettlementEnergyPoint[];
+  /**
+   * Available-PV visualization fix. Reconstructed Available PV (independent
+   * of historical Zero Export, never derived from simulated battery output)
+   * for the "Current (historical)" `MarketPriceChart` panel only - always
+   * `undefined` on `simulatedChart`, which never renders this series. Same
+   * `chartResolution` grid as `settlement`.
+   */
+  availablePv?: AvailablePvEnergyPoint[];
 };
 
 /**
@@ -185,6 +195,32 @@ function aggregateNativeIntervalsTo15Min(intervals: ReplayOutcome["intervals"]):
   return [...buckets.entries()]
     .sort(([a], [b]) => a - b)
     .map(([t, v]) => ({ intervalStart: new Date(t), exportedKwh: v.exportedKwh, importedKwh: v.importedKwh }));
+}
+
+/**
+ * Available-PV visualization fix. Same native-5-minute -> 15-minute
+ * bucketing as `aggregateNativeIntervalsTo15Min` above, kept as its own
+ * function (rather than extending that one's return type) since
+ * `availablePvKwh` is unrelated to `SettlementEnergyPoint` - only the
+ * "Current (historical)" panel ever reads this. Reads `availablePvKwh`
+ * directly off `ReplayOutcome.intervals` - the reconstructed value
+ * `available-pv-reconstruction.ts` produces, independent of historical Zero
+ * Export - never `productionKwh` (post-capacity-scaling) or any
+ * battery/simulated field.
+ */
+function aggregateAvailablePvTo15Min(intervals: ReplayOutcome["intervals"]): AvailablePvEnergyPoint[] {
+  const bucketMs = 15 * 60 * 1000;
+  const buckets = new Map<number, number | null>();
+
+  for (const interval of intervals) {
+    const bucketStart = Math.floor(interval.intervalStart.getTime() / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketStart);
+    buckets.set(bucketStart, interval.availablePvKwh !== null ? (existing ?? 0) + interval.availablePvKwh : existing ?? null);
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, availablePvKwh]) => ({ intervalStart: new Date(t), availablePvKwh }));
 }
 
 /**
@@ -410,6 +446,11 @@ export async function runDigitalTwinSimulation(
     const currentSettlement15Min = aggregateNativeIntervalsTo15Min(currentOutcome.intervals);
     const simulatedSettlement15Min = aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals);
 
+    // Available-PV visualization fix. "Current (historical)" only - reads
+    // currentOutcome.intervals (never simulatedOutcome/battery output), the
+    // reconstructed value independent of historical Zero Export.
+    const currentAvailablePv15Min = aggregateAvailablePvTo15Min(currentOutcome.intervals);
+
     const simulatedBattery: DigitalTwinBatteryMetrics | null = (() => {
       if (!battery || !simulatedOutcome.battery) {
         return null;
@@ -488,6 +529,7 @@ export async function runDigitalTwinSimulation(
       currentChart: {
         price: aggregatePriceSeriesForChart(priceSeries, currentSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
         settlement: aggregateSettlementSeriesForChart(currentSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
+        availablePv: aggregateAvailablePvSeriesForChart(currentAvailablePv15Min, chartResolution, BULGARIA_TIMEZONE),
       },
       simulatedChart: {
         price: aggregatePriceSeriesForChart(priceSeries, simulatedSettlement15Min, chartResolution, BULGARIA_TIMEZONE),
