@@ -44,6 +44,7 @@ type SocPriceDatum = {
   price: number | null;
   chargeKwh: number | null;
   dischargeKwh: number | null;
+  availablePvKwh: number | null;
 };
 
 /** ENTSO-E's native day-ahead cadence - the bucket width a "native" (single-day) chart's price points each hold for. */
@@ -99,7 +100,14 @@ function buildSocPriceData(
 
     const flow = flowByTime.get(time);
 
-    return { time, socKwh: point.socKwh, price, chargeKwh: flow?.chargeKwh ?? null, dischargeKwh: flow?.dischargeKwh ?? null };
+    return {
+      time,
+      socKwh: point.socKwh,
+      price,
+      chargeKwh: flow?.chargeKwh ?? null,
+      dischargeKwh: flow?.dischargeKwh ?? null,
+      availablePvKwh: flow?.availablePvKwh ?? null,
+    };
   });
 }
 
@@ -124,11 +132,19 @@ function SocPriceTooltip({
   const price = payload.find((entry) => entry.dataKey === "price")?.value ?? null;
   const chargeKwh = payload.find((entry) => entry.dataKey === "chargeKwh")?.value ?? null;
   const dischargeKwh = payload.find((entry) => entry.dataKey === "dischargeKwh")?.value ?? null;
-  const hasAnything = socKwh !== null || (hasPrice && price !== null) || (chargeKwh ?? 0) > 0 || (dischargeKwh ?? 0) > 0;
+  const availablePvKwh = payload.find((entry) => entry.dataKey === "availablePvKwh")?.value ?? null;
+  const hasAnything =
+    socKwh !== null || (hasPrice && price !== null) || (chargeKwh ?? 0) > 0 || (dischargeKwh ?? 0) > 0 || (availablePvKwh ?? 0) > 0;
 
   return (
     <div className={CHART_TOOLTIP_CLASSNAME}>
       <p className="font-medium text-slate-300">{labelFormatter(label)}</p>
+      {(availablePvKwh ?? 0) > 0 && (
+        <p className="mt-1 flex items-center gap-1.5 text-slate-400">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+          Available PV {availablePvKwh!.toFixed(2)} kWh
+        </p>
+      )}
       {socKwh !== null && (
         <p className="mt-1 flex items-center gap-1.5 text-amber-400">
           <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
@@ -168,9 +184,11 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
   const xTicks = xAxisUnit === "time" && domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
   const xAxisTickFormatter = xAxisUnit === "time" ? formatSofiaTime : formatSofiaDate;
 
-  const maxFlowKwh = hasFlow
-    ? Math.max(1, ...data.map((d) => Math.max(d.chargeKwh ?? 0, d.dischargeKwh ?? 0)))
-    : 1;
+  const hasAvailablePv = data.some((d) => (d.availablePvKwh ?? 0) > 0);
+  const maxFlowKwh =
+    hasFlow || hasAvailablePv
+      ? Math.max(1, ...data.map((d) => Math.max(d.chargeKwh ?? 0, d.dischargeKwh ?? 0, d.availablePvKwh ?? 0)))
+      : 1;
 
   const yAxes: ChartFrameYAxis[] = [
     {
@@ -191,11 +209,12 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           },
         ]
       : []),
-    // Charge/discharge share one axis, scaled to whichever this chart's own
-    // data actually reaches - deliberately independent of the SOC axis
-    // (a state, not a flow, on a completely different scale) rather than
-    // forcing bars sized in single-digit kWh onto a hundreds-of-kWh domain.
-    ...(hasFlow
+    // Charge/discharge/Available PV share one axis, scaled to whichever this
+    // chart's own data actually reaches - deliberately independent of the
+    // SOC axis (a state, not a flow, on a completely different scale)
+    // rather than forcing bars sized in single-digit kWh onto a
+    // hundreds-of-kWh domain.
+    ...(hasFlow || hasAvailablePv
       ? [
           {
             yAxisId: "flow",
@@ -215,6 +234,16 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           <span className="h-0.5 w-3 rounded-full bg-amber-400" />
           Battery SOC
         </span>
+
+        {hasAvailablePv && (
+          <>
+            <span className="h-3 w-px bg-white/10" />
+            <span className="flex items-center gap-1.5 text-slate-500">
+              <span className="h-2.5 w-2.5 rounded-sm bg-gray-400" />
+              Available PV
+            </span>
+          </>
+        )}
 
         {hasFlow && (
           <>
@@ -249,6 +278,9 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
           xTicks={xTicks}
           tickFormatter={xAxisTickFormatter}
         >
+          {hasAvailablePv && (
+            <Bar yAxisId="flow" dataKey="availablePvKwh" fill="#9ca3af" fillOpacity={0.5} radius={[2, 2, 0, 0]} isAnimationActive animationDuration={700} />
+          )}
           {hasFlow && (
             <Bar yAxisId="flow" dataKey="chargeKwh" fill="#34d399" fillOpacity={0.75} radius={[2, 2, 0, 0]} isAnimationActive animationDuration={700} />
           )}

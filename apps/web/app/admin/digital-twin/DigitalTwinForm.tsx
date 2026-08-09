@@ -816,6 +816,14 @@ export function DigitalTwinForm({ plants }: Props) {
                   <dd className="text-white/80">{formatKwh(result.simulatedBattery.chargedEnergyKwh)} kWh</dd>
                 </div>
                 <div>
+                  <dt className="text-xs text-white/40">— from PV</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.pvChargedEnergyKwh)} kWh</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">— from grid</dt>
+                  <dd className="text-white/80">{formatKwh(result.simulatedBattery.gridChargedEnergyKwh)} kWh</dd>
+                </div>
+                <div>
                   <dt className="text-xs text-white/40">Energy discharged</dt>
                   <dd className="text-white/80">{formatKwh(result.simulatedBattery.dischargedEnergyKwh)} kWh</dd>
                 </div>
@@ -836,10 +844,20 @@ export function DigitalTwinForm({ plants }: Props) {
                   <dd className="text-white/80">{formatKwh(result.simulatedBattery.finalSocKwh)} kWh</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-white/40">Average Charging Price</dt>
+                  <dt className="text-xs text-white/40" title="PV energy has zero acquisition cost - never priced at market rate">
+                    Avg PV Charging Acquisition Price
+                  </dt>
                   <dd className="text-white/80">
-                    {result.simulatedBattery.avgChargingPriceEurPerMwh !== null
-                      ? `${formatAsp(result.simulatedBattery.avgChargingPriceEurPerMwh)} EUR/MWh`
+                    {result.simulatedBattery.avgPvChargingAcquisitionPriceEurPerMwh !== null
+                      ? `${formatAsp(result.simulatedBattery.avgPvChargingAcquisitionPriceEurPerMwh)} EUR/MWh`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Avg Grid Charging Price</dt>
+                  <dd className="text-white/80">
+                    {result.simulatedBattery.avgGridChargingPriceEurPerMwh !== null
+                      ? `${formatAsp(result.simulatedBattery.avgGridChargingPriceEurPerMwh)} EUR/MWh`
                       : "—"}
                   </dd>
                 </div>

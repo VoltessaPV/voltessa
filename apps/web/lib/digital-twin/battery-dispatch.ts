@@ -251,17 +251,29 @@ export type BatteryDispatchInterval = {
   exportedKwh: number;
   importedKwh: number;
   /**
-   * Zero-Export dispatch fix. The PV-financed portion of `chargeKwh` (as
+   * PV Charging Economics fix. The PV-financed portion of `chargeKwh` (as
    * opposed to any additional grid-financed portion, only possible when
-   * `allowGridCharging` is true) during a Zero-Export surplus interval. 0
-   * outside Zero Export. Prior to the Battery Degradation Economics
-   * milestone this was also the "forced by dominance" portion - charging
-   * further was always free, so the PV-affordability ceiling was reached
-   * directly rather than searched for. That dominance no longer holds once
-   * `degradationCostPerKwh > 0` (more charge now always costs more wear,
-   * for only possibly-more future value), so this amount is now a genuine
-   * optimizer decision like any other, not a forced minimum - the field name
-   * is kept for continuity but no longer implies "mandatory."
+   * `allowGridCharging` is true) for THIS interval, whether or not it was a
+   * Zero-Export interval - PV energy has zero acquisition cost regardless of
+   * why the battery is charging, so a caller reporting an "average charging
+   * price" must split on this field rather than pricing `chargeKwh` as a
+   * whole against the market (see `battery-engine-report.ts`'s
+   * `computeWeightedPrice` callers). Originally only ever populated during a
+   * Zero-Export surplus interval (0 elsewhere) - generalized to every
+   * interval type, since ordinary (non-Zero-Export) charging is exactly as
+   * PV-financed-up-to-the-surplus as Zero-Export charging is; the two were
+   * never actually different phenomena; only Zero-Export interval had this
+   * accounted for. Matches `battery-diagnostics.ts`'s own independent
+   * `chargeFromPvKwh` derivation (`Math.min(interval.chargeKwh,
+   * surplusKwh)`) by construction, not by coincidence.
+   *
+   * Prior to the Battery Degradation Economics milestone this was also the
+   * "forced by dominance" portion during Zero Export - charging further was
+   * always free, so the PV-affordability ceiling was reached directly
+   * rather than searched for. That dominance no longer holds once
+   * `degradationCostPerKwh > 0`, so this amount is a genuine optimizer
+   * decision like any other, not a forced minimum - the field name is kept
+   * for continuity but no longer implies "mandatory."
    */
   mandatoryChargeKwh: number;
   /**
@@ -789,6 +801,20 @@ export function runBatteryDispatch(
       const split = splitPvHandling(t, rawGridExchange);
       gridExchange = rawGridExchange;
       curtailedKwh = split.curtailedKwh;
+
+      // PV Charging Economics fix. `chargeKwh` here may be financed partly
+      // or entirely by PV surplus and partly by grid import (only possible
+      // when `allowGridCharging` is true - `upperBoundSoc` above is capped
+      // at the PV-affordable ceiling otherwise, so every charge kWh in that
+      // case is already PV-financed by construction). The PV-financed
+      // portion is bounded by this interval's own PV surplus, exactly the
+      // same bound `chargeCeilingK`/`pvAffordableCeilingSoc` already use
+      // elsewhere in this file - never a separate calculation. This mirrors
+      // `battery-diagnostics.ts`'s own independent `chargeFromPvKwh`
+      // derivation (`Math.min(interval.chargeKwh, surplusKwh)`), so both
+      // now agree by construction instead of by coincidence.
+      const chargeKwhCase3 = targetSoc > s + 1e-9 ? (targetSoc - s) / etaCharge : 0;
+      mandatoryChargeKwh = Math.min(chargeKwhCase3, surplusT);
     }
 
     let chargeKwh = 0;
