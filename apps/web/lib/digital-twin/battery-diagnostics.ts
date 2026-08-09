@@ -23,7 +23,7 @@ export type BatteryIntervalDiagnostic = {
   batteryDischargeKwh: number;
   /** Zero-Export dispatch fix. The portion of `batteryChargeKwh` forced by the mandatory-absorption/grid-priority business rule rather than freely chosen. */
   mandatoryChargeKwh: number;
-  /** Zero-Export dispatch fix. Reconstructed Available PV that was physically available but neither consumed, charged, nor exported this interval. */
+  /** Reconstructed Available PV that was physically available but neither consumed, charged, nor exported this interval - either Zero Export blocked export outright, or (Battery Degradation Economics milestone) exporting would have had negative market value. See `battery-dispatch.ts`'s `curtailedKwh` doc comment. */
   curtailedKwh: number;
   socBeforeKwh: number;
   socAfterKwh: number;
@@ -49,7 +49,7 @@ function classifyAction(
 ): { action: BatteryDispatchAction; reason: string } {
   const curtailNote =
     interval.curtailedKwh > TOLERANCE_KWH
-      ? ` ${interval.curtailedKwh.toFixed(2)} kWh of Available PV curtailed this interval (Zero Export - not stored, not exported).`
+      ? ` ${interval.curtailedKwh.toFixed(2)} kWh of Available PV curtailed this interval (not stored, not exported - either Zero Export blocked export outright, or exporting would have had negative market value).`
       : "";
 
   if (interval.chargeKwh > TOLERANCE_KWH) {
@@ -75,7 +75,7 @@ function classifyAction(
   if (interval.curtailedKwh > TOLERANCE_KWH) {
     return {
       action: "Curtailed",
-      reason: `Export blocked (Zero Export); ${interval.curtailedKwh.toFixed(2)} kWh of PV surplus curtailed - battery already at capacity/power limit.`,
+      reason: `${interval.curtailedKwh.toFixed(2)} kWh of PV surplus curtailed - battery already at capacity/power limit, and export was either blocked (Zero Export) or would have had negative market value.`,
     };
   }
 

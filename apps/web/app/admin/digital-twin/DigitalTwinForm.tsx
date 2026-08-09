@@ -3,7 +3,12 @@
 import { Suspense, useMemo, useState, useTransition } from "react";
 
 import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
-import type { BatteryConfig } from "@/lib/digital-twin/battery-dispatch";
+import {
+  type BatteryConfig,
+  computeDegradationCostPerKwh,
+  DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+  DEFAULT_BATTERY_LIFETIME_EFC,
+} from "@/lib/digital-twin/battery-dispatch";
 import type { ChartResolution } from "@/lib/market-price/chart-aggregation";
 
 import { DynamicBatterySocChart } from "@/components/charts/BatterySocChart.dynamic";
@@ -260,6 +265,16 @@ export function DigitalTwinForm({ plants }: Props) {
           maxChargePowerKw,
           maxDischargePowerKw,
           allowGridCharging,
+          // Battery Degradation Economics milestone - standard LiFePO4
+          // grid-scale BESS assumptions, derived from this battery's own
+          // configured DoD (MAX_SOC_PERCENT - minSocPercent) - see
+          // computeDegradationCostPerKwh's doc comment for why this is
+          // independent of capacityKwh/duration.
+          degradationCostPerKwh: computeDegradationCostPerKwh(
+            DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+            DEFAULT_BATTERY_LIFETIME_EFC,
+            MAX_SOC_PERCENT - minSocPercent,
+          ),
         }
       : null;
 
