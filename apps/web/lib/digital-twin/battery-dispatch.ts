@@ -299,6 +299,18 @@ const SOC_GRID_STATES = 200;
 const PRICE_BUCKET_MS = 15 * 60 * 1000;
 /** Fallback interval duration when fewer than two intervals are supplied to derive spacing from - matches the native production cadence. */
 const DEFAULT_INTERVAL_HOURS = 5 / 60;
+/**
+ * Zero-Export tie-breaking fix. A purely numerical tolerance (EUR), not a
+ * business threshold - when two SOC candidates in the Case 1/2 forward
+ * reconstruction search evaluate to the same value within this margin, the
+ * larger (more captured, zero-acquisition-cost PV) SOC is preferred over a
+ * smaller one purely evaluated first. Sized well below any genuine economic
+ * difference this engine computes (typically hundredths of a EUR or more
+ * for a real price/wear-cost margin) but well above the SOC grid's own
+ * linear-interpolation error, so this never overrides a real difference in
+ * value, only resolves a true (or interpolation-noise-level) tie.
+ */
+const TIE_TOLERANCE_EUR = 1e-4;
 
 function validateBatteryConfig(config: BatteryConfig): void {
   if (!(config.capacityKwh > 0)) {
@@ -716,11 +728,13 @@ export function runBatteryDispatch(
       const powerCapSoc = Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge);
       const upperBoundSoc = useGridPriority[t] || config.allowGridCharging ? powerCapSoc : pvAffordableCeilingSoc;
 
-      let bestSoc = s;
-      let bestValue = evaluateZeroExportCandidate(t, s, nextValue, s);
-
       const kLo = Math.max(0, Math.ceil((s - minSocKwh) / stepKwh));
       const kHi = Math.min(N, Math.floor((upperBoundSoc - minSocKwh) / stepKwh));
+
+      // Pass 1: find the true best value, exactly as before - candidate set
+      // and strict-improvement comparison unchanged, so the optimizer's own
+      // claimed optimal value is untouched.
+      let bestValue = evaluateZeroExportCandidate(t, s, nextValue, s);
       for (let k = kLo; k <= kHi; k += 1) {
         const candidateSoc = minSocKwh + k * stepKwh;
         if (candidateSoc <= s + 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
@@ -729,13 +743,47 @@ export function runBatteryDispatch(
         const v = evaluateZeroExportCandidate(t, s, nextValue, candidateSoc);
         if (v > bestValue) {
           bestValue = v;
-          bestSoc = candidateSoc;
         }
       }
       {
         const v = evaluateZeroExportCandidate(t, s, nextValue, upperBoundSoc);
         if (v > bestValue) {
           bestValue = v;
+        }
+      }
+
+      // Pass 2: tie-breaking fix. PV financing this charge has zero
+      // acquisition cost - when the DP is numerically indifferent (within
+      // TIE_TOLERANCE_EUR) between capturing available surplus now and
+      // leaving it idle/curtailed, capturing it is weakly dominant: by
+      // construction it is never worse than the true best value found in
+      // Pass 1, and it avoids discarding free energy on the strength of a
+      // margin no larger than the SOC grid's own interpolation error. A
+      // real production case (Atlanta, persistent Zero-Export PV surplus
+      // arriving every interval while price stays flat) showed this
+      // near-exact tie recurring for many consecutive intervals, with the
+      // engine defaulting to idle purely because it was evaluated first -
+      // then curtailing tens of kWh of free PV that a later interval's
+      // charge-power ceiling made impossible to recover. Preferring the
+      // LARGEST tied-or-better SOC fixes that without changing what value
+      // the optimizer considers optimal.
+      let bestSoc = s;
+      if (evaluateZeroExportCandidate(t, s, nextValue, s) >= bestValue - TIE_TOLERANCE_EUR) {
+        bestSoc = s;
+      }
+      for (let k = kLo; k <= kHi; k += 1) {
+        const candidateSoc = minSocKwh + k * stepKwh;
+        if (candidateSoc <= s + 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
+          continue;
+        }
+        const v = evaluateZeroExportCandidate(t, s, nextValue, candidateSoc);
+        if (v >= bestValue - TIE_TOLERANCE_EUR && candidateSoc > bestSoc) {
+          bestSoc = candidateSoc;
+        }
+      }
+      {
+        const v = evaluateZeroExportCandidate(t, s, nextValue, upperBoundSoc);
+        if (v >= bestValue - TIE_TOLERANCE_EUR && upperBoundSoc > bestSoc) {
           bestSoc = upperBoundSoc;
         }
       }
