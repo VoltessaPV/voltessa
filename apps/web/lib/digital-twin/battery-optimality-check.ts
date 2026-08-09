@@ -63,6 +63,8 @@ export function bruteForceOptimalRevenue(testCase: OptimalityTestCase): number {
   const etaDischarge = etaCharge;
   const maxChargeKwh = battery.maxChargePowerKw * INTERVAL_HOURS;
   const maxDischargeKwh = battery.maxDischargePowerKw * INTERVAL_HOURS;
+  /** Physical AC export ceiling fix - independent re-derivation of `battery-dispatch.ts`'s `maxExportKwhPerInterval`, so this reference solver keeps validating the identical physical model. */
+  const maxExportKwh = battery.exportPowerLimitKw * INTERVAL_HOURS;
   const referencePrice = priceEurPerMwh.reduce((sum, v) => sum + v, 0) / priceEurPerMwh.length;
 
   const memo = new Map<string, number>();
@@ -116,6 +118,14 @@ export function bruteForceOptimalRevenue(testCase: OptimalityTestCase): number {
       // without a separate feasibility cutoff.
       if (isZeroExport[t] && gridExchange > 0) {
         gridExchange = 0;
+      }
+      // Physical AC export ceiling fix - a positive residual beyond the
+      // plant's own installed/inverter AC capacity is physically
+      // impossible to export, regardless of price; capped first, then the
+      // pre-existing economic-curtailment check (below) runs over the
+      // already-capped amount, exactly mirroring `pvHandlingReward`'s order.
+      if (gridExchange > 0) {
+        gridExchange = Math.min(gridExchange, maxExportKwh);
       }
       // Battery Degradation Economics milestone - Case 3 economic
       // curtailment, independent of Zero Export above: even when export is
@@ -231,6 +241,13 @@ const BASE_BATTERY: BatteryConfig = {
   // case below also validates the Battery Degradation Economics
   // milestone's wear-cost terms, not just the pre-existing physics.
   degradationCostPerKwh: 200 / (2 * 6000 * 0.9),
+  // Physical AC export ceiling fix - these synthetic scenarios validate
+  // battery dispatch logic, not any specific plant's inverter/interconnect
+  // size, so this is set intentionally high (never binds for any of the
+  // cases below) to keep this pre-existing suite's behavior unchanged. The
+  // ceiling itself is validated separately, directly against real Atlanta
+  // production data.
+  exportPowerLimitKw: 1000,
 };
 
 /**

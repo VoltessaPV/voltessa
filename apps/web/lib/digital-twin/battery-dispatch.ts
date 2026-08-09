@@ -202,6 +202,20 @@ export type BatteryConfig = {
    * recover the exact prior (no-degradation) behavior.
    */
   degradationCostPerKwh: number;
+  /**
+   * Physical AC export ceiling fix. The plant's own installed/inverter AC
+   * export capacity, kW - independent of the battery's own
+   * `maxChargePowerKw`/`maxDischargePowerKw` rating. Without this, PV
+   * surplus and battery discharge could be summed into a combined grid
+   * export exceeding what the plant's actual interconnection can physically
+   * carry (observed in production: a simulated 15-minute export bar near 55
+   * kWh for a 200 kW plant, whose true ceiling is 200 kW x 0.25 h = 50 kWh).
+   * Enforced in `pvHandlingReward`/`splitPvHandling` - any grid-exchange
+   * amount beyond `exportPowerLimitKw * intervalHours` is always curtailed,
+   * regardless of price, since this is a physical constraint, never an
+   * economic one. Import is not capped by this field.
+   */
+  exportPowerLimitKw: number;
 };
 
 /** Standard default battery-economics assumptions (LiFePO4 grid-scale BESS), used when a caller has no real vendor figures - see computeDegradationCostPerKwh. */
@@ -334,6 +348,9 @@ function validateBatteryConfig(config: BatteryConfig): void {
   if (!(config.degradationCostPerKwh >= 0)) {
     throw new Error("Battery degradation cost per kWh must be non-negative");
   }
+  if (!(config.exportPowerLimitKw > 0)) {
+    throw new Error("Export power limit must be greater than zero");
+  }
 }
 
 /**
@@ -399,6 +416,8 @@ export function runBatteryDispatch(
 
   const maxChargeKwhPerInterval = config.maxChargePowerKw * intervalHours;
   const maxDischargeKwhPerInterval = config.maxDischargePowerKw * intervalHours;
+  /** Physical AC export ceiling fix - see `BatteryConfig.exportPowerLimitKw`'s doc comment. Scales correctly with `intervalHours` regardless of native dispatch cadence or settlement bucket width, since it's a plain power x time bound. */
+  const maxExportKwhPerInterval = config.exportPowerLimitKw * intervalHours;
 
   const N = SOC_GRID_STATES;
   const stepKwh = usableRangeKwh / N;
@@ -511,12 +530,21 @@ export function runBatteryDispatch(
    * comparison, not a special case. A negative raw exchange (import) is
    * never a curtailment candidate - it is a real physical deficit, not
    * surplus PV with nowhere useful to go.
+   *
+   * Physical AC export ceiling fix. A positive `rawGridExchange` is first
+   * capped at `maxExportKwhPerInterval` (the plant's own installed/inverter
+   * AC capacity) - the portion beyond that ceiling is ALWAYS curtailed,
+   * regardless of price, since exceeding it is a physical impossibility,
+   * never an economic choice. The existing economic curtailment comparison
+   * (export vs. curtail at a negative price) then runs only over the
+   * already-capped, physically exportable amount.
    */
   function pvHandlingReward(t: number, rawGridExchange: number): number {
     if (rawGridExchange <= 0) {
       return (price[t]! * rawGridExchange) / 1000;
     }
-    const exportReward = (price[t]! * rawGridExchange) / 1000;
+    const physicallyExportableKwh = Math.min(rawGridExchange, maxExportKwhPerInterval);
+    const exportReward = (price[t]! * physicallyExportableKwh) / 1000;
     const curtailReward = 0;
     return Math.max(exportReward, curtailReward);
   }
@@ -526,10 +554,12 @@ export function runBatteryDispatch(
     if (rawGridExchange <= 0) {
       return { exportedKwh: 0, importedKwh: -rawGridExchange, curtailedKwh: 0 };
     }
-    if (price[t]! * rawGridExchange < 0) {
+    const physicallyExportableKwh = Math.min(rawGridExchange, maxExportKwhPerInterval);
+    const physicallyCurtailedKwh = rawGridExchange - physicallyExportableKwh;
+    if (price[t]! * physicallyExportableKwh < 0) {
       return { exportedKwh: 0, importedKwh: 0, curtailedKwh: rawGridExchange };
     }
-    return { exportedKwh: rawGridExchange, importedKwh: 0, curtailedKwh: 0 };
+    return { exportedKwh: physicallyExportableKwh, importedKwh: 0, curtailedKwh: physicallyCurtailedKwh };
   }
 
   /**
@@ -719,6 +749,8 @@ export function runBatteryDispatch(
     let mandatoryChargeKwh = 0;
     let curtailedKwh = 0;
     let gridExchange: number;
+    let exportedKwh = 0;
+    let importedKwh = 0;
 
     if (isZeroExport[t] && surplusT > 0) {
       // Case 1 / Case 2 - genuine bounded search, continuous counterpart of
@@ -799,6 +831,10 @@ export function runBatteryDispatch(
         curtailedKwh = Math.max(0, surplusT - chargeKwhFinal);
         gridExchange = 0;
       }
+      // Zero Export blocks export entirely by definition - gridExchange here
+      // is always <= 0 (an import, or none), never a positive export.
+      exportedKwh = 0;
+      importedKwh = Math.max(0, -gridExchange);
     } else {
       // Case 3 - a single continuous optimization variable x = nextSocKwh,
       // no separate "charge decision" and "discharge decision". Candidates:
@@ -849,6 +885,13 @@ export function runBatteryDispatch(
       const split = splitPvHandling(t, rawGridExchange);
       gridExchange = rawGridExchange;
       curtailedKwh = split.curtailedKwh;
+      // Physical AC export ceiling fix - `split.exportedKwh`/`split.importedKwh`
+      // already account for the physically-exportable cap, unlike a naive
+      // `Math.max(0, gridExchange)` re-derivation (which would ignore the cap
+      // whenever `curtailedKwh` is a PARTIAL residual rather than the old
+      // all-or-nothing economic-curtailment case).
+      exportedKwh = split.exportedKwh;
+      importedKwh = split.importedKwh;
 
       // PV Charging Economics fix. `chargeKwh` here may be financed partly
       // or entirely by PV surplus and partly by grid import (only possible
@@ -872,9 +915,6 @@ export function runBatteryDispatch(
     } else if (targetSoc < s - 1e-9) {
       dischargeKwh = (s - targetSoc) * etaDischarge;
     }
-
-    const exportedKwh = curtailedKwh > 0 ? 0 : Math.max(0, gridExchange);
-    const importedKwh = Math.max(0, -gridExchange);
 
     results[t] = {
       intervalStart: intervals[t]!.intervalStart,
