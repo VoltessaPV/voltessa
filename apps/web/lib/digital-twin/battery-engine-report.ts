@@ -198,6 +198,10 @@ export function buildDefaultBatteryConfig(plantCapacityKw: number, durationHours
       DEFAULT_BATTERY_LIFETIME_EFC,
       maxSocPercent - minSocPercent,
     ),
+    // Physical AC export ceiling fix - the simulated plant's own installed/
+    // inverter AC capacity, same value already used for charge/discharge
+    // power above. See `BatteryConfig.exportPowerLimitKw`'s doc comment.
+    exportPowerLimitKw: plantCapacityKw,
   };
 }
 

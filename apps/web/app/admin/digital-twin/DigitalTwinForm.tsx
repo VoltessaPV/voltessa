@@ -256,7 +256,9 @@ export function DigitalTwinForm({ plants }: Props) {
     Number.isFinite(maxChargePowerKw) &&
     maxChargePowerKw > 0 &&
     Number.isFinite(maxDischargePowerKw) &&
-    maxDischargePowerKw > 0
+    maxDischargePowerKw > 0 &&
+    Number.isFinite(newCapacityKw) &&
+    newCapacityKw > 0
       ? {
           capacityKwh: batteryCapacityKwh,
           roundTripEfficiencyPercent,
@@ -265,6 +267,12 @@ export function DigitalTwinForm({ plants }: Props) {
           maxChargePowerKw,
           maxDischargePowerKw,
           allowGridCharging,
+          // Physical AC export ceiling fix - the plant's own installed/
+          // inverter AC export capacity is the simulated capacity itself
+          // (`newCapacityKw`), never the battery's own charge/discharge
+          // power rating. See `BatteryConfig.exportPowerLimitKw`'s doc
+          // comment in battery-dispatch.ts.
+          exportPowerLimitKw: newCapacityKw,
           // Battery Degradation Economics milestone - standard LiFePO4
           // grid-scale BESS assumptions, derived from this battery's own
           // configured DoD (MAX_SOC_PERCENT - minSocPercent) - see

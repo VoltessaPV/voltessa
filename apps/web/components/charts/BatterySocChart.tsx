@@ -6,6 +6,7 @@ import type { MarketPricePoint } from "@/app/[locale]/(platform)/market/market-d
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
 import { CHART_TOOLTIP_CLASSNAME, computeFixedChartTicks, formatSofiaDate, formatSofiaTime } from "@/components/charts/chart-style";
 import type { BatteryFlowPoint, SocPoint } from "@/lib/market-price/chart-aggregation";
+import { computeNiceEnergyAxis } from "@/components/market/MarketPriceChart";
 
 /**
  * Battery Digital Twin UI milestone. SOC is state, not an energy flow - this
@@ -172,9 +173,18 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
   const xTicks = xAxisUnit === "time" && domainStart !== undefined ? computeFixedChartTicks(domainStart) : undefined;
   const xAxisTickFormatter = xAxisUnit === "time" ? formatSofiaTime : formatSofiaDate;
 
-  const maxFlowKwh = hasFlow
-    ? Math.max(1, ...data.map((d) => Math.max(d.chargeKwh ?? 0, d.dischargeKwh ?? 0)))
-    : 1;
+  // Energy/Per-Interval Axis Cleanup fix. `computeNiceEnergyAxis` (already
+  // used by MarketPriceChart's own Week/Month/Year exported-energy axis)
+  // derives a "nice" (1/2/5 x 10^n) max and evenly-spaced tick set from the
+  // real visible data, instead of an uncontrolled raw max - the previous
+  // domain-only approach let Recharts auto-generate ticks from whatever
+  // fractional value the battery's power/interval-duration ceiling happened
+  // to produce (e.g. 16.67 kWh for a 200 kW battery at native 5-minute
+  // resolution), which is exactly the floating-point-artifact tick this
+  // fix removes. Purely presentational - the underlying charge/discharge
+  // values themselves are unchanged.
+  const maxObservedFlowKwh = Math.max(0, ...data.map((d) => Math.max(d.chargeKwh ?? 0, d.dischargeKwh ?? 0)));
+  const flowAxis = hasFlow && maxObservedFlowKwh > 0 ? computeNiceEnergyAxis(maxObservedFlowKwh) : { max: 1, ticks: [0, 1] };
 
   const yAxes: ChartFrameYAxis[] = [
     {
@@ -205,8 +215,9 @@ export function BatterySocChart({ series, batteryCapacityKwh, xAxisUnit = "time"
             yAxisId: "flow",
             orientation: "right" as const,
             unitLabel: "kWh/interval",
-            domain: [0, maxFlowKwh] as [number, number],
+            domain: [0, Math.max(flowAxis.max, 1)] as [number, number],
             allowDataOverflow: true,
+            ticks: flowAxis.ticks,
           },
         ]
       : []),
