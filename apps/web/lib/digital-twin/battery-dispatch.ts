@@ -63,19 +63,28 @@ import type { AvailablePvInterval } from "@/lib/digital-twin/available-pv-recons
  * - No tariff/demand-charge modeling (REopt-specific). Voltessa's revenue
  *   model is ENTSO-E export-price arbitrage only.
  * - No standing/self-discharge loss term, even though PyPSA/oemof both
- *   support one as an optional per-timestep percentage. Omitted per this
- *   milestone's explicit "no degradation model" scope - the state equation
- *   above has an obvious slot for it if a later milestone needs it.
+ *   support one as an optional per-timestep percentage - a genuinely
+ *   different thing from cycling degradation (see below), which the
+ *   Battery Degradation Economics milestone now DOES model. The state
+ *   equation above has an obvious slot for a standing-loss term if a later
+ *   milestone needs it.
  * - No real-time/receding-horizon (MPC) execution loop, which is what
  *   OpenEMS's live Controllers actually run. This engine is offline/batch
  *   (Digital Twin replay) - Step 5's future Automation reuse is explicitly
  *   scoped as later work, not built here.
  *
- * Objective: maximum financial return, not maximum self-consumption -
- * `Σ price_i × gridExchange_i` over the whole horizon, export positive,
- * import negative, using the same market price series both directions.
- * This is intentionally NOT the same number the (unchanged) Revenue Engine
- * will report afterward - that stays export-revenue-only by definition
+ * Objective: `Σ [price_i × gridExchange_i / 1000 − degradationCostPerKwh ×
+ * (charge_i + discharge_i)]` over the whole horizon, export positive,
+ * import negative, using the same market price series both directions,
+ * plus the terminal value below. The degradation term (Battery Degradation
+ * Economics milestone) is an INTERNAL optimization cost only - it makes
+ * economically marginal cycling unattractive to the search, but is never
+ * folded into any reported revenue figure downstream (see
+ * `BatteryConfig.degradationCostPerKwh`'s own doc comment and
+ * `battery-engine-report.ts`'s separate `batteryWearCostEur`/
+ * `optimizationValueEur` fields). Separately, this internal objective is
+ * intentionally NOT the same number the (unchanged) Revenue Engine will
+ * report afterward - that stays export-revenue-only by definition
  * (`computeExportRevenue`) - the benefit of avoided grid import shows up
  * instead in the Import/Consumption flows this engine also exposes, not
  * folded into "Revenue". See `BatteryDispatchInterval` below - every
@@ -121,30 +130,34 @@ import type { AvailablePvInterval } from "@/lib/digital-twin/available-pv-recons
  * - CASE 1 (`!config.allowGridCharging`, or grid charging is allowed but
  *   price >= 0): the feasible charge ceiling is `chargeCeilingK` applied
  *   with the interval's own PV surplus as the affordability limit - PV is
- *   the only financing source. Landing at that ceiling is not searched for
- *   among alternatives; it is reached directly, because every feasible `k`
- *   up to it shares the identical reward (0 - no grid exchange, since PV
- *   financing keeps gridExchange at exactly 0) and `V_{t+1}` is
- *   non-decreasing in SOC, so the ceiling always weakly dominates every
- *   other feasible k - "mandatory absorption" is this dominance, not a
- *   rule bolted on beside the recursion. An optional extension beyond that
- *   ceiling remains genuinely searched (`allowGridCharging` grid-financed
- *   top-up, if a future price makes it worthwhile).
- * - CASE 2 (`config.allowGridCharging && price < 0`): this is the one
- *   place the recursion is NOT left to discover the optimum on its own.
- *   It is an explicit business policy, computed directly: charging 1 kWh
- *   from the grid at a negative price earns revenue for the identical
- *   stored-energy benefit that charging the same kWh from PV would have
- *   earned for free, so grid-sourced charging strictly dominates
- *   PV-sourced charging whenever price < 0 - the policy intentionally
- *   overrides normal PV priority rather than relying on the general search
- *   to arrive at the same place, because the outcome (100% of PV
- *   curtailed even though free storage is being used) is exactly the kind
- *   of decision this codebase requires to stay explainable rather than
- *   emergent (see `docs/VISION.md`'s "every automated action must be
- *   explainable"). This only applies when there is PV surplus to begin
- *   with; a plain deficit interval has no PV to override and goes through
- *   the ordinary feasible-set search below, unmodified.
+ *   the only financing source. Before the Battery Degradation Economics
+ *   milestone, landing at that ceiling was reached directly rather than
+ *   searched for: every feasible `k` up to it shared the identical reward
+ *   (0 - no grid exchange, since PV financing keeps gridExchange at exactly
+ *   0) and `V_{t+1}` is non-decreasing in SOC, so the ceiling always weakly
+ *   dominated every other feasible k. Once `degradationCostPerKwh > 0`,
+ *   that dominance no longer holds automatically (more charge now always
+ *   costs more wear, for only possibly-more future value), so every
+ *   feasible k up to the ceiling is now genuinely searched -
+ *   `zeroExportChargeReward` below, shared by both the backward induction
+ *   and forward reconstruction passes. An optional extension beyond that
+ *   ceiling is searched the same way (`allowGridCharging` grid-financed
+ *   top-up, if a future price and the wear cost together still make it
+ *   worthwhile).
+ * - CASE 2 (`config.allowGridCharging && price < 0`): still an explicit
+ *   business policy in the sense that PV is unconditionally curtailed and
+ *   charging is unconditionally grid-financed instead (never a mix) -
+ *   charging 1 kWh from the grid at a negative price earns revenue for the
+ *   identical stored-energy benefit that charging the same kWh from PV
+ *   would have earned for free, which is exactly the kind of decision this
+ *   codebase requires to stay explainable rather than emergent (see
+ *   `docs/VISION.md`'s "every automated action must be explainable").
+ *   *How much* to charge under that policy is, like Case 1, now a genuine
+ *   search once wear cost applies - a sufficiently small negative price no
+ *   longer automatically justifies charging all the way to the power
+ *   ceiling. This only applies when there is PV surplus to begin with; a
+ *   plain deficit interval has no PV to override and goes through the
+ *   ordinary feasible-set search below, unmodified.
  * - Outside those two cases (not Zero Export, or Zero Export with no
  *   surplus): the ordinary feasible-set search runs - `chargeCeilingK`
  *   applied only when `!allowGridCharging`, `dischargeFloorK` applied only
@@ -177,7 +190,46 @@ export type BatteryConfig = {
    * `runBatteryDispatch`'s inner loop).
    */
   allowGridCharging: boolean;
+  /**
+   * Battery Degradation Economics milestone. EUR per kWh of charge+discharge
+   * throughput - an INTERNAL optimization cost the DP subtracts from every
+   * candidate's reward to make economically marginal cycling unattractive
+   * (see computeDegradationCostPerKwh for the standard derivation). This is
+   * never deducted from any reported market-revenue figure downstream
+   * (battery-engine-report.ts keeps it as a separate `batteryWearCostEur`
+   * field, subtracted only into a separate `optimizationValueEur`) - it
+   * exists purely to shape the schedule the DP searches for. Pass 0 to
+   * recover the exact prior (no-degradation) behavior.
+   */
+  degradationCostPerKwh: number;
 };
+
+/** Standard default battery-economics assumptions (LiFePO4 grid-scale BESS), used when a caller has no real vendor figures - see computeDegradationCostPerKwh. */
+export const DEFAULT_BATTERY_CAPEX_EUR_PER_KWH = 200;
+/** Rated cycle life, equivalent full cycles (EFC), for the same default assumption. */
+export const DEFAULT_BATTERY_LIFETIME_EFC = 6000;
+
+/**
+ * Levelized battery-wear cost, EUR per kWh of charge+discharge throughput -
+ * validated against an independent LP reference optimizer using this exact
+ * formula (Battery Degradation Economics milestone).
+ *
+ * One equivalent full cycle (EFC) = one full charge PLUS one full discharge
+ * of the usable (DoD-limited) range = `2 * usableCapacityKwh` kWh of
+ * throughput - not `usableCapacityKwh` alone (a common off-by-a-factor-of-
+ * two error this formula deliberately avoids). CAPEX is quoted per kWh of
+ * NOMINAL capacity; since `usableCapacityKwh = nominalCapacityKwh *
+ * dodFraction`, the nominal capacity cancels out of the ratio below - this
+ * cost is therefore independent of battery size by construction and needs
+ * no rescaling as capacity/duration changes:
+ *
+ *   costPerKwh = (capexPerKwh * capacityKwh) / (lifetimeEfc * 2 * dod * capacityKwh)
+ *              = capexPerKwh / (2 * lifetimeEfc * dod)
+ */
+export function computeDegradationCostPerKwh(capexEurPerKwh: number, lifetimeEfc: number, dodPercent: number): number {
+  const dod = dodPercent / 100;
+  return capexEurPerKwh / (2 * lifetimeEfc * dod);
+}
 
 /**
  * Every physical energy flow for one native dispatch interval, all
@@ -199,17 +251,30 @@ export type BatteryDispatchInterval = {
   exportedKwh: number;
   importedKwh: number;
   /**
-   * Zero-Export dispatch fix. The portion of `chargeKwh` forced by feasible-
-   * set dominance (Case 1) or the grid-priority policy (Case 2) rather than
-   * freely chosen among genuine alternatives. 0 outside Zero Export.
+   * Zero-Export dispatch fix. The PV-financed portion of `chargeKwh` (as
+   * opposed to any additional grid-financed portion, only possible when
+   * `allowGridCharging` is true) during a Zero-Export surplus interval. 0
+   * outside Zero Export. Prior to the Battery Degradation Economics
+   * milestone this was also the "forced by dominance" portion - charging
+   * further was always free, so the PV-affordability ceiling was reached
+   * directly rather than searched for. That dominance no longer holds once
+   * `degradationCostPerKwh > 0` (more charge now always costs more wear,
+   * for only possibly-more future value), so this amount is now a genuine
+   * optimizer decision like any other, not a forced minimum - the field name
+   * is kept for continuity but no longer implies "mandatory."
    */
   mandatoryChargeKwh: number;
   /**
-   * Zero-Export dispatch fix. Reconstructed Available PV that was
-   * physically available this interval but neither consumed locally,
-   * charged into the battery, nor exported - a deterministic residual of
-   * the energy balance (see this file's module doc comment), never a
-   * chosen or priced quantity. 0 outside Zero Export.
+   * Reconstructed Available PV that was physically available this interval
+   * but neither consumed locally, charged into the battery, nor exported -
+   * a deterministic residual of the energy balance, never itself a chosen
+   * or priced quantity. Two distinct, unrelated causes, both real: (1) Zero
+   * Export dispatch fix - export was physically blocked and the battery was
+   * already at its capacity/power limit; (2) Battery Degradation Economics
+   * milestone's Case 3 economic curtailment - export was legal but would
+   * have had negative market value (see `pvHandlingReward`), and curtailing
+   * strictly dominates selling at a loss. Never both at once for the same
+   * kWh (Case 1/2 and Case 3 are mutually exclusive per interval).
    */
   curtailedKwh: number;
   /** State of charge at the END of this interval. State, not an energy flow - never sum or average this across a coarser view; see this file's aggregation note. */
@@ -241,6 +306,9 @@ function validateBatteryConfig(config: BatteryConfig): void {
   }
   if (!(config.maxDischargePowerKw > 0)) {
     throw new Error("Maximum discharge power must be greater than zero");
+  }
+  if (!(config.degradationCostPerKwh >= 0)) {
+    throw new Error("Battery degradation cost per kWh must be non-negative");
   }
 }
 
@@ -385,41 +453,59 @@ export function runBatteryDispatch(
   }
 
   /**
-   * The Case 1 / Case 2 mandatory target for one (t, j) state - only
-   * called when `isZeroExport[t]` and there is PV surplus this interval.
-   * Not a search: see the module doc comment for why landing here always
-   * weakly dominates every other feasible k (Case 1) or is the explicit
-   * policy target (Case 2). `curtailedKwh` is derived from the energy
-   * balance, never chosen independently.
+   * Case 1 / Case 2 reward for charging to grid index `k` from state `j`
+   * during a Zero-Export surplus interval - `k = j` (no charge) is always a
+   * valid candidate (curtail everything). Prior to the Battery Degradation
+   * Economics milestone, landing at the PV-affordability ceiling (Case 1)
+   * or the full power ceiling (Case 2) always weakly dominated every lesser
+   * k, because charging further was reward-neutral (gridExchange pinned at
+   * 0 or the fixed Case-2 policy value regardless of how much of the
+   * ceiling was used) and `V_{t+1}` is non-decreasing in SOC - so the
+   * ceiling was reached directly, never searched for. Once
+   * `degradationCostPerKwh > 0`, that dominance breaks: charging further
+   * now has a real, increasing cost for only possibly-more future value, so
+   * every reachable k up to the ceiling must be genuinely compared, exactly
+   * like the ordinary Case 3 charge loop below. `curtailedKwh` (the energy-
+   * balance residual for whatever isn't charged) still carries no reward or
+   * penalty of its own - unchanged from the original design.
    */
-  function computeMandatoryTarget(
-    t: number,
-    j: number,
-    surplus: number,
-  ): { kMandatory: number; mandatoryChargeKwh: number; curtailedKwh: number; gridExchangeMandatory: number } {
-    const socKwh = minSocKwh + j * stepKwh;
-    const powerChargeCapK = Math.min(N, j + maxChargeSteps);
+  function zeroExportChargeReward(t: number, chargeKwh: number): number {
+    const gridExchange = useGridPriority[t] ? -(consumptionAt[t]! + chargeKwh) : 0;
+    return (price[t]! * gridExchange) / 1000 - config.degradationCostPerKwh * chargeKwh;
+  }
 
-    const kMandatory = useGridPriority[t] ? powerChargeCapK : chargeCeilingK(j, socKwh, powerChargeCapK, surplus);
-
-    const targetSocMandatory = minSocKwh + kMandatory * stepKwh;
-    const mandatoryChargeKwh = Math.max(0, (targetSocMandatory - socKwh) / etaCharge);
-
-    if (useGridPriority[t]) {
-      return {
-        kMandatory,
-        mandatoryChargeKwh,
-        curtailedKwh: availablePv[t]!,
-        gridExchangeMandatory: -(consumptionAt[t]! + mandatoryChargeKwh),
-      };
+  /**
+   * Case 3 economic curtailment - completely independent of Zero Export's
+   * own curtailment above (a physical export-blocked constraint, not an
+   * economic choice - see the module doc comment). A positive raw grid
+   * exchange (would-be export) competes here against curtailing that same
+   * energy instead (always exactly 0 reward, 0 wear, no capacity/power
+   * consumed) - `Math.max` genuinely decides between the two candidates
+   * rather than a rule asserting which wins, so a price of exactly 0 is
+   * correctly indifferent between them (both candidates evaluate to the
+   * same reward) and any other price sign is handled by the same
+   * comparison, not a special case. A negative raw exchange (import) is
+   * never a curtailment candidate - it is a real physical deficit, not
+   * surplus PV with nowhere useful to go.
+   */
+  function pvHandlingReward(t: number, rawGridExchange: number): number {
+    if (rawGridExchange <= 0) {
+      return (price[t]! * rawGridExchange) / 1000;
     }
+    const exportReward = (price[t]! * rawGridExchange) / 1000;
+    const curtailReward = 0;
+    return Math.max(exportReward, curtailReward);
+  }
 
-    return {
-      kMandatory,
-      mandatoryChargeKwh,
-      curtailedKwh: Math.max(0, surplus - mandatoryChargeKwh),
-      gridExchangeMandatory: 0,
-    };
+  /** The energy-flow decomposition matching `pvHandlingReward`'s own decision - computed once, after a target SOC has been chosen, never re-decided independently. */
+  function splitPvHandling(t: number, rawGridExchange: number): { exportedKwh: number; importedKwh: number; curtailedKwh: number } {
+    if (rawGridExchange <= 0) {
+      return { exportedKwh: 0, importedKwh: -rawGridExchange, curtailedKwh: 0 };
+    }
+    if (price[t]! * rawGridExchange < 0) {
+      return { exportedKwh: 0, importedKwh: 0, curtailedKwh: rawGridExchange };
+    }
+    return { exportedKwh: rawGridExchange, importedKwh: 0, curtailedKwh: 0 };
   }
 
   /**
@@ -464,28 +550,23 @@ export function runBatteryDispatch(
       let bestK = j;
 
       if (isZeroExport[t] && surplusT > 0) {
-        // Case 1 / Case 2 - see module doc comment. Landing here is not
-        // searched for; it is the dominant (Case 1) or policy-mandated
-        // (Case 2) feasible target.
-        const { kMandatory, mandatoryChargeKwh, gridExchangeMandatory } = computeMandatoryTarget(t, j, surplusT);
+        // Case 1 / Case 2 - see zeroExportChargeReward's doc comment for why
+        // this is now a genuine bounded search rather than a closed-form
+        // jump to a dominant ceiling. k = j (no charge, everything
+        // curtailed) is always included as the first candidate.
+        const chargeCeiling = useGridPriority[t] ? powerChargeCapK : chargeCeilingK(j, socKwh, powerChargeCapK, surplusT);
+        const chargeUpperK = config.allowGridCharging ? powerChargeCapK : chargeCeiling;
 
-        best = (price[t]! * gridExchangeMandatory) / 1000 + nextValue[kMandatory]!;
-        bestK = kMandatory;
+        best = zeroExportChargeReward(t, 0) + nextValue[j]!;
+        bestK = j;
 
-        // Optional extension beyond the mandatory target - genuinely
-        // searched, since additional grid-financed charging is a real
-        // economic choice, not a physics constraint.
-        if (config.allowGridCharging) {
-          for (let k = kMandatory + 1; k <= powerChargeCapK; k += 1) {
-            const targetSoc = minSocKwh + k * stepKwh;
-            const totalChargeKwh = (targetSoc - socKwh) / etaCharge;
-            const additionalChargeKwh = totalChargeKwh - mandatoryChargeKwh;
-            const gridExchange = gridExchangeMandatory - additionalChargeKwh;
-            const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
-            if (candidateValue > best) {
-              best = candidateValue;
-              bestK = k;
-            }
+        for (let k = j + 1; k <= chargeUpperK; k += 1) {
+          const targetSoc = minSocKwh + k * stepKwh;
+          const chargeKwh = (targetSoc - socKwh) / etaCharge;
+          const candidateValue = zeroExportChargeReward(t, chargeKwh) + nextValue[k]!;
+          if (candidateValue > best) {
+            best = candidateValue;
+            bestK = k;
           }
         }
       } else {
@@ -500,7 +581,7 @@ export function runBatteryDispatch(
         // Idle
         {
           const gridExchange = netPv[t]!;
-          best = (price[t]! * gridExchange) / 1000 + nextValue[j]!;
+          best = pvHandlingReward(t, gridExchange) + nextValue[j]!;
           bestK = j;
         }
 
@@ -512,7 +593,7 @@ export function runBatteryDispatch(
           const targetSoc = minSocKwh + k * stepKwh;
           const chargeKwh = (targetSoc - socKwh) / etaCharge;
           const gridExchange = netPv[t]! - chargeKwh;
-          const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
+          const candidateValue = pvHandlingReward(t, gridExchange) - config.degradationCostPerKwh * chargeKwh + nextValue[k]!;
           if (candidateValue > best) {
             best = candidateValue;
             bestK = k;
@@ -527,7 +608,7 @@ export function runBatteryDispatch(
           const targetSoc = minSocKwh + k * stepKwh;
           const dischargeKwh = (socKwh - targetSoc) * etaDischarge;
           const gridExchange = netPv[t]! + dischargeKwh;
-          const candidateValue = (price[t]! * gridExchange) / 1000 + nextValue[k]!;
+          const candidateValue = pvHandlingReward(t, gridExchange) - config.degradationCostPerKwh * dischargeKwh + nextValue[k]!;
           if (candidateValue > best) {
             best = candidateValue;
             bestK = k;
@@ -580,42 +661,26 @@ export function runBatteryDispatch(
    * every Case 3 candidate is evaluated by: the idle point, every reachable
    * grid breakpoint, and both feasibility boundaries alike. No candidate is
    * treated specially and there is no separate code path for any of them.
+   * The wear-cost term uses the exact same `degradationCostPerKwh` constant
+   * backward induction's Case 3 loops use, so both passes optimize the
+   * identical objective.
    */
   function evaluateCandidate(t: number, fromSocKwh: number, nextValue: number[], targetSocKwh: number): number {
-    const reward = (price[t]! * gridExchangeFor(t, fromSocKwh, targetSocKwh)) / 1000;
+    const gridExchange = gridExchangeFor(t, fromSocKwh, targetSocKwh);
+    const chargeKwh = targetSocKwh > fromSocKwh + 1e-9 ? (targetSocKwh - fromSocKwh) / etaCharge : 0;
+    const dischargeKwh = targetSocKwh < fromSocKwh - 1e-9 ? (fromSocKwh - targetSocKwh) * etaDischarge : 0;
+    const reward = pvHandlingReward(t, gridExchange) - config.degradationCostPerKwh * (chargeKwh + dischargeKwh);
     return reward + interpolateValue(nextValue, targetSocKwh);
   }
 
   /**
-   * Continuous counterpart of `computeMandatoryTarget`, evaluated from the
-   * true physical SOC rather than a grid state - same dominance proof (see
-   * module doc comment), so still no value lookup needed for the mandatory
-   * target itself.
+   * Continuous counterpart of the backward induction Case 1/2 search
+   * (`zeroExportChargeReward`) - `fromSocKwh` itself (no charge, everything
+   * curtailed) is always a valid candidate, exactly like `k = j` there.
    */
-  function computeMandatoryTargetContinuous(
-    t: number,
-    socKwh: number,
-    surplus: number,
-  ): { targetSoc: number; mandatoryChargeKwh: number; curtailedKwh: number; gridExchangeMandatory: number } {
-    const powerCapSoc = Math.min(maxSocKwh, socKwh + maxChargeKwhPerInterval * etaCharge);
-    const targetSoc = useGridPriority[t] ? powerCapSoc : Math.min(powerCapSoc, socKwh + surplus * etaCharge);
-    const mandatoryChargeKwh = Math.max(0, (targetSoc - socKwh) / etaCharge);
-
-    if (useGridPriority[t]) {
-      return {
-        targetSoc,
-        mandatoryChargeKwh,
-        curtailedKwh: availablePv[t]!,
-        gridExchangeMandatory: -(consumptionAt[t]! + mandatoryChargeKwh),
-      };
-    }
-
-    return {
-      targetSoc,
-      mandatoryChargeKwh,
-      curtailedKwh: Math.max(0, surplus - mandatoryChargeKwh),
-      gridExchangeMandatory: 0,
-    };
+  function evaluateZeroExportCandidate(t: number, fromSocKwh: number, nextValue: number[], candidateSocKwh: number): number {
+    const chargeKwh = candidateSocKwh > fromSocKwh + 1e-9 ? (candidateSocKwh - fromSocKwh) / etaCharge : 0;
+    return zeroExportChargeReward(t, chargeKwh) + interpolateValue(nextValue, candidateSocKwh);
   }
 
   const results: BatteryDispatchInterval[] = new Array(T);
@@ -632,50 +697,47 @@ export function runBatteryDispatch(
     let gridExchange: number;
 
     if (isZeroExport[t] && surplusT > 0) {
-      // Case 1 / Case 2 - closed-form, continuous, no value lookup (dominance proof, see module doc comment).
-      const mandatory = computeMandatoryTargetContinuous(t, s, surplusT);
-      targetSoc = mandatory.targetSoc;
-      mandatoryChargeKwh = mandatory.mandatoryChargeKwh;
-      curtailedKwh = mandatory.curtailedKwh;
-      gridExchange = mandatory.gridExchangeMandatory;
+      // Case 1 / Case 2 - genuine bounded search, continuous counterpart of
+      // backward induction's own (see zeroExportChargeReward's doc comment
+      // for why this is no longer a closed-form dominance jump).
+      const pvAffordableCeilingSoc = Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge, s + surplusT * etaCharge);
+      const powerCapSoc = Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge);
+      const upperBoundSoc = useGridPriority[t] || config.allowGridCharging ? powerCapSoc : pvAffordableCeilingSoc;
 
-      // Optional grid-financed extension beyond the mandatory PV-absorption
-      // target is a genuine economic trade-off (unlike the mandatory target
-      // itself), so it is genuinely searched - mirrors backward induction's
-      // own optional-extension loop, now over the continuous domain.
-      if (config.allowGridCharging && !useGridPriority[t]) {
-        const upperBoundSoc = Math.min(maxSocKwh, s + maxChargeKwhPerInterval * etaCharge);
+      let bestSoc = s;
+      let bestValue = evaluateZeroExportCandidate(t, s, nextValue, s);
 
-        let bestSoc = targetSoc;
-        let bestValue = evaluateCandidate(t, s, nextValue, targetSoc);
-
-        const kLo = Math.max(0, Math.ceil((targetSoc - minSocKwh) / stepKwh));
-        const kHi = Math.min(N, Math.floor((upperBoundSoc - minSocKwh) / stepKwh));
-        for (let k = kLo; k <= kHi; k += 1) {
-          const candidateSoc = minSocKwh + k * stepKwh;
-          if (candidateSoc <= targetSoc + 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
-            continue;
-          }
-          const v = evaluateCandidate(t, s, nextValue, candidateSoc);
-          if (v > bestValue) {
-            bestValue = v;
-            bestSoc = candidateSoc;
-          }
+      const kLo = Math.max(0, Math.ceil((s - minSocKwh) / stepKwh));
+      const kHi = Math.min(N, Math.floor((upperBoundSoc - minSocKwh) / stepKwh));
+      for (let k = kLo; k <= kHi; k += 1) {
+        const candidateSoc = minSocKwh + k * stepKwh;
+        if (candidateSoc <= s + 1e-9 || candidateSoc > upperBoundSoc + 1e-9) {
+          continue;
         }
-        {
-          const v = evaluateCandidate(t, s, nextValue, upperBoundSoc);
-          if (v > bestValue) {
-            bestValue = v;
-            bestSoc = upperBoundSoc;
-          }
+        const v = evaluateZeroExportCandidate(t, s, nextValue, candidateSoc);
+        if (v > bestValue) {
+          bestValue = v;
+          bestSoc = candidateSoc;
         }
+      }
+      {
+        const v = evaluateZeroExportCandidate(t, s, nextValue, upperBoundSoc);
+        if (v > bestValue) {
+          bestValue = v;
+          bestSoc = upperBoundSoc;
+        }
+      }
 
-        if (bestSoc > targetSoc + 1e-9) {
-          const totalChargeKwh = (bestSoc - s) / etaCharge;
-          const additionalChargeKwh = Math.max(0, totalChargeKwh - mandatoryChargeKwh);
-          targetSoc = bestSoc;
-          gridExchange = mandatory.gridExchangeMandatory - additionalChargeKwh;
-        }
+      targetSoc = bestSoc;
+      const chargeKwhFinal = targetSoc > s + 1e-9 ? (targetSoc - s) / etaCharge : 0;
+      if (useGridPriority[t]) {
+        mandatoryChargeKwh = 0; // fully grid-financed, see this field's updated doc comment
+        curtailedKwh = availablePv[t]!;
+        gridExchange = -(consumptionAt[t]! + chargeKwhFinal);
+      } else {
+        mandatoryChargeKwh = Math.min(chargeKwhFinal, surplusT); // PV-financed portion
+        curtailedKwh = Math.max(0, surplusT - chargeKwhFinal);
+        gridExchange = 0;
       }
     } else {
       // Case 3 - a single continuous optimization variable x = nextSocKwh,
@@ -723,7 +785,10 @@ export function runBatteryDispatch(
       }
 
       targetSoc = bestSoc;
-      gridExchange = gridExchangeFor(t, s, targetSoc);
+      const rawGridExchange = gridExchangeFor(t, s, targetSoc);
+      const split = splitPvHandling(t, rawGridExchange);
+      gridExchange = rawGridExchange;
+      curtailedKwh = split.curtailedKwh;
     }
 
     let chargeKwh = 0;
@@ -734,7 +799,7 @@ export function runBatteryDispatch(
       dischargeKwh = (s - targetSoc) * etaDischarge;
     }
 
-    const exportedKwh = Math.max(0, gridExchange);
+    const exportedKwh = curtailedKwh > 0 ? 0 : Math.max(0, gridExchange);
     const importedKwh = Math.max(0, -gridExchange);
 
     results[t] = {

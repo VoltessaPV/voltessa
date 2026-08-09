@@ -72,6 +72,18 @@ export type DigitalTwinBatteryMetrics = {
   finalSocKwh: number;
   avgChargingPriceEurPerMwh: number | null;
   avgDischargingPriceEurPerMwh: number | null;
+  /**
+   * Battery Degradation Economics milestone. The optimizer's own internal
+   * `Σ price × (exported - imported) / 1000` objective component (export
+   * revenue AND avoided-import value together) - deliberately a DIFFERENT
+   * figure from `DigitalTwinMetrics.revenueEur` above (which stays
+   * export-only, unchanged, per the existing Revenue Engine contract).
+   */
+  marketValueEur: number;
+  /** `battery.degradationCostPerKwh * throughputKwh` - an estimate only, never subtracted from `revenueEur` or `marketValueEur`. */
+  batteryWearCostEur: number;
+  /** `marketValueEur - batteryWearCostEur` - the value the optimizer actually maximizes, never itself labeled "Revenue". */
+  optimizationValueEur: number;
 };
 
 export type DigitalTwinResult =
@@ -209,6 +221,37 @@ function computeWeightedBatteryPrice(
   return totalEnergyKwh > 0 ? Math.round((weightedSum / totalEnergyKwh) * 100) / 100 : null;
 }
 
+/** ENTSO-E's native day-ahead price resolution - the same constant battery-dispatch.ts's own internal price bucketing uses (`PRICE_BUCKET_MS`), duplicated here rather than imported since that one is a private module constant. */
+const PRICE_BUCKET_MS = 15 * 60 * 1000;
+
+/**
+ * Battery Degradation Economics milestone. The optimizer's own internal
+ * market-value objective component - `Σ price × (exported - imported) /
+ * 1000` over every interval - computed here from the same already-fetched
+ * `priceSeries` and `simulatedOutcome.intervals` every other battery metric
+ * on this page reads, never a second simulation. `intervals` is native
+ * 5-minute resolution while `priceSeries` is ENTSO-E's native 15-minute
+ * grid, so each interval resolves to the 15-minute bucket it falls within -
+ * an exact-timestamp lookup would silently skip 2 of every 3 intervals.
+ */
+function computeMarketValueEur(intervals: ReplayOutcome["intervals"], priceSeries: MarketPricePoint[]): number {
+  const priceByTime = new Map(priceSeries.map((point) => [point.timestamp.getTime(), point.price]));
+
+  let total = 0;
+  for (const interval of intervals) {
+    const bucket = Math.floor(interval.intervalStart.getTime() / PRICE_BUCKET_MS) * PRICE_BUCKET_MS;
+    const price = priceByTime.get(bucket);
+    if (price === undefined || price === null) {
+      continue;
+    }
+    const exportedKwh = interval.exportedKwh ?? 0;
+    const importedKwh = interval.importedKwh ?? 0;
+    total += (price * (exportedKwh - importedKwh)) / 1000;
+  }
+
+  return Math.round(total * 100) / 100;
+}
+
 function resolveRange(
   period: DigitalTwinPeriod,
   customStart: string | undefined,
@@ -316,20 +359,27 @@ export async function runDigitalTwinSimulation(
     const currentSettlement15Min = aggregateNativeIntervalsTo15Min(currentOutcome.intervals);
     const simulatedSettlement15Min = aggregateNativeIntervalsTo15Min(simulatedOutcome.intervals);
 
-    const simulatedBattery: DigitalTwinBatteryMetrics | null =
-      battery && simulatedOutcome.battery
-        ? {
-            capacityKwh: battery.capacityKwh,
-            chargedEnergyKwh: simulatedOutcome.battery.chargedEnergyKwh,
-            dischargedEnergyKwh: simulatedOutcome.battery.dischargedEnergyKwh,
-            throughputKwh: simulatedOutcome.battery.throughputKwh,
-            batteryLossesKwh: simulatedOutcome.battery.batteryLossesKwh,
-            peakSocKwh: simulatedOutcome.battery.peakSocKwh,
-            finalSocKwh: simulatedOutcome.battery.finalSocKwh,
-            avgChargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "chargeKwh"),
-            avgDischargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "dischargeKwh"),
-          }
-        : null;
+    const simulatedBattery: DigitalTwinBatteryMetrics | null = (() => {
+      if (!battery || !simulatedOutcome.battery) {
+        return null;
+      }
+      const marketValueEur = computeMarketValueEur(simulatedOutcome.intervals, priceSeries);
+      const batteryWearCostEur = Math.round(battery.degradationCostPerKwh * simulatedOutcome.battery.throughputKwh * 100) / 100;
+      return {
+        capacityKwh: battery.capacityKwh,
+        chargedEnergyKwh: simulatedOutcome.battery.chargedEnergyKwh,
+        dischargedEnergyKwh: simulatedOutcome.battery.dischargedEnergyKwh,
+        throughputKwh: simulatedOutcome.battery.throughputKwh,
+        batteryLossesKwh: simulatedOutcome.battery.batteryLossesKwh,
+        peakSocKwh: simulatedOutcome.battery.peakSocKwh,
+        finalSocKwh: simulatedOutcome.battery.finalSocKwh,
+        avgChargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "chargeKwh"),
+        avgDischargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "dischargeKwh"),
+        marketValueEur,
+        batteryWearCostEur,
+        optimizationValueEur: Math.round((marketValueEur - batteryWearCostEur) * 100) / 100,
+      };
+    })();
 
     const simulatedSocChart: SocPoint[] = simulatedBattery
       ? aggregateSocSeriesForChart(

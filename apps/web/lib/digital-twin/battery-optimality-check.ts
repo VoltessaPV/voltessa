@@ -33,6 +33,8 @@ export type OptimalityTestCase = {
   consumptionKwh: number[];
   priceEurPerMwh: number[];
   battery: BatteryConfig;
+  /** Per-interval Zero-Export flag - defaults to all-false (no existing case needed it before the Battery Degradation Economics milestone's Case 1/2 rewrite). */
+  isZeroExport?: boolean[];
 };
 
 const INTERVAL_HOURS = 15 / 60;
@@ -49,6 +51,7 @@ const REFERENCE_SOC_STATES = 200;
  */
 export function bruteForceOptimalRevenue(testCase: OptimalityTestCase): number {
   const { availablePvKwh, consumptionKwh, priceEurPerMwh, battery } = testCase;
+  const isZeroExport = testCase.isZeroExport ?? availablePvKwh.map(() => false);
   const T = availablePvKwh.length;
 
   const minSocKwh = (battery.minSocPercent / 100) * battery.capacityKwh;
@@ -103,8 +106,28 @@ export function bruteForceOptimalRevenue(testCase: OptimalityTestCase): number {
         }
       }
 
-      const gridExchange = netPv - chargeKwh + dischargeKwh;
-      const revenue = (price * gridExchange) / 1000;
+      let gridExchange = netPv - chargeKwh + dischargeKwh;
+      // Zero Export: no export allowed - any residual that would have been
+      // exported is curtailed instead (zero reward, zero cost), never sold.
+      // A candidate that discharges further than physically sensible under
+      // this constraint is never actually chosen: it wastes stored energy
+      // (and now wear cost) for the same zero reward idling would give, so
+      // it's always weakly dominated - safe to allow in the search space
+      // without a separate feasibility cutoff.
+      if (isZeroExport[t] && gridExchange > 0) {
+        gridExchange = 0;
+      }
+      // Battery Degradation Economics milestone - Case 3 economic
+      // curtailment, independent of Zero Export above: even when export is
+      // physically legal, selling a positive residual at a negative price
+      // is strictly worse than curtailing it (0 reward beats a negative
+      // one) - an independent re-derivation of the same fact
+      // battery-dispatch.ts's `pvHandlingReward` computes, not a shared
+      // implementation.
+      if (gridExchange > 0 && price < 0) {
+        gridExchange = 0;
+      }
+      const revenue = (price * gridExchange) / 1000 - battery.degradationCostPerKwh * (chargeKwh + dischargeKwh);
       const total = revenue + solve(t + 1, k);
       if (total > best) {
         best = total;
@@ -127,9 +150,7 @@ function toEngineInputs(testCase: OptimalityTestCase): { intervals: AvailablePvI
     intervalStart: new Date(baseTimeMs + i * bucketMs),
     availablePvKwh: pv,
     consumptionKwh: testCase.consumptionKwh[i]!,
-    // None of these synthetic scenarios exercise the Zero-Export dispatch
-    // fix - they validate the unmodified free-optimization search only.
-    isZeroExport: false,
+    isZeroExport: testCase.isZeroExport?.[i] ?? false,
   }));
 
   const priceSeries: MarketPricePoint[] = testCase.priceEurPerMwh.map((price, i) => ({
@@ -165,9 +186,17 @@ export function runOptimalityCheck(testCase: OptimalityTestCase): OptimalityChec
   const dispatch = runBatteryDispatch(intervals, 1, priceSeries, testCase.battery);
 
   const priceByTime = new Map(priceSeries.map((p) => [p.timestamp.getTime(), p.price]));
+  // Battery Degradation Economics milestone. Must include the same
+  // wear-cost term the engine's own search actually optimizes (see
+  // battery-dispatch.ts's module doc comment for the objective) - otherwise
+  // this comparison silently checks a different quantity than what the
+  // engine was asked to maximize, and a schedule that's genuinely optimal
+  // net of wear would incorrectly look like it "beats" the reference.
   const realizedValueEur = dispatch.reduce((sum, interval) => {
     const price = priceByTime.get(interval.intervalStart.getTime()) ?? 0;
-    return sum + (price * (interval.exportedKwh - interval.importedKwh)) / 1000;
+    const revenue = (price * (interval.exportedKwh - interval.importedKwh)) / 1000;
+    const wearCost = testCase.battery.degradationCostPerKwh * (interval.chargeKwh + interval.dischargeKwh);
+    return sum + revenue - wearCost;
   }, 0);
 
   const minSocKwh = (testCase.battery.minSocPercent / 100) * testCase.battery.capacityKwh;
@@ -198,6 +227,10 @@ const BASE_BATTERY: BatteryConfig = {
   maxChargePowerKw: 20,
   maxDischargePowerKw: 20,
   allowGridCharging: false,
+  // Nonzero (standard EUR200/kWh, 6000 EFC, 90% DoD assumption) so every
+  // case below also validates the Battery Degradation Economics
+  // milestone's wear-cost terms, not just the pre-existing physics.
+  degradationCostPerKwh: 200 / (2 * 6000 * 0.9),
 };
 
 /**
@@ -247,5 +280,36 @@ export const SYNTHETIC_OPTIMALITY_TEST_CASES: OptimalityTestCase[] = [
     consumptionKwh: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
     priceEurPerMwh: [20, 20, 200, 200, 200, 40, 40, 40],
     battery: { ...BASE_BATTERY, capacityKwh: 1, maxChargePowerKw: 2, maxDischargePowerKw: 2 },
+  },
+  {
+    // Battery Degradation Economics milestone (Case 3 economic
+    // curtailment). NOT Zero Export - a tiny battery (capacity=1kWh,
+    // power=2kW => 0.5kWh/interval max) facing a huge PV surplus (10kWh) at
+    // a strongly negative price: the battery can absorb only a small
+    // fraction, and the remainder has nowhere economically useful to go.
+    // The optimizer must curtail the residual rather than being forced to
+    // sell it at a loss - the exact structural gap identified during
+    // validation (Chomakovtsi 2026-07-25).
+    name: "Large PV surplus at negative price exceeds battery capacity, no Zero Export - must curtail rather than sell at a loss",
+    availablePvKwh: [10, 10, 0, 0, 0, 0, 0, 0],
+    consumptionKwh: [0, 0, 0, 0, 0, 0, 0, 0],
+    priceEurPerMwh: [-50, -50, 50, 50, 50, 40, 40, 40],
+    battery: { ...BASE_BATTERY, capacityKwh: 1, maxChargePowerKw: 2, maxDischargePowerKw: 2 },
+  },
+  {
+    // Battery Degradation Economics milestone. Zero Export + PV surplus,
+    // but a flat, very low price all horizon (referencePrice = 5) - the
+    // terminal value of stored energy (~0.0049 EUR/kWh) is BELOW
+    // degradationCostPerKwh (~0.0185 EUR/kWh). Before this milestone's
+    // Case 1 rewrite, the "mandatory absorption" dominance argument would
+    // have forced full-ceiling charging regardless of value; the correct
+    // answer, and what the search must now find, is NOT to charge at all -
+    // curtailing beats storing energy that's worth less than its own wear.
+    name: "Zero Export with PV surplus, but wear cost exceeds any storage value - should NOT charge",
+    availablePvKwh: [10, 10, 10, 10, 0, 0, 0, 0],
+    consumptionKwh: [1, 1, 1, 1, 1, 1, 1, 1],
+    priceEurPerMwh: [5, 5, 5, 5, 5, 5, 5, 5],
+    isZeroExport: [true, true, true, true, false, false, false, false],
+    battery: BASE_BATTERY,
   },
 ];

@@ -3,7 +3,12 @@
 import { Suspense, useMemo, useState, useTransition } from "react";
 
 import type { AutomationLabPlant } from "@/lib/admin/automation-lab-queries";
-import type { BatteryConfig } from "@/lib/digital-twin/battery-dispatch";
+import {
+  type BatteryConfig,
+  computeDegradationCostPerKwh,
+  DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+  DEFAULT_BATTERY_LIFETIME_EFC,
+} from "@/lib/digital-twin/battery-dispatch";
 import type { ChartResolution } from "@/lib/market-price/chart-aggregation";
 
 import { DynamicBatterySocChart } from "@/components/charts/BatterySocChart.dynamic";
@@ -260,6 +265,16 @@ export function DigitalTwinForm({ plants }: Props) {
           maxChargePowerKw,
           maxDischargePowerKw,
           allowGridCharging,
+          // Battery Degradation Economics milestone - standard LiFePO4
+          // grid-scale BESS assumptions, derived from this battery's own
+          // configured DoD (MAX_SOC_PERCENT - minSocPercent) - see
+          // computeDegradationCostPerKwh's doc comment for why this is
+          // independent of capacityKwh/duration.
+          degradationCostPerKwh: computeDegradationCostPerKwh(
+            DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+            DEFAULT_BATTERY_LIFETIME_EFC,
+            MAX_SOC_PERCENT - minSocPercent,
+          ),
         }
       : null;
 
@@ -835,6 +850,29 @@ export function DigitalTwinForm({ plants }: Props) {
                       ? `${formatAsp(result.simulatedBattery.avgDischargingPriceEurPerMwh)} EUR/MWh`
                       : "—"}
                   </dd>
+                </div>
+              </dl>
+              {/*
+                Battery Degradation Economics milestone. Deliberately a
+                separate row, visually distinct from the KPI grid above -
+                Market Value and Optimization Value must never be confused
+                with "Revenue" (DigitalTwinMetrics.revenueEur, shown
+                elsewhere on this page, export-only, unchanged). Battery
+                Wear Cost is an internal optimization cost, never
+                subtracted from that Revenue figure.
+              */}
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs text-white/40">Market Value</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.marketValueEur)} EUR</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Battery Wear Cost</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.batteryWearCostEur)} EUR</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Optimization Value</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.optimizationValueEur)} EUR</dd>
                 </div>
               </dl>
             </div>

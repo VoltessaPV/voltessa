@@ -1,4 +1,10 @@
-import type { BatteryConfig, BatteryDispatchInterval } from "@/lib/digital-twin/battery-dispatch";
+import {
+  type BatteryConfig,
+  type BatteryDispatchInterval,
+  computeDegradationCostPerKwh,
+  DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+  DEFAULT_BATTERY_LIFETIME_EFC,
+} from "@/lib/digital-twin/battery-dispatch";
 import {
   buildIntervalDiagnostics,
   type ConstraintViolation,
@@ -41,6 +47,20 @@ export type ReferenceScenarioResult = {
   energyBalanceViolationCount: number;
   constraintViolationCount: number;
   sampleViolations: Array<EnergyBalanceViolation | ConstraintViolation>;
+  /**
+   * Battery Degradation Economics milestone. The DP's own internal
+   * `Σ price × gridExchange / 1000` objective component (export revenue AND
+   * avoided-import value together - see battery-dispatch.ts's module doc
+   * comment) - deliberately a DIFFERENT figure from `totalRevenueEur` above
+   * (which stays export-only, unchanged, per the existing Revenue Engine
+   * contract). `null` for the no-battery baseline, where this concept
+   * doesn't apply.
+   */
+  marketValueEur: number | null;
+  /** `degradationCostPerKwh * batteryThroughputKwh` - an estimate only, never subtracted from `totalRevenueEur` or `marketValueEur`. 0 for the no-battery baseline. */
+  batteryWearCostEur: number;
+  /** `marketValueEur - batteryWearCostEur` - the value the optimizer actually maximizes, never itself reported as "Revenue". `null` for the no-battery baseline. */
+  optimizationValueEur: number | null;
 };
 
 /**
@@ -98,6 +118,9 @@ async function runReferenceScenario(definition: ReferenceScenarioDefinition): Pr
       energyBalanceViolationCount: 0,
       constraintViolationCount: 0,
       sampleViolations: [],
+      marketValueEur: null,
+      batteryWearCostEur: 0,
+      optimizationValueEur: null,
     };
   }
 
@@ -115,6 +138,16 @@ async function runReferenceScenario(definition: ReferenceScenarioDefinition): Pr
       diagnostics.reduce((sum, d) => sum + d.batteryChargeKwh * (1 - eta) + d.batteryDischargeKwh * (1 / eta - 1), 0) * 100,
     ) / 100;
 
+  const priceByTime = new Map(priceSeries.map((p) => [p.timestamp.getTime(), p.price]));
+  const marketValueEur =
+    Math.round(
+      dispatchIntervals.reduce((sum, d) => {
+        const price = priceByTime.get(d.intervalStart.getTime()) ?? 0;
+        return sum + (price * (d.exportedKwh - d.importedKwh)) / 1000;
+      }, 0) * 100,
+    ) / 100;
+  const batteryWearCostEur = Math.round(battery.degradationCostPerKwh * outcome.battery.throughputKwh * 100) / 100;
+
   return {
     name: definition.name,
     topology: outcome.topology,
@@ -128,6 +161,9 @@ async function runReferenceScenario(definition: ReferenceScenarioDefinition): Pr
     energyBalanceViolationCount: balanceViolations.length,
     constraintViolationCount: constraintViolations.length,
     sampleViolations: [...balanceViolations.slice(0, 3), ...constraintViolations.slice(0, 3)],
+    marketValueEur,
+    batteryWearCostEur,
+    optimizationValueEur: Math.round((marketValueEur - batteryWearCostEur) * 100) / 100,
   };
 }
 
@@ -144,14 +180,24 @@ export type BatteryEngineReport = {
 
 /** Exported (ENTSO-E Price Visualization milestone) so the forward-looking price overview can build the same default battery shape as these reference scenarios, rather than a second literal. */
 export function buildDefaultBatteryConfig(plantCapacityKw: number, durationHours: number, allowGridCharging: boolean): BatteryConfig {
+  const minSocPercent = 10;
+  const maxSocPercent = 100;
   return {
     capacityKwh: plantCapacityKw * durationHours,
     roundTripEfficiencyPercent: 95.4,
-    minSocPercent: 10,
-    maxSocPercent: 100,
+    minSocPercent,
+    maxSocPercent,
     maxChargePowerKw: plantCapacityKw,
     maxDischargePowerKw: plantCapacityKw,
     allowGridCharging,
+    // Battery Degradation Economics milestone - standard LiFePO4 grid-scale
+    // BESS assumptions (EUR200/kWh CAPEX, 6000 EFC), independent of battery
+    // size by construction - see computeDegradationCostPerKwh.
+    degradationCostPerKwh: computeDegradationCostPerKwh(
+      DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
+      DEFAULT_BATTERY_LIFETIME_EFC,
+      maxSocPercent - minSocPercent,
+    ),
   };
 }
 
@@ -291,6 +337,11 @@ export function formatBatteryEngineReport(report: BatteryEngineReport): string {
     lines.push(
       `    charge=${scenario.chargeKwh} kWh, discharge=${scenario.dischargeKwh} kWh, throughput=${scenario.batteryThroughputKwh} kWh, round-trip losses=${scenario.roundTripLossesKwh} kWh`,
     );
+    if (scenario.marketValueEur !== null) {
+      lines.push(
+        `    market value=${scenario.marketValueEur} EUR, battery wear cost=${scenario.batteryWearCostEur} EUR, optimization value=${scenario.optimizationValueEur} EUR`,
+      );
+    }
     lines.push(
       `    energy balance violations=${scenario.energyBalanceViolationCount}, constraint violations=${scenario.constraintViolationCount}`,
     );
