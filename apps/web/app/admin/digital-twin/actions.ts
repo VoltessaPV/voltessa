@@ -221,19 +221,26 @@ function computeWeightedBatteryPrice(
   return totalEnergyKwh > 0 ? Math.round((weightedSum / totalEnergyKwh) * 100) / 100 : null;
 }
 
+/** ENTSO-E's native day-ahead price resolution - the same constant battery-dispatch.ts's own internal price bucketing uses (`PRICE_BUCKET_MS`), duplicated here rather than imported since that one is a private module constant. */
+const PRICE_BUCKET_MS = 15 * 60 * 1000;
+
 /**
  * Battery Degradation Economics milestone. The optimizer's own internal
  * market-value objective component - `Σ price × (exported - imported) /
  * 1000` over every interval - computed here from the same already-fetched
  * `priceSeries` and `simulatedOutcome.intervals` every other battery metric
- * on this page reads, never a second simulation.
+ * on this page reads, never a second simulation. `intervals` is native
+ * 5-minute resolution while `priceSeries` is ENTSO-E's native 15-minute
+ * grid, so each interval resolves to the 15-minute bucket it falls within -
+ * an exact-timestamp lookup would silently skip 2 of every 3 intervals.
  */
 function computeMarketValueEur(intervals: ReplayOutcome["intervals"], priceSeries: MarketPricePoint[]): number {
   const priceByTime = new Map(priceSeries.map((point) => [point.timestamp.getTime(), point.price]));
 
   let total = 0;
   for (const interval of intervals) {
-    const price = priceByTime.get(interval.intervalStart.getTime());
+    const bucket = Math.floor(interval.intervalStart.getTime() / PRICE_BUCKET_MS) * PRICE_BUCKET_MS;
+    const price = priceByTime.get(bucket);
     if (price === undefined || price === null) {
       continue;
     }
