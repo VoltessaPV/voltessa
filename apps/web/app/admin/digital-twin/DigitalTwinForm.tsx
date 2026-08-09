@@ -58,6 +58,14 @@ const BATTERY_DURATION_OPTIONS: Array<{ id: BatteryDurationPreset; label: string
   { id: "custom", label: "Custom", hours: null },
 ];
 
+/**
+ * KSTAR BluePulse BC220/BC240/BC260DE2A defaults review. The datasheet
+ * confirms 90% DoD (-> `DEFAULT_MIN_SOC_PERCENT` below) and a 0.5C charge/
+ * discharge rate (already reflected by the existing duration/plant-capacity
+ * power model, unchanged). It does NOT state a round-trip efficiency
+ * figure - 95.4% is this application's own pre-existing LiFePO4 model
+ * assumption, not a KSTAR datasheet value, and is kept unchanged as such.
+ */
 const DEFAULT_ROUND_TRIP_EFFICIENCY_PERCENT = "95.4";
 const DEFAULT_MIN_SOC_PERCENT = "10";
 /** Fixed at 100 per `BatteryConfig`'s own spec - not a user input, matching `battery-dispatch.ts`'s documented V1 assumption. */
@@ -94,9 +102,14 @@ function formatPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
-/** A plain (non-difference) percentage - no leading sign - for "Lifetime used: 12.3%" style values. */
+/**
+ * A plain (non-difference) percentage - no leading sign - for "Lifetime
+ * used" style values. Two decimals (not one) so a small-but-real cycle
+ * count (e.g. 1.07 / 6000 EFC = 0.0178%) still displays as a genuine
+ * nonzero figure ("0.02%") rather than rounding away to "0.0%".
+ */
 function formatPercentPlain(value: number): string {
-  return `${value.toFixed(1)}%`;
+  return `${value.toFixed(2)}%`;
 }
 
 /** Cycle counts (EFC) - always shown to 2 decimals, matching money's own precision convention, never a raw float. */
@@ -921,47 +934,48 @@ export function DigitalTwinForm({ plants }: Props) {
                 </dd>
               </div>
             </dl>
-
-            {/* Row 3 - Price / battery utilization */}
-            <p className="mt-6 text-xs font-medium uppercase tracking-wider text-white/40">
-              Price &amp; battery utilization
-            </p>
-            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-4">
-              <div>
-                <dt className="text-xs text-white/40">Average selling price — Current</dt>
-                <dd className="text-white/80">
-                  {investmentSummary.currentAverageSellingPriceEurPerMwh !== null
-                    ? `${formatAsp(investmentSummary.currentAverageSellingPriceEurPerMwh)} EUR/MWh`
-                    : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-white/40">Average selling price — Simulated</dt>
-                <dd className="text-white/80">
-                  {investmentSummary.averageSellingPriceEurPerMwh !== null
-                    ? `${formatAsp(investmentSummary.averageSellingPriceEurPerMwh)} EUR/MWh`
-                    : "—"}
-                </dd>
-              </div>
-              {investmentSummary.batteryThroughputKwh !== null && (
-                <div>
-                  <dt className="text-xs text-white/40">Battery throughput</dt>
-                  <dd className="text-white/80">{formatKwh(investmentSummary.batteryThroughputKwh)} kWh</dd>
-                </div>
-              )}
-              {investmentSummary.batteryLossesKwh !== null && (
-                <div>
-                  <dt className="text-xs text-white/40">Battery losses</dt>
-                  <dd className="text-white/80">{formatKwh(investmentSummary.batteryLossesKwh)} kWh</dd>
-                </div>
-              )}
-            </dl>
           </section>
 
           {batteryLifetime && (
             <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
               <h3 className="text-sm font-semibold text-white">Battery lifetime &amp; revenue</h3>
-              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
+
+              {/* Battery performance - Average Selling Price (Current/Simulated), throughput, and losses moved here from Investment Summary. */}
+              <p className="mt-4 text-xs font-medium uppercase tracking-wider text-white/40">Battery performance</p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs text-white/40">Average selling price — Current</dt>
+                  <dd className="text-white/80">
+                    {investmentSummary.currentAverageSellingPriceEurPerMwh !== null
+                      ? `${formatAsp(investmentSummary.currentAverageSellingPriceEurPerMwh)} EUR/MWh`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Average selling price — Simulated</dt>
+                  <dd className="text-white/80">
+                    {investmentSummary.averageSellingPriceEurPerMwh !== null
+                      ? `${formatAsp(investmentSummary.averageSellingPriceEurPerMwh)} EUR/MWh`
+                      : "—"}
+                  </dd>
+                </div>
+                {investmentSummary.batteryThroughputKwh !== null && (
+                  <div>
+                    <dt className="text-xs text-white/40">Battery throughput</dt>
+                    <dd className="text-white/80">{formatKwh(investmentSummary.batteryThroughputKwh)} kWh</dd>
+                  </div>
+                )}
+                {investmentSummary.batteryLossesKwh !== null && (
+                  <div>
+                    <dt className="text-xs text-white/40">Battery losses</dt>
+                    <dd className="text-white/80">{formatKwh(investmentSummary.batteryLossesKwh)} kWh</dd>
+                  </div>
+                )}
+              </dl>
+
+              {/* Battery lifetime */}
+              <p className="mt-6 text-xs font-medium uppercase tracking-wider text-white/40">Battery lifetime</p>
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
                 <div>
                   <dt className="text-xs text-white/40">Battery lifetime</dt>
                   <dd className="text-white/80">{formatEfc(batteryLifetime.batteryLifetimeEfc)} EFC</dd>
@@ -980,7 +994,7 @@ export function DigitalTwinForm({ plants }: Props) {
                 </div>
               </dl>
 
-              <p className="mt-4 text-sm text-white/70">
+              <p className="mt-3 text-sm text-white/70">
                 {batteryLifetime.remainingDays !== null ? (
                   <>
                     Estimated remaining life at simulated cycling rate:{" "}
@@ -991,7 +1005,9 @@ export function DigitalTwinForm({ plants }: Props) {
                 )}
               </p>
 
-              <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm sm:grid-cols-2">
+              {/* Battery revenue */}
+              <p className="mt-6 text-xs font-medium uppercase tracking-wider text-white/40">Battery revenue</p>
+              <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
                 <div>
                   <dt className="text-xs text-white/40">Annual additional revenue</dt>
                   <dd className="text-white/80">
