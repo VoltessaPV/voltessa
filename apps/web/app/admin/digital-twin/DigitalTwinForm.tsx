@@ -852,6 +852,29 @@ export function DigitalTwinForm({ plants }: Props) {
                   </dd>
                 </div>
               </dl>
+              {/*
+                Battery Degradation Economics milestone. Deliberately a
+                separate row, visually distinct from the KPI grid above -
+                Market Value and Optimization Value must never be confused
+                with "Revenue" (DigitalTwinMetrics.revenueEur, shown
+                elsewhere on this page, export-only, unchanged). Battery
+                Wear Cost is an internal optimization cost, never
+                subtracted from that Revenue figure.
+              */}
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm sm:grid-cols-3">
+                <div>
+                  <dt className="text-xs text-white/40">Market Value</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.marketValueEur)} EUR</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Battery Wear Cost</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.batteryWearCostEur)} EUR</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Optimization Value</dt>
+                  <dd className="text-white/80">{formatEur(result.simulatedBattery.optimizationValueEur)} EUR</dd>
+                </div>
+              </dl>
             </div>
           )}
 
