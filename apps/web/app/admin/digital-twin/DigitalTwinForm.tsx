@@ -49,11 +49,12 @@ const PERIOD_OPTIONS: Array<{ id: DigitalTwinPeriod; label: string }> = [
 const SLIDER_MULTIPLIER_MAX = 5;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-type BatteryDurationPreset = "2h" | "4h" | "custom";
+type BatteryDurationPreset = "2h" | "4h" | "6h" | "custom";
 
 const BATTERY_DURATION_OPTIONS: Array<{ id: BatteryDurationPreset; label: string; hours: number | null }> = [
   { id: "2h", label: "2-hour", hours: 2 },
   { id: "4h", label: "4-hour", hours: 4 },
+  { id: "6h", label: "6-hour", hours: 6 },
   { id: "custom", label: "Custom", hours: null },
 ];
 
@@ -91,6 +92,39 @@ function formatSigned(value: number, format: (v: number) => string): string {
 
 function formatPercent(value: number): string {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+/** A plain (non-difference) percentage - no leading sign - for "Lifetime used: 12.3%" style values. */
+function formatPercentPlain(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+/** Cycle counts (EFC) - always shown to 2 decimals, matching money's own precision convention, never a raw float. */
+function formatEfc(value: number): string {
+  return value.toLocaleString("en-US", { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+}
+
+/**
+ * Investor Lifetime Economics milestone. A simple, clearly-approximate
+ * calendar breakdown (365-day year, 30-day month) for "estimated remaining
+ * life at simulated cycling rate" - a projection, not a manufacturer
+ * warranty, so exact calendar-day precision isn't the point.
+ */
+function daysToYearsMonthsDays(totalDays: number): { years: number; months: number; days: number } {
+  const years = Math.floor(totalDays / 365);
+  const afterYears = totalDays - years * 365;
+  const months = Math.floor(afterYears / 30);
+  const days = Math.round(afterYears - months * 30);
+  return { years, months, days };
+}
+
+function formatRemainingLife(totalDays: number): string {
+  const { years, months, days } = daysToYearsMonthsDays(totalDays);
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} year${years === 1 ? "" : "s"}`);
+  if (months > 0) parts.push(`${months} month${months === 1 ? "" : "s"}`);
+  if (days > 0 || parts.length === 0) parts.push(`${days} day${days === 1 ? "" : "s"}`);
+  return parts.join(", ");
 }
 
 function diffColorClass(diff: number): string {
@@ -231,6 +265,11 @@ export function DigitalTwinForm({ plants }: Props) {
   const [maxChargePowerInput, setMaxChargePowerInput] = useState("");
   const [maxDischargePowerInput, setMaxDischargePowerInput] = useState("");
   const [allowGridCharging, setAllowGridCharging] = useState(false);
+  // Investor Lifetime Economics milestone - the one new battery parameter:
+  // the EFC lifetime assumption behind both `degradationCostPerKwh` (already
+  // computed from it, unchanged) and the investor-facing cycles-used/
+  // lifetime-used%/remaining-life reporting below.
+  const [batteryLifetimeEfcInput, setBatteryLifetimeEfcInput] = useState(DEFAULT_BATTERY_LIFETIME_EFC.toString());
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   const durationHours = BATTERY_DURATION_OPTIONS.find((option) => option.id === durationPreset)?.hours ?? null;
@@ -242,6 +281,7 @@ export function DigitalTwinForm({ plants }: Props) {
   const maxDischargePowerKw = maxDischargePowerInput !== "" ? Number(maxDischargePowerInput) : newCapacityKw;
   const roundTripEfficiencyPercent = Number(roundTripEfficiencyInput);
   const minSocPercent = Number(minSocInput);
+  const batteryLifetimeEfc = Number(batteryLifetimeEfcInput);
 
   const batteryConfig: BatteryConfig | null =
     batteryEnabled &&
@@ -258,7 +298,9 @@ export function DigitalTwinForm({ plants }: Props) {
     Number.isFinite(maxDischargePowerKw) &&
     maxDischargePowerKw > 0 &&
     Number.isFinite(newCapacityKw) &&
-    newCapacityKw > 0
+    newCapacityKw > 0 &&
+    Number.isFinite(batteryLifetimeEfc) &&
+    batteryLifetimeEfc > 0
       ? {
           capacityKwh: batteryCapacityKwh,
           roundTripEfficiencyPercent,
@@ -275,12 +317,15 @@ export function DigitalTwinForm({ plants }: Props) {
           exportPowerLimitKw: newCapacityKw,
           // Battery Degradation Economics milestone - standard LiFePO4
           // grid-scale BESS assumptions, derived from this battery's own
-          // configured DoD (MAX_SOC_PERCENT - minSocPercent) - see
-          // computeDegradationCostPerKwh's doc comment for why this is
-          // independent of capacityKwh/duration.
+          // configured DoD (MAX_SOC_PERCENT - minSocPercent). Investor
+          // Lifetime Economics milestone: lifetime is now the user-editable
+          // `batteryLifetimeEfc` (default `DEFAULT_BATTERY_LIFETIME_EFC`)
+          // rather than the hardcoded constant - see
+          // computeDegradationCostPerKwh's doc comment for why this
+          // calculation is independent of capacityKwh/duration.
           degradationCostPerKwh: computeDegradationCostPerKwh(
             DEFAULT_BATTERY_CAPEX_EUR_PER_KWH,
-            DEFAULT_BATTERY_LIFETIME_EFC,
+            batteryLifetimeEfc,
             MAX_SOC_PERCENT - minSocPercent,
           ),
         }
@@ -297,6 +342,7 @@ export function DigitalTwinForm({ plants }: Props) {
     setMaxChargePowerInput(plantCapacityKw !== null ? plantCapacityKw.toString() : "");
     setMaxDischargePowerInput(plantCapacityKw !== null ? plantCapacityKw.toString() : "");
     setAllowGridCharging(false);
+    setBatteryLifetimeEfcInput(DEFAULT_BATTERY_LIFETIME_EFC.toString());
   }
 
   function handlePlantChange(id: string) {
@@ -345,6 +391,7 @@ export function DigitalTwinForm({ plants }: Props) {
         period,
         newCapacityKw,
         batteryConfig,
+        batteryLifetimeEfc,
         customStart || undefined,
         customEnd || undefined,
       );
@@ -399,17 +446,70 @@ export function DigitalTwinForm({ plants }: Props) {
       newCapacityKw: result.newCapacityKw,
       capacityIncreaseKw,
       capacityIncreasePercent,
+      // Investor Lifetime Economics milestone - Row 1 (System Size). This
+      // system has no concept of a real, already-installed battery anywhere
+      // (batteries are hypothetical scenarios only, never a `Plant` field),
+      // so "Battery increase" is always exactly the simulated battery's own
+      // capacity - never a difference against a real baseline.
+      simulatedBatteryCapacityKwh: result.simulatedBattery?.capacityKwh ?? null,
+      batteryIncreaseKwh: result.simulatedBattery?.capacityKwh ?? null,
       additionalProductionKwh,
       additionalExportKwh,
       importReductionKwh,
       additionalRevenueEur,
       revenueIncreasePercent,
+      currentAverageSellingPriceEurPerMwh: result.current.averageSellingPriceEurPerMwh,
       averageSellingPriceEurPerMwh: result.simulated.averageSellingPriceEurPerMwh,
       // Battery Digital Twin UI milestone - straight from `ReplayOutcome.battery` via `simulatedBattery`, null when the battery scenario is disabled.
       batteryThroughputKwh: result.simulatedBattery?.throughputKwh ?? null,
       batteryLossesKwh: result.simulatedBattery?.batteryLossesKwh ?? null,
     };
   }, [result]);
+
+  /**
+   * Investor Lifetime Economics milestone. Cycle-life and lifetime-revenue
+   * projection for the investor-facing "Battery lifetime & revenue" card -
+   * pure arithmetic on already-simulated output
+   * (`result.simulatedBattery.throughputKwh`/`usableCapacityKwh`/
+   * `batteryLifetimeEfc`, `investmentSummary.additionalRevenueEur`), never a
+   * second simulation. EFC counting matches `computeDegradationCostPerKwh`'s
+   * own definition exactly: one equivalent full cycle = `2 *
+   * usableCapacityKwh` kWh of throughput. Annual/lifetime revenue are always
+   * GROSS of Battery Wear Cost/CAPEX - the Investor Accounting Rule: those
+   * figures are reported separately (cycles used/lifetime used %/remaining
+   * cycles here, Battery Wear Cost in the Battery KPIs diagnostic row) and
+   * never subtracted from revenue.
+   */
+  const batteryLifetime = useMemo(() => {
+    if (!result?.ok || !result.simulatedBattery || !investmentSummary) return null;
+
+    const { throughputKwh, usableCapacityKwh, batteryLifetimeEfc: lifetimeEfc } = result.simulatedBattery;
+    const cyclesUsed = usableCapacityKwh > 0 ? throughputKwh / (2 * usableCapacityKwh) : 0;
+    const lifetimeUsedPercent = lifetimeEfc > 0 ? (cyclesUsed / lifetimeEfc) * 100 : 0;
+    const remainingCycles = Math.max(0, lifetimeEfc - cyclesUsed);
+
+    const simulationDays = periodDayCount(result.rangeStart, result.rangeEnd);
+    // Guard against divide-by-zero: no cycling this run means no cycling
+    // rate to project a remaining life from - an honest "can't project"
+    // state, never an Infinity/NaN.
+    const averageEfcPerDay = cyclesUsed > 0 ? cyclesUsed / simulationDays : 0;
+    const remainingDays = averageEfcPerDay > 0 ? remainingCycles / averageEfcPerDay : null;
+
+    const { additionalRevenueEur } = investmentSummary;
+    const annualRevenueEur = additionalRevenueEur !== null ? (additionalRevenueEur / simulationDays) * 365 : null;
+    const lifetimeRevenueEur =
+      annualRevenueEur !== null && remainingDays !== null ? annualRevenueEur * (remainingDays / 365) : null;
+
+    return {
+      batteryLifetimeEfc: lifetimeEfc,
+      cyclesUsed,
+      lifetimeUsedPercent,
+      remainingCycles,
+      remainingDays,
+      annualRevenueEur,
+      lifetimeRevenueEur,
+    };
+  }, [result, investmentSummary]);
 
   /**
    * Shared chart axes - Current and Simulated must always render on
@@ -697,6 +797,18 @@ export function DigitalTwinForm({ plants }: Props) {
               />
               Allow Grid Charging
             </label>
+
+            <label className="flex flex-col gap-1 text-sm text-white/60">
+              Battery lifetime (EFC)
+              <input
+                type="number"
+                min={0}
+                step="1"
+                className={inputClassName}
+                value={batteryLifetimeEfcInput}
+                onChange={(event) => setBatteryLifetimeEfcInput(event.target.value)}
+              />
+            </label>
           </div>
         )}
       </section>
@@ -718,7 +830,10 @@ export function DigitalTwinForm({ plants }: Props) {
 
           <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
             <h3 className="text-sm font-semibold text-white">Investment summary</h3>
-            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+
+            {/* Row 1 - System size */}
+            <p className="mt-4 text-xs font-medium uppercase tracking-wider text-white/40">System size</p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
               <div>
                 <dt className="text-xs text-white/40">Current installed capacity</dt>
                 <dd className="text-white/80">{formatKw(investmentSummary.currentCapacityKw)} kWp</dd>
@@ -734,6 +849,29 @@ export function DigitalTwinForm({ plants }: Props) {
                   {formatPercent(investmentSummary.capacityIncreasePercent)})
                 </dd>
               </div>
+              <div>
+                <dt className="text-xs text-white/40">Simulated battery</dt>
+                <dd className="text-white/80">
+                  {investmentSummary.simulatedBatteryCapacityKwh !== null
+                    ? `${formatKwh(investmentSummary.simulatedBatteryCapacityKwh)} kWh`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Battery increase</dt>
+                <dd className="text-white/80">
+                  {investmentSummary.batteryIncreaseKwh !== null
+                    ? `${formatSigned(investmentSummary.batteryIncreaseKwh, formatKwh)} kWh`
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
+
+            {/* Row 2 - Production / export / revenue impact */}
+            <p className="mt-6 text-xs font-medium uppercase tracking-wider text-white/40">
+              Production, export &amp; revenue impact
+            </p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
               <div>
                 <dt className="text-xs text-white/40">Additional production</dt>
                 <dd className={diffColorClass(investmentSummary.additionalProductionKwh)}>
@@ -782,8 +920,23 @@ export function DigitalTwinForm({ plants }: Props) {
                     : "—"}
                 </dd>
               </div>
+            </dl>
+
+            {/* Row 3 - Price / battery utilization */}
+            <p className="mt-6 text-xs font-medium uppercase tracking-wider text-white/40">
+              Price &amp; battery utilization
+            </p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-4">
               <div>
-                <dt className="text-xs text-white/40">Average Selling Price</dt>
+                <dt className="text-xs text-white/40">Average selling price — Current</dt>
+                <dd className="text-white/80">
+                  {investmentSummary.currentAverageSellingPriceEurPerMwh !== null
+                    ? `${formatAsp(investmentSummary.currentAverageSellingPriceEurPerMwh)} EUR/MWh`
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-white/40">Average selling price — Simulated</dt>
                 <dd className="text-white/80">
                   {investmentSummary.averageSellingPriceEurPerMwh !== null
                     ? `${formatAsp(investmentSummary.averageSellingPriceEurPerMwh)} EUR/MWh`
@@ -804,6 +957,63 @@ export function DigitalTwinForm({ plants }: Props) {
               )}
             </dl>
           </section>
+
+          {batteryLifetime && (
+            <section className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <h3 className="text-sm font-semibold text-white">Battery lifetime &amp; revenue</h3>
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-xs text-white/40">Battery lifetime</dt>
+                  <dd className="text-white/80">{formatEfc(batteryLifetime.batteryLifetimeEfc)} EFC</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Cycles used</dt>
+                  <dd className="text-white/80">{formatEfc(batteryLifetime.cyclesUsed)} EFC</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Lifetime used</dt>
+                  <dd className="text-white/80">{formatPercentPlain(batteryLifetime.lifetimeUsedPercent)}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Cycles remaining</dt>
+                  <dd className="text-white/80">{formatEfc(batteryLifetime.remainingCycles)} EFC</dd>
+                </div>
+              </dl>
+
+              <p className="mt-4 text-sm text-white/70">
+                {batteryLifetime.remainingDays !== null ? (
+                  <>
+                    Estimated remaining life at simulated cycling rate:{" "}
+                    <span className="font-medium text-white">{formatRemainingLife(batteryLifetime.remainingDays)}</span>
+                  </>
+                ) : (
+                  "No battery cycling observed in this simulation - remaining life cannot be projected."
+                )}
+              </p>
+
+              <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-3 border-t border-white/10 pt-4 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-xs text-white/40">Annual additional revenue</dt>
+                  <dd className="text-white/80">
+                    {batteryLifetime.annualRevenueEur !== null
+                      ? `${formatEur(batteryLifetime.annualRevenueEur)} EUR/year`
+                      : "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-white/40">Estimated lifetime additional revenue</dt>
+                  <dd className="text-white/80">
+                    {batteryLifetime.lifetimeRevenueEur !== null
+                      ? `${formatEur(batteryLifetime.lifetimeRevenueEur)} EUR`
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-xs text-white/40">
+                At the simulated operating/cycling rate - a projection, not a manufacturer warranty.
+              </p>
+            </section>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             {metricCards.map(({ metric, rows }) => (

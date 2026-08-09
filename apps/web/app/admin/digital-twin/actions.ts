@@ -99,6 +99,24 @@ export type DigitalTwinChartSeries = {
  */
 export type DigitalTwinBatteryMetrics = {
   capacityKwh: number;
+  /**
+   * Investor Lifetime Economics milestone. DoD-limited usable energy range -
+   * `capacityKwh * (maxSocPercent - minSocPercent) / 100` - the same
+   * quantity `computeDegradationCostPerKwh`'s own EFC definition (one
+   * equivalent full cycle = `2 * usableCapacityKwh` kWh of throughput) is
+   * built on. Echoed back from the config actually used for this run
+   * (never recomputed from live form state) so cycle-life reporting always
+   * matches what was actually simulated.
+   */
+  usableCapacityKwh: number;
+  /**
+   * Investor Lifetime Economics milestone. The battery lifetime (equivalent
+   * full cycles) assumption this run's `degradationCostPerKwh` was actually
+   * derived from - echoed back for the same reason as `usableCapacityKwh`
+   * above, so the UI's cycles-used/lifetime-used%/remaining-life reporting
+   * never drifts from the value the optimizer itself was configured with.
+   */
+  batteryLifetimeEfc: number;
   chargedEnergyKwh: number;
   dischargedEnergyKwh: number;
   throughputKwh: number;
@@ -428,6 +446,14 @@ export async function runDigitalTwinSimulation(
   period: DigitalTwinPeriod,
   newCapacityKw: number,
   battery: BatteryConfig | null,
+  /**
+   * Investor Lifetime Economics milestone. The battery lifetime (EFC)
+   * assumption the caller already used to derive `battery.degradationCostPerKwh`
+   * - passed through separately (not a `BatteryConfig` field) purely so it
+   * can be echoed back in `DigitalTwinBatteryMetrics.batteryLifetimeEfc` for
+   * cycle-life reporting. Ignored when `battery` is null.
+   */
+  batteryLifetimeEfc: number,
   customStart?: string,
   customEnd?: string,
 ): Promise<DigitalTwinResult> {
@@ -494,8 +520,12 @@ export async function runDigitalTwinSimulation(
         Math.round(simulatedOutcome.intervals.reduce((sum, i) => sum + (i.mandatoryChargeKwh ?? 0), 0) * 100) / 100;
       const gridChargedEnergyKwh =
         Math.round(simulatedOutcome.intervals.reduce((sum, i) => sum + gridFinancedChargeKwh(i), 0) * 100) / 100;
+      const usableCapacityKwh =
+        Math.round(battery.capacityKwh * ((battery.maxSocPercent - battery.minSocPercent) / 100) * 100) / 100;
       return {
         capacityKwh: battery.capacityKwh,
+        usableCapacityKwh,
+        batteryLifetimeEfc,
         chargedEnergyKwh: simulatedOutcome.battery.chargedEnergyKwh,
         dischargedEnergyKwh: simulatedOutcome.battery.dischargedEnergyKwh,
         throughputKwh: simulatedOutcome.battery.throughputKwh,
