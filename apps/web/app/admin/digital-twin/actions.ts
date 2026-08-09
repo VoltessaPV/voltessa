@@ -52,15 +52,35 @@ export type DigitalTwinChartSeries = {
  * echoed back, not a simulation output - `ReplayOutcome` has no notion of
  * "capacity", only what the battery actually did).
  *
- * `avgChargingPriceEurPerMwh`/`avgDischargingPriceEurPerMwh` (Battery Price
- * KPIs milestone) are the one exception to "every field is a direct
- * ReplayOutcome read" - they're the energy-weighted average ENTSO-E market
- * price over exactly the intervals where the battery charged/discharged,
- * computed by `computeWeightedBatteryPrice` below straight from
+ * PV Charging Economics fix. PV energy has zero acquisition cost by
+ * definition - a battery charging from PV surplus never "bought" that
+ * energy at the market price, so a single market-price-weighted average
+ * over every charging interval (the pre-fix `avgChargingPriceEurPerMwh`)
+ * conflated PV's real €0/MWh acquisition cost with the market price that
+ * happened to prevail while charging, which is only ever an opportunity
+ * cost (what exporting instead would have earned), never a purchase price.
+ * Split into two fields instead, using `mandatoryChargeKwh` -
+ * `battery-dispatch.ts`'s own first-class PV-financed-portion-of-charge
+ * field, generalized by the same fix to cover every interval, not only
+ * Zero Export - to separate PV-financed from grid-financed charging:
+ *
+ * - `avgPvChargingAcquisitionPriceEurPerMwh`: always exactly 0 whenever any
+ *   PV-financed charging occurred this horizon (PV has no acquisition
+ *   cost), `null` when none did.
+ * - `avgGridChargingPriceEurPerMwh`: the energy-weighted average market
+ *   price paid for the grid-financed portion of charging only (only
+ *   possible when `allowGridCharging` is true) - `null` when no
+ *   grid-financed charging occurred.
+ *
+ * `avgDischargingPriceEurPerMwh` is unchanged in meaning - the
+ * energy-weighted average market price over discharging intervals, since
+ * discharge always either earns that price (export) or avoids paying it
+ * (offset import), a real economic quantity either way. All three are
+ * computed by `computeWeightedPrice` below straight from
  * `simulatedOutcome.intervals` and the same `priceSeries` this file already
  * fetches - never from `revenue`/`intervalRevenueEur` (which nets
- * export/import), per that milestone's explicit "use market prices
- * directly" requirement. `null` when no charging/discharging occurred.
+ * export/import), per the Battery Price KPIs milestone's original "use
+ * market prices directly" requirement.
  */
 export type DigitalTwinBatteryMetrics = {
   capacityKwh: number;
@@ -70,7 +90,12 @@ export type DigitalTwinBatteryMetrics = {
   batteryLossesKwh: number;
   peakSocKwh: number;
   finalSocKwh: number;
-  avgChargingPriceEurPerMwh: number | null;
+  /** PV-financed portion of `chargedEnergyKwh` - `Σ mandatoryChargeKwh`. Zero acquisition cost by definition. */
+  pvChargedEnergyKwh: number;
+  /** Grid-financed portion of `chargedEnergyKwh` (`chargedEnergyKwh - pvChargedEnergyKwh`) - only nonzero when `allowGridCharging` is true. */
+  gridChargedEnergyKwh: number;
+  avgPvChargingAcquisitionPriceEurPerMwh: number | null;
+  avgGridChargingPriceEurPerMwh: number | null;
   avgDischargingPriceEurPerMwh: number | null;
   /**
    * Battery Degradation Economics milestone. The optimizer's own internal
@@ -185,18 +210,26 @@ function toMetrics(outcome: ReplayOutcome): DigitalTwinMetrics {
   };
 }
 
+/** ENTSO-E's native day-ahead price resolution - the same constant battery-dispatch.ts's own internal price bucketing uses (`PRICE_BUCKET_MS`), duplicated here rather than imported since that one is a private module constant. */
+const PRICE_BUCKET_MS = 15 * 60 * 1000;
+
 /**
- * Battery Price KPIs milestone. Energy-weighted average market price over
- * exactly the intervals where `key` (charge or discharge) was positive and
- * the market price is known - `Σ(energy x price) / Σ(energy)`, per the
- * milestone's explicit formula. Reads `priceSeries` (the same raw ENTSO-E
- * series this file already fetches) directly, never `revenue`/
- * `intervalRevenueEur` - this must never be derived from realized revenue.
+ * Battery Price KPIs milestone, generalized by the PV Charging Economics
+ * fix. Energy-weighted average market price - `Σ(energy x price) /
+ * Σ(energy)` - over exactly the intervals where `energyOf` returns a
+ * positive amount and the market price is known. Reads `priceSeries` (the
+ * same raw ENTSO-E series this file already fetches) directly, never
+ * `revenue`/`intervalRevenueEur` - this must never be derived from realized
+ * revenue. `intervals` is native 5-minute resolution while `priceSeries` is
+ * ENTSO-E's native 15-minute grid (same bucketing bug and fix as
+ * `computeMarketValueEur` below - an exact-timestamp lookup here originally
+ * skipped 2 of every 3 intervals, understating both charging and
+ * discharging price averages).
  */
-function computeWeightedBatteryPrice(
+function computeWeightedPrice(
   intervals: ReplayOutcome["intervals"],
   priceSeries: MarketPricePoint[],
-  key: "chargeKwh" | "dischargeKwh",
+  energyOf: (interval: ReplayOutcome["intervals"][number]) => number,
 ): number | null {
   const priceByTime = new Map(priceSeries.map((point) => [point.timestamp.getTime(), point.price]));
 
@@ -204,12 +237,13 @@ function computeWeightedBatteryPrice(
   let totalEnergyKwh = 0;
 
   for (const interval of intervals) {
-    const energyKwh = interval[key];
-    if (energyKwh === null || energyKwh <= 0) {
+    const energyKwh = energyOf(interval);
+    if (!(energyKwh > 0)) {
       continue;
     }
 
-    const price = priceByTime.get(interval.intervalStart.getTime());
+    const bucket = Math.floor(interval.intervalStart.getTime() / PRICE_BUCKET_MS) * PRICE_BUCKET_MS;
+    const price = priceByTime.get(bucket);
     if (price === undefined || price === null) {
       continue;
     }
@@ -221,8 +255,25 @@ function computeWeightedBatteryPrice(
   return totalEnergyKwh > 0 ? Math.round((weightedSum / totalEnergyKwh) * 100) / 100 : null;
 }
 
-/** ENTSO-E's native day-ahead price resolution - the same constant battery-dispatch.ts's own internal price bucketing uses (`PRICE_BUCKET_MS`), duplicated here rather than imported since that one is a private module constant. */
-const PRICE_BUCKET_MS = 15 * 60 * 1000;
+/** Matches `battery-diagnostics.ts`'s own `TOLERANCE_KWH` - floating-point residue from the continuous forward reconstruction can leave a technically-nonzero `mandatoryChargeKwh` (e.g. 0.01 kWh) that rounds to a displayed "0.0 kWh" total; without this tolerance, that residue would make `computeAvgPvChargingAcquisitionPrice` report 0 EUR/MWh even though no PV-financed charging is actually visible anywhere else on the page. */
+const TOLERANCE_KWH = 0.02;
+
+/**
+ * PV Charging Economics fix. PV energy has zero acquisition cost by
+ * construction (not a computed average - there is nothing to weight): this
+ * returns exactly 0 whenever any PV-financed charging (`mandatoryChargeKwh`,
+ * `battery-dispatch.ts` - generalized to every interval type by the same
+ * fix) occurred this horizon, and `null` when none did (nothing to report).
+ */
+function computeAvgPvChargingAcquisitionPrice(intervals: ReplayOutcome["intervals"]): number | null {
+  const anyPvFinancedCharge = intervals.some((interval) => (interval.mandatoryChargeKwh ?? 0) > TOLERANCE_KWH);
+  return anyPvFinancedCharge ? 0 : null;
+}
+
+/** Grid-financed portion of an interval's `chargeKwh` - the complement of the PV-financed portion (`mandatoryChargeKwh`), only ever nonzero when `allowGridCharging` was true. */
+function gridFinancedChargeKwh(interval: ReplayOutcome["intervals"][number]): number {
+  return Math.max(0, (interval.chargeKwh ?? 0) - (interval.mandatoryChargeKwh ?? 0));
+}
 
 /**
  * Battery Degradation Economics milestone. The optimizer's own internal
@@ -365,6 +416,10 @@ export async function runDigitalTwinSimulation(
       }
       const marketValueEur = computeMarketValueEur(simulatedOutcome.intervals, priceSeries);
       const batteryWearCostEur = Math.round(battery.degradationCostPerKwh * simulatedOutcome.battery.throughputKwh * 100) / 100;
+      const pvChargedEnergyKwh =
+        Math.round(simulatedOutcome.intervals.reduce((sum, i) => sum + (i.mandatoryChargeKwh ?? 0), 0) * 100) / 100;
+      const gridChargedEnergyKwh =
+        Math.round(simulatedOutcome.intervals.reduce((sum, i) => sum + gridFinancedChargeKwh(i), 0) * 100) / 100;
       return {
         capacityKwh: battery.capacityKwh,
         chargedEnergyKwh: simulatedOutcome.battery.chargedEnergyKwh,
@@ -373,8 +428,11 @@ export async function runDigitalTwinSimulation(
         batteryLossesKwh: simulatedOutcome.battery.batteryLossesKwh,
         peakSocKwh: simulatedOutcome.battery.peakSocKwh,
         finalSocKwh: simulatedOutcome.battery.finalSocKwh,
-        avgChargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "chargeKwh"),
-        avgDischargingPriceEurPerMwh: computeWeightedBatteryPrice(simulatedOutcome.intervals, priceSeries, "dischargeKwh"),
+        pvChargedEnergyKwh,
+        gridChargedEnergyKwh,
+        avgPvChargingAcquisitionPriceEurPerMwh: computeAvgPvChargingAcquisitionPrice(simulatedOutcome.intervals),
+        avgGridChargingPriceEurPerMwh: computeWeightedPrice(simulatedOutcome.intervals, priceSeries, gridFinancedChargeKwh),
+        avgDischargingPriceEurPerMwh: computeWeightedPrice(simulatedOutcome.intervals, priceSeries, (i) => i.dischargeKwh ?? 0),
         marketValueEur,
         batteryWearCostEur,
         optimizationValueEur: Math.round((marketValueEur - batteryWearCostEur) * 100) / 100,
@@ -389,12 +447,18 @@ export async function runDigitalTwinSimulation(
         )
       : [];
 
+    // Available-PV visibility fix. The same reconstructed Available PV
+    // `runBatteryDispatch` dispatched against - never historical
+    // export/Zero-Export - aggregated onto the exact same bucket grid as
+    // SOC/charge/discharge so the chart can render it as its own series
+    // (gray bars) on one shared time axis.
     const simulatedFlowChart: BatteryFlowPoint[] = simulatedBattery
       ? aggregateFlowSeriesForChart(
           simulatedOutcome.intervals.map((interval) => ({
             intervalStart: interval.intervalStart,
             chargeKwh: interval.chargeKwh,
             dischargeKwh: interval.dischargeKwh,
+            availablePvKwh: interval.availablePvKwh,
           })),
           chartResolution,
           BULGARIA_TIMEZONE,

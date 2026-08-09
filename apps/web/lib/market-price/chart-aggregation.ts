@@ -182,15 +182,24 @@ export type BatteryFlowPoint = {
   intervalStart: Date;
   chargeKwh: number | null;
   dischargeKwh: number | null;
+  /**
+   * Available-PV visibility fix. Reconstructed Available PV for this
+   * bucket - the same first-class quantity `runBatteryDispatch` dispatches
+   * against (`battery-dispatch.ts`), never historical export/Zero-Export.
+   * An energy flow, summed over the bucket exactly like `chargeKwh`/
+   * `dischargeKwh` - optional so existing callers building a
+   * `BatteryFlowPoint` without it (none currently) keep compiling.
+   */
+  availablePvKwh?: number | null;
 };
 
 /**
- * Battery SOC & Market Price visualization. `chargeKwh`/`dischargeKwh` are
- * energy flows, not state - unlike SOC, the correct aggregation is a sum
- * over the bucket, identical in shape to `aggregateSettlementSeriesForChart`
- * (export/import) - just a different pair of fields off the same native
- * dispatch intervals. `resolution: "native"` returns `points` unchanged,
- * matching every other aggregator in this file.
+ * Battery SOC & Market Price visualization. `chargeKwh`/`dischargeKwh`/
+ * `availablePvKwh` are energy flows, not state - unlike SOC, the correct
+ * aggregation is a sum over the bucket, identical in shape to
+ * `aggregateSettlementSeriesForChart` (export/import) - just different
+ * fields off the same native dispatch intervals. `resolution: "native"`
+ * returns `points` unchanged, matching every other aggregator in this file.
  */
 export function aggregateFlowSeriesForChart(
   points: BatteryFlowPoint[],
@@ -201,19 +210,25 @@ export function aggregateFlowSeriesForChart(
     return points;
   }
 
-  const buckets = new Map<number, { chargeKwh: number | null; dischargeKwh: number | null }>();
+  const buckets = new Map<number, { chargeKwh: number | null; dischargeKwh: number | null; availablePvKwh: number | null }>();
 
   for (const point of points) {
     const bucket = bucketStart(point.intervalStart, resolution, timeZone);
-    const existing = buckets.get(bucket) ?? { chargeKwh: null, dischargeKwh: null };
+    const existing = buckets.get(bucket) ?? { chargeKwh: null, dischargeKwh: null, availablePvKwh: null };
 
     buckets.set(bucket, {
       chargeKwh: mergeSum(existing.chargeKwh, point.chargeKwh),
       dischargeKwh: mergeSum(existing.dischargeKwh, point.dischargeKwh),
+      availablePvKwh: mergeSum(existing.availablePvKwh, point.availablePvKwh ?? null),
     });
   }
 
   return [...buckets.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([t, v]) => ({ intervalStart: new Date(t), chargeKwh: v.chargeKwh, dischargeKwh: v.dischargeKwh }));
+    .map(([t, v]) => ({
+      intervalStart: new Date(t),
+      chargeKwh: v.chargeKwh,
+      dischargeKwh: v.dischargeKwh,
+      availablePvKwh: v.availablePvKwh,
+    }));
 }
