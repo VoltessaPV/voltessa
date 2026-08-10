@@ -1,9 +1,14 @@
+import type { ForecastConfidence, ForecastHorizonTier } from "@/lib/forecast/forecast-tiers";
+
+export type { ForecastConfidence, ForecastHorizonTier };
+
 /**
  * PV Generation Forecast — shared output contract.
  *
- * This is the one shape every consumer (today: `GlidepathCard.tsx`; later:
- * a trading/scheduling layer, per this feature's own requirement) depends
- * on — never on any individual layer's internal representation.
+ * This is the one shape every consumer (today: the Dashboard's Live Energy
+ * card; later: a trading/scheduling layer, per this feature's own
+ * requirement) depends on — never on any individual layer's internal
+ * representation.
  */
 export type PvForecastInterval = {
   timestamp: Date;
@@ -13,6 +18,10 @@ export type PvForecastInterval = {
   forecastKw: number;
   /** `true` when the pre-clip estimate exceeded `capacityKw` and was physically capped — reported explicitly, never silently absorbed into the error metrics. */
   capacityClipped: boolean;
+  /** Which layer of the forecast hierarchy produced this interval — see `lib/forecast/forecast-tiers.ts`. */
+  horizonTier: ForecastHorizonTier;
+  /** Simple, non-statistical confidence label — never a fabricated precise percentage. */
+  confidence: ForecastConfidence;
   components: {
     physicalWeatherKw: number;
     calibrationFactor: number;

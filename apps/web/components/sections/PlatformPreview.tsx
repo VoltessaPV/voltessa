@@ -2,12 +2,12 @@
 
 import { Suspense, useState, type ReactElement } from "react";
 
-import type { DashboardForecastChartData, ForecastChartPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
+import type { EnergyFlowPoint, ForecastSummary } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import CardHeader from "@/components/dashboard/CardHeader";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
-import { GlidepathCard } from "@/components/dashboard/GlidepathCard";
+import { ForecastSummaryPanel } from "@/components/dashboard/ForecastSummaryPanel";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
@@ -137,47 +137,67 @@ function buildSampleSolarWeather(): SolarWeather {
 const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
 
 /**
- * Same reasoning as `buildSampleSolarWeather` above — `GlidepathCard`'s real
- * `DashboardForecastChartData` prop has no per-organization data this file
- * can freeze, and computing the real forecast here would mean this file
- * performing live I/O (weather fetch, historical DB reads), which it
- * deliberately never does. Hand-written illustrative sample data instead —
- * a plausible ramp-up-to-peak-then-decline curve split into an "actual"
- * half (before now) and a "forecast" half (from now on), shaped exactly
- * like `DashboardForecastChartData` so it renders through the identical,
- * unmodified `GlidepathCard`/`ForecastChart` components production uses.
- * Built from `Date.now()` (not a frozen date) so the chart's real-time NOW
- * divider always sits between the two halves, regardless of when a visitor
- * loads the landing page.
+ * Same reasoning as `buildSampleSolarWeather` above — the real
+ * `ForecastSummaryPanel`/Live Energy forecast overlay has no
+ * per-organization data this file can freeze, and computing the real
+ * forecast here would mean this file performing live I/O (weather fetch,
+ * historical DB reads), which it deliberately never does. Hand-written
+ * illustrative sample data instead — a plausible ramp-up-to-peak-then-
+ * decline curve appended onto the frozen `data.chartSeries` as its
+ * `forecastPvKw` field (past half `null`, future half a forecast value),
+ * plus a matching sample `ForecastSummary`, shaped exactly like production
+ * so both render through the identical, unmodified `LiveEnergyChart`/
+ * `ForecastSummaryPanel` components. Built from `Date.now()` (not a frozen
+ * date) so the chart's real-time NOW divider always sits between the two
+ * halves, regardless of when a visitor loads the landing page.
  */
-function buildSampleForecastChart(): DashboardForecastChartData {
+function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
   const nowRounded = Math.ceil(Date.now() / (15 * 60 * 1000)) * (15 * 60 * 1000);
-  const pastShape = [10, 18, 28, 40, 55, 70, 85, 98, 108, 113, 116, 118];
   const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
 
-  const chartSeries: ForecastChartPoint[] = [
-    ...pastShape.map((kw, index) => ({
-      time: nowRounded - (pastShape.length - index) * 15 * 60 * 1000,
-      actualKw: kw,
-      forecastKw: null,
-    })),
-    ...futureShape.map((kw, index) => ({
-      time: nowRounded + index * 15 * 60 * 1000,
-      actualKw: null,
-      forecastKw: kw,
-    })),
-  ];
+  const forecastByTime = new Map<number, number>(
+    futureShape.map((kw, index) => [nowRounded + index * 15 * 60 * 1000, kw]),
+  );
+
+  const merged = data.chartSeries.map((point) => ({
+    ...point,
+    forecastPvKw: forecastByTime.get(point.time) ?? null,
+  }));
+
+  const lastTime = merged.length > 0 ? merged[merged.length - 1]!.time : nowRounded;
+  const extraPoints = futureShape
+    .map((kw, index) => ({ time: nowRounded + index * 15 * 60 * 1000, kw }))
+    .filter((point) => point.time > lastTime)
+    .map((point) => ({
+      time: point.time,
+      pvKw: null,
+      consumptionKw: null,
+      gridImportKw: null,
+      gridExportKw: null,
+      forecastPvKw: point.kw,
+    }));
+
+  return [...merged, ...extraPoints];
+}
+
+function buildSampleForecastSummary(): ForecastSummary {
+  const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
+  const remainingTodayKwh = futureShape.reduce((sum, kw) => sum + kw, 0) * 0.25;
 
   return {
-    chartSeries,
+    dailyForecastKwh: 612.4,
+    remainingTodayKwh,
+    weeklyForecastKwh: 3840.2,
+    monthlyForecastKwh: 15420.7,
     peakForecastKw: Math.max(...futureShape),
-    expectedEnergyKwh: futureShape.reduce((sum, kw) => sum + kw, 0) * 0.25,
-    intervalMinutes: 15,
-    horizonHours: 24,
+    confidence: "HIGH",
+    modelVersion: "pv-forecast-v1",
+    weatherSource: "open-meteo",
   };
 }
 
-const SAMPLE_FORECAST_CHART = buildSampleForecastChart();
+const SAMPLE_FORECAST_CHART_SERIES = buildSampleForecastChartSeries();
+const SAMPLE_FORECAST_SUMMARY = buildSampleForecastSummary();
 
 function DashboardPanel() {
   return (
@@ -207,18 +227,19 @@ function DashboardPanel() {
             <h2 className="text-sm font-semibold text-white">Live Energy</h2>
             <p className="mt-0.5 text-xs text-slate-500">Today&apos;s production, consumption, and grid exchange</p>
           </div>
-          <div className="mt-2.5 h-[320px]">
+          <div className="mt-2.5 h-[280px]">
             <Suspense fallback={<ChartSkeleton />}>
-              <DynamicLiveEnergyChart data={data.chartSeries} nowAnnotation={data.nowAnnotation} />
+              <DynamicLiveEnergyChart data={SAMPLE_FORECAST_CHART_SERIES} nowAnnotation={data.nowAnnotation} />
             </Suspense>
           </div>
+
+          <ForecastSummaryPanel summary={SAMPLE_FORECAST_SUMMARY} />
         </div>
       </section>
 
-      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-3">
         <InvertersCard inverters={data.inverters} />
         <WeatherCard weather={SAMPLE_SOLAR_WEATHER} />
-        <GlidepathCard forecastChart={SAMPLE_FORECAST_CHART} />
         <MarketEventLog entries={data.eventLog} />
       </section>
     </PageContainer>

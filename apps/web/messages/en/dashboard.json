@@ -30,6 +30,7 @@
     "title": "Live Energy",
     "subtitle": "Today's production, consumption, and grid exchange",
     "pvOutput": "PV Output",
+    "forecastPv": "Forecast PV",
     "totalConsumption": "Total Consumption",
     "importFromGrid": "Import from Grid",
     "fedToGrid": "Fed to Grid",
@@ -84,16 +85,19 @@
       "fog": "Fog"
     }
   },
-  "forecast": {
-    "subtitle": "Expected PV generation, 15-minute resolution",
-    "unavailable": "Forecast unavailable",
+  "forecastSummary": {
+    "title": "Forecast",
+    "unavailable": "Forecast unavailable — plant location or capacity not configured.",
+    "dailyForecast": "Daily forecast",
+    "remainingToday": "Remaining today",
+    "weeklyForecast": "Weekly forecast (7d)",
+    "monthlyForecast": "Monthly forecast",
     "peak": "Peak (remaining today)",
-    "expectedEnergy": "Expected energy (remaining today)",
-    "caption": "{resolution}-min resolution · {horizon}h forecast horizon · local time, physically available PV, independent of Zero Export",
-    "noData": "No data",
-    "legend": {
-      "actual": "Actual PV",
-      "forecast": "Forecast PV"
+    "confidence": {
+      "label": "Confidence",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
     }
   },
   "lastTelemetry": {

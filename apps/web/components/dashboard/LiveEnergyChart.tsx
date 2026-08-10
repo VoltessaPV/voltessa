@@ -99,6 +99,7 @@ function ChartTooltip({
 
   const rows: Array<{ key: string; textKey: string }> = [
     { key: "pvKw", textKey: "pvOutput" },
+    { key: "forecastPvKw", textKey: "forecastPv" },
     { key: "consumptionKw", textKey: "totalConsumption" },
     { key: "gridImportNegKw", textKey: "importFromGrid" },
     { key: "gridExportKw", textKey: "fedToGrid" },
@@ -159,6 +160,14 @@ export function LiveEnergyChart({
     (point) => point.consumptionKw !== null || point.gridImportKw !== null || point.gridExportKw !== null,
   );
 
+  // Live Energy Forecast Integration milestone: the grey forecast line only
+  // ever appears once `dashboard-data.ts` has actually merged forecast
+  // points in (`mergeForecastIntoChartSeries`) — a plant with no
+  // configured coordinates/capacity (`forecastSummary === null`) simply
+  // never has any `forecastPvKw` values, and this chart quietly stays a
+  // plain actual-only PV chart for it, exactly like `hasGridData` above.
+  const hasForecast = data.some((point) => point.forecastPvKw !== null);
+
   const now = Date.now();
   const domainStart = data[0]?.time;
   const domainEnd = data[data.length - 1]?.time;
@@ -192,6 +201,12 @@ export function LiveEnergyChart({
           <span className="h-0.5 w-3 rounded-full bg-emerald-400" />
           {t("pvOutput")}
         </span>
+        {hasForecast && (
+          <span className="flex items-center gap-1.5 text-slate-300">
+            <span className="h-0.5 w-3 rounded-full bg-slate-400" />
+            {t("forecastPv")}
+          </span>
+        )}
         {hasGridData && (
           <>
             <span className="flex items-center gap-1.5 text-slate-300">
@@ -244,6 +259,27 @@ export function LiveEnergyChart({
             />
           )}
 
+          {/* Grey forecast line, same convention `ForecastChart.tsx` used
+              before this milestone folded it into Live Energy — drawn
+              before `pvKw` so the real actual line paints on top wherever
+              the two are close, same draw-order rule as `consumptionKw`
+              below. `connectNulls={false}` keeps the visible break exactly
+              at the actual/forecast handoff instead of bridging it. */}
+          {hasForecast && (
+            <Line
+              yAxisId="power"
+              type="monotone"
+              dataKey="forecastPvKw"
+              stroke="#94a3b8"
+              strokeWidth={2}
+              strokeDasharray="4 3"
+              dot={false}
+              activeDot={{ r: 3.5 }}
+              connectNulls={false}
+              isAnimationActive
+              animationDuration={700}
+            />
+          )}
           {hasGridData && (
             <Line
               yAxisId="power"
