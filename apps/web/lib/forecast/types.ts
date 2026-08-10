@@ -29,6 +29,17 @@ export type PvForecastResult = {
   plantId: string;
   intervalMinutes: 15;
   intervals: PvForecastInterval[];
+  /**
+   * Today's elapsed Available PV, aggregated to the same 15-minute grid as
+   * `intervals` — reconstructed via `reconstructAvailablePv` (Zero-Export-
+   * independent, never raw curtailed export), the exact same source
+   * `intervals` itself is calibrated against. Empty before any of today has
+   * elapsed. Exposed so a UI can render "actual so far, forecast for the
+   * rest" on one continuous timeline without a second, duplicate query —
+   * this is the same data the engine's own glide-path correction already
+   * computed internally, just surfaced rather than discarded.
+   */
+  observedToday: { timestamp: Date; actualKwh: number; actualKw: number }[];
   /** Diagnostic metadata surfaced for transparency — not required by consumers, but avoids hiding model assumptions. */
   diagnostics: {
     calibrationSampleCount: number;

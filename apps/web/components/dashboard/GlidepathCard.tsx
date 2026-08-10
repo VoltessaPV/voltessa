@@ -1,7 +1,10 @@
 import { TrendingUp } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Suspense } from "react";
 
-import type { PvForecastResult } from "@/lib/forecast/types";
+import type { DashboardForecastChartData } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
+import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
+import { DynamicForecastChart } from "@/components/dashboard/ForecastChart.dynamic";
 
 /**
  * PV Generation Forecast milestone. Real production forecast — physical
@@ -14,51 +17,32 @@ import type { PvForecastResult } from "@/lib/forecast/types";
  * inputs always come from `reconstructAvailablePv` (physically available
  * PV), never curtailed export.
  *
+ * Forecast Card Visualization milestone: the chart now shows today's whole
+ * Sofia-local calendar day as one continuous timeline — the actual,
+ * reconstructed Available PV for every elapsed interval (green, same color
+ * `LiveEnergyChart`'s PV Output line uses), the forecast for every
+ * remaining interval (grey), and a NOW divider between them
+ * (`ForecastChart.tsx`, through the same `ChartFrame` shell every other
+ * Dashboard/Market chart renders through). Peak/Expected-energy describe
+ * only the *remaining* portion of today — see `dashboard-data.ts`'s
+ * `buildForecastChartData` doc comment for why a rolling "next N hours"
+ * window (this card's previous behavior) was the actual cause of an
+ * apparent forecast discrepancy a user reported, not a calculation defect.
+ *
  * Exported symbol name unchanged from the earlier placeholder (see git
  * history) to avoid touching every import site for a label-only rename —
  * still labeled "Forecast" (`tTerm("forecast")`), matching the Dashboard's
  * terminology pass.
  */
 type GlidepathCardProps = {
-  forecast: PvForecastResult | null;
+  forecastChart: DashboardForecastChartData | null;
 };
 
-const SPARKLINE_WIDTH = 280;
-const SPARKLINE_HEIGHT = 48;
-/** How far ahead this narrow card visualizes — the engine itself forecasts a full 24h horizon; a trading/scheduling caller reads `forecast.intervals` directly for the rest. */
-const VISIBLE_HOURS = 8;
-const INTERVALS_PER_HOUR = 4;
-
-function buildSparklinePath(values: number[], maxValue: number): string {
-  if (values.length === 0 || maxValue <= 0) {
-    return "";
-  }
-
-  const stepX = SPARKLINE_WIDTH / Math.max(1, values.length - 1);
-  return values
-    .map((value, index) => {
-      const x = index * stepX;
-      const y = SPARKLINE_HEIGHT - (value / maxValue) * SPARKLINE_HEIGHT;
-      return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-export function GlidepathCard({ forecast }: GlidepathCardProps) {
+export function GlidepathCard({ forecastChart }: GlidepathCardProps) {
   const t = useTranslations("dashboard.forecast");
   const tTerm = useTranslations("terminology");
 
-  const visibleIntervals = forecast?.intervals.slice(0, VISIBLE_HOURS * INTERVALS_PER_HOUR) ?? [];
-  const hasForecast = visibleIntervals.length > 0;
-
-  const peakKw = hasForecast ? Math.max(...visibleIntervals.map((interval) => interval.forecastKw)) : 0;
-  const totalKwh = hasForecast ? visibleIntervals.reduce((sum, interval) => sum + interval.forecastKwh, 0) : 0;
-  const sparklinePath = hasForecast
-    ? buildSparklinePath(
-        visibleIntervals.map((interval) => interval.forecastKw),
-        Math.max(peakKw, 1),
-      )
-    : "";
+  const hasForecast = forecastChart !== null;
 
   return (
     <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_28px_-16px_rgba(0,0,0,0.55)]">
@@ -77,25 +61,27 @@ export function GlidepathCard({ forecast }: GlidepathCardProps) {
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
             <div>
               <dt className="text-[11px] text-slate-500">{t("peak")}</dt>
-              <dd className="text-sm font-medium tabular-nums text-white">{peakKw.toFixed(1)} kW</dd>
+              <dd className="text-sm font-medium tabular-nums text-white">
+                {forecastChart.peakForecastKw !== null ? forecastChart.peakForecastKw.toFixed(1) : "0.0"} kW
+              </dd>
             </div>
             <div>
               <dt className="text-[11px] text-slate-500">{t("expectedEnergy")}</dt>
-              <dd className="text-sm font-medium tabular-nums text-white">{totalKwh.toFixed(1)} kWh</dd>
+              <dd className="text-sm font-medium tabular-nums text-white">
+                {forecastChart.expectedEnergyKwh !== null ? forecastChart.expectedEnergyKwh.toFixed(1) : "0.0"} kWh
+              </dd>
             </div>
           </dl>
 
-          <div className="mt-3 border-t border-white/10 pt-3">
-            <svg
-              viewBox={`0 0 ${SPARKLINE_WIDTH} ${SPARKLINE_HEIGHT}`}
-              preserveAspectRatio="none"
-              className="h-12 w-full"
-              aria-hidden="true"
-            >
-              <path d={sparklinePath} fill="none" stroke="#94a3b8" strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" />
-            </svg>
-            <p className="mt-1 text-[10px] text-slate-600">{t("nextHours", { hours: VISIBLE_HOURS })}</p>
+          <div className="mt-3 h-[170px] border-t border-white/10 pt-2">
+            <Suspense fallback={<ChartSkeleton />}>
+              <DynamicForecastChart data={forecastChart.chartSeries} />
+            </Suspense>
           </div>
+
+          <p className="mt-1 text-[10px] text-slate-600">
+            {t("caption", { resolution: forecastChart.intervalMinutes, horizon: forecastChart.horizonHours })}
+          </p>
         </>
       )}
     </div>

@@ -87,9 +87,14 @@
   "forecast": {
     "subtitle": "Expected PV generation, 15-minute resolution",
     "unavailable": "Forecast unavailable",
-    "peak": "Peak",
-    "expectedEnergy": "Expected energy",
-    "nextHours": "Next {hours}h · physically available PV, independent of Zero Export"
+    "peak": "Peak (remaining today)",
+    "expectedEnergy": "Expected energy (remaining today)",
+    "caption": "{resolution}-min resolution · {horizon}h forecast horizon · local time, physically available PV, independent of Zero Export",
+    "noData": "No data",
+    "legend": {
+      "actual": "Actual PV",
+      "forecast": "Forecast PV"
+    }
   },
   "lastTelemetry": {
     "label": "Last telemetry:",

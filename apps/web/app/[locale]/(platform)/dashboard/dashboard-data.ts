@@ -123,7 +123,7 @@ import {
 } from "@/lib/telemetry/canonical";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
-import { generatePvForecast } from "@/lib/forecast/pv-forecast-engine";
+import { DEFAULT_HORIZON_HOURS, generatePvForecast } from "@/lib/forecast/pv-forecast-engine";
 import type { PvForecastResult } from "@/lib/forecast/types";
 
 import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
@@ -226,6 +226,45 @@ export type DashboardToolbarState = {
   periodRangeLabel: string;
 };
 
+/**
+ * One point on the Forecast card's chart — always on the same 15-minute,
+ * midnight-aligned grid as `chartSeries`'s "today" mode. Exactly one of
+ * `actualKw`/`forecastKw` is ever non-null for a given point: `actualKw`
+ * for every elapsed interval (reconstructed Available PV, Zero-Export-
+ * independent — never historical export), `forecastKw` for every interval
+ * from "now" onward (the shipped forecast engine, unmodified). Both `null`
+ * only for the brief in-progress 15-minute bucket telemetry hasn't fully
+ * settled for yet, or for a bucket the forecast horizon doesn't reach —
+ * never fabricated to avoid a gap.
+ */
+export type ForecastChartPoint = {
+  time: number;
+  actualKw: number | null;
+  forecastKw: number | null;
+};
+
+/**
+ * Forecast Card Visualization milestone. `peakForecastKw`/
+ * `expectedEnergyKwh` describe only the *remaining* portion of today
+ * (from "now" through midnight) — deliberately not the engine's full 24h
+ * horizon and not a rolling "next N hours" window. The prior "next 8h"
+ * framing was found to be the actual cause of an apparent forecast-vs-
+ * actual mismatch a user reported (691.4 kWh over a partial window vs.
+ * >1,000 kWh for a full historical day — not a calculation defect, see the
+ * milestone's own investigation): comparing a partial-day figure against a
+ * full-day one always looks wrong even when the underlying forecast is
+ * correct. "Remaining today" is the one framing that's honestly comparable
+ * to nothing else on this card, so there is no equivalent ambiguity left.
+ */
+export type DashboardForecastChartData = {
+  chartSeries: ForecastChartPoint[];
+  peakForecastKw: number | null;
+  expectedEnergyKwh: number | null;
+  intervalMinutes: 15;
+  /** The underlying engine's own full forecast horizon (see `DEFAULT_HORIZON_HOURS`) — a caption fact, not a claim about how far the *chart* itself extends (the chart is clipped to today, see `chartSeries` above). */
+  horizonHours: number;
+};
+
 export type DashboardPageData =
   | ({ plantAvailable: false } & DashboardToolbarState)
   | ({
@@ -253,8 +292,20 @@ export type DashboardPageData =
        * same Category-A convention as `inverters`/`nowAnnotation` above), or
        * every underlying data source failed. Never a mockup — see
        * `fetchPvForecastSafe`.
+       *
+       * Forecast Card Visualization milestone: pre-shaped for the
+       * Dashboard's Forecast card chart specifically (a continuous
+       * actual-then-forecast series over today's calendar day, plus the
+       * *remaining-today* peak/expected-energy figures — deliberately not a
+       * rolling "next N hours" window, which is what produced an apparent
+       * mismatch against a full historical day's total before this
+       * milestone). The underlying `PvForecastResult` (full 24h horizon,
+       * every layer's components) remains available directly from
+       * `lib/forecast/pv-forecast-engine.ts` for any future trading/
+       * scheduling consumer — this field is the Dashboard's own derived view
+       * of it, not a replacement for it.
        */
-      forecast: PvForecastResult | null;
+      forecastChart: DashboardForecastChartData | null;
     } & DashboardToolbarState);
 
 /**
@@ -519,6 +570,45 @@ async function fetchPvForecastSafe(params: {
   }
 }
 
+/**
+ * Forecast Card Visualization milestone. Builds the Forecast card's own
+ * chart series and "remaining today" stats directly from `PvForecastResult`
+ * — `periodStart`/`periodEnd` here are the exact same Sofia-local calendar-
+ * day boundaries `chartSeries`/`buildFullDayChartSeries` already use for
+ * "today", so this chart's X-axis domain lines up with the Live Energy
+ * chart's exactly. Filters by absolute timestamp only, never by the
+ * engine's own internal UTC-day bucketing key (which exists for a
+ * different purpose — per-day analog/calibration scaling — and would not
+ * line up with a Sofia-local day boundary).
+ */
+function buildForecastChartData(
+  periodStart: Date,
+  periodEnd: Date,
+  forecast: PvForecastResult,
+): DashboardForecastChartData {
+  const actualByTime = new Map(forecast.observedToday.map((point) => [point.timestamp.getTime(), point.actualKw]));
+
+  const todayIntervals = forecast.intervals.filter(
+    (interval) => interval.timestamp.getTime() >= periodStart.getTime() && interval.timestamp.getTime() < periodEnd.getTime(),
+  );
+  const forecastByTime = new Map(todayIntervals.map((interval) => [interval.timestamp.getTime(), interval.forecastKw]));
+
+  const stepMs = 15 * 60 * 1000;
+  const chartSeries: ForecastChartPoint[] = [];
+  for (let t = periodStart.getTime(); t < periodEnd.getTime(); t += stepMs) {
+    chartSeries.push({ time: t, actualKw: actualByTime.get(t) ?? null, forecastKw: forecastByTime.get(t) ?? null });
+  }
+
+  return {
+    chartSeries,
+    peakForecastKw: todayIntervals.length > 0 ? Math.max(...todayIntervals.map((interval) => interval.forecastKw)) : null,
+    expectedEnergyKwh:
+      todayIntervals.length > 0 ? todayIntervals.reduce((sum, interval) => sum + interval.forecastKwh, 0) : null,
+    intervalMinutes: 15,
+    horizonHours: DEFAULT_HORIZON_HOURS,
+  };
+}
+
 export async function getDashboardPageData(
   organizationId: string,
   automationSettings: {
@@ -755,6 +845,6 @@ export async function getDashboardPageData(
     market: { currentPrice, exportRecommended, threshold },
     eventLog: marketData.dataAvailable ? marketData.eventLog : [],
     weather,
-    forecast,
+    forecastChart: forecast ? buildForecastChartData(periodStart, periodEnd, forecast) : null,
   };
 }

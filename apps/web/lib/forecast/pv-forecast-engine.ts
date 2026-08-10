@@ -24,7 +24,7 @@ import { getSolarWeather, type SolarWeatherPoint } from "@/lib/weather/openMeteo
  * historical data.
  */
 
-const DEFAULT_HORIZON_HOURS = 24;
+export const DEFAULT_HORIZON_HOURS = 24;
 /**
  * Selected via walk-forward backtesting against real Atlanta historical
  * data (10 test days spanning clear/cloudy/variable/Zero-Export/
@@ -53,6 +53,44 @@ function dayStartUtc(date: Date): Date {
 
 function dayKeyUtc(date: Date): string {
   return dayStartUtc(date).toISOString().slice(0, 10);
+}
+
+/**
+ * Aggregates today's native 5-minute reconstructed Available PV
+ * (`observedElapsedToday`, `available-pv-reconstruction.ts`) into the same
+ * 15-minute grid `intervals` uses — so a UI can plot "actual so far" and
+ * "forecast for the rest" as one continuous series without reimplementing
+ * this bucketing itself.
+ */
+/** Native telemetry samples per 15-minute bucket (5-minute grid, `historical-intervals.ts`) — a bucket only counts as "actual" once all three have arrived, never a partial/in-progress average presented as if it were a full 15 minutes. */
+const NATIVE_SAMPLES_PER_BUCKET = 3;
+
+function bucketObservedToday(
+  observedElapsedToday: Array<{ intervalStart: Date; availablePvKwh: number | null }>,
+): { timestamp: Date; actualKwh: number; actualKw: number }[] {
+  const bucketMs = FORECAST_INTERVAL_MINUTES * 60 * 1000;
+  const buckets = new Map<number, { sum: number; count: number; nullSeen: boolean }>();
+
+  for (const point of observedElapsedToday) {
+    const bucketStart = Math.floor(point.intervalStart.getTime() / bucketMs) * bucketMs;
+    const entry = buckets.get(bucketStart) ?? { sum: 0, count: 0, nullSeen: false };
+    if (point.availablePvKwh === null) {
+      entry.nullSeen = true;
+    } else {
+      entry.sum += point.availablePvKwh;
+      entry.count += 1;
+    }
+    buckets.set(bucketStart, entry);
+  }
+
+  return Array.from(buckets.entries())
+    .filter(([, entry]) => !entry.nullSeen && entry.count === NATIVE_SAMPLES_PER_BUCKET)
+    .sort(([a], [b]) => a - b)
+    .map(([bucketStart, { sum }]) => ({
+      timestamp: new Date(bucketStart),
+      actualKwh: sum,
+      actualKw: sum / (FORECAST_INTERVAL_MINUTES / 60),
+    }));
 }
 
 /**
@@ -219,6 +257,7 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
     plantId,
     intervalMinutes: FORECAST_INTERVAL_MINUTES,
     intervals,
+    observedToday: bucketObservedToday(observedElapsedToday),
     diagnostics: {
       calibrationSampleCount: calibration.sampleCount,
       calibrationLookbackDays: calibration.lookbackDays,
