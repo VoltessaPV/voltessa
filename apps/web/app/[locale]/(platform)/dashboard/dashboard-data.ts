@@ -930,19 +930,43 @@ export async function getDashboardPageData(
     fetchMonthActualSoFarSafe(plant.id, monthBoundsForSummary.start, todayStartForSummary),
   ]);
 
-  const forecastSummary = todayForecast
-    ? computeForecastSummary({ now, todayForecast, extended: extendedForecast, monthActualSoFarKwh: monthActualSoFar })
-    : null;
+  // Forecasting is an enhancement layered onto an otherwise-complete
+  // Dashboard, never a reason the whole page fails to render (production
+  // incident, 2026-08-10: a bug inside this computation took the entire
+  // Dashboard down with it because nothing here was isolated from the rest
+  // of the page). `todayForecast`/`extendedForecast` themselves already
+  // degrade to `null` on failure (`fetchPvForecastSafe`/
+  // `fetchExtendedPvForecastSafe`); this `try/catch` is the second,
+  // independent layer — it protects against a bug in the *summary
+  // computation itself* (as opposed to the underlying fetch), which is
+  // exactly what happened here.
+  let forecastSummary: ForecastSummary | null = null;
+  if (todayForecast) {
+    try {
+      forecastSummary = computeForecastSummary({
+        now,
+        todayForecast,
+        extended: extendedForecast,
+        monthActualSoFarKwh: monthActualSoFar,
+      });
+    } catch (error) {
+      console.error("[Dashboard] Forecast summary computation failed", error);
+    }
+  }
 
   // Persistence is opportunistic, not on the critical path to a slow page:
   // both are cheap no-ops once already done for this hour/lookback window
   // (see `lib/forecast/forecast-persistence.ts`'s own doc comment on why
-  // this runs from here rather than a new scheduled job).
+  // this runs from here rather than a new scheduled job). Errors are
+  // swallowed here deliberately (never allowed to affect the render), but
+  // logged so a persistent failure is still visible in runtime logs.
   if (todayForecast) {
     await Promise.all([
       persistForecastVintageIfDue({ plantId: plant.id, organizationId, forecast: todayForecast }),
       reconcileForecastActuals({ plantId: plant.id, organizationId }),
-    ]).catch(() => undefined);
+    ]).catch((error) => {
+      console.error("[Dashboard] Forecast persistence/reconciliation failed", error);
+    });
   }
 
   const revenue: RevenueSummary = marketData.dataAvailable
@@ -1013,16 +1037,24 @@ export async function getDashboardPageData(
   // already uses.
   const periodCoversNow = periodEnd.getTime() > now.getTime();
   let forecastByBucket = new Map<number, number>();
-  if (periodCoversNow && todayForecast) {
-    if (period === "today") {
-      forecastByBucket = new Map(
-        todayForecast.intervals
-          .filter((interval) => interval.timestamp.getTime() < periodEnd.getTime())
-          .map((interval) => [interval.timestamp.getTime(), interval.forecastKw]),
-      );
-    } else if ((period === "week" || period === "month") && extendedForecast) {
-      forecastByBucket = buildDailyForecastBucketMap(extendedForecast.intervals, now, periodEnd);
+  try {
+    if (periodCoversNow && todayForecast) {
+      if (period === "today") {
+        forecastByBucket = new Map(
+          todayForecast.intervals
+            .filter((interval) => interval.timestamp.getTime() < periodEnd.getTime())
+            .map((interval) => [interval.timestamp.getTime(), interval.forecastKw]),
+        );
+      } else if ((period === "week" || period === "month") && extendedForecast) {
+        forecastByBucket = buildDailyForecastBucketMap(extendedForecast.intervals, now, periodEnd);
+      }
     }
+  } catch (error) {
+    // Same "forecast is an enhancement, never a reason the Dashboard fails
+    // to render" boundary as the summary computation above — falls back to
+    // an empty overlay (the actual-only chart still renders normally).
+    console.error("[Dashboard] Forecast chart overlay computation failed", error);
+    forecastByBucket = new Map();
   }
   const chartSeries = mergeForecastIntoChartSeries(chartSeriesActual, forecastByBucket);
 
