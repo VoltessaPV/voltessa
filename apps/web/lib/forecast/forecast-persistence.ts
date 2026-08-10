@@ -1,0 +1,245 @@
+/**
+ * Live Energy Forecast Integration milestone — forecast vintage
+ * persistence and actual-vs-forecast reconciliation.
+ *
+ * `PvForecastRecord` rows are immutable once written except for
+ * `actualKwh`/`errorKwh`/`errorPct`/`reconciledAt`, which are filled in
+ * later once the target interval has elapsed and real data exists. This
+ * is what lets later analysis answer "what did we predict at the time",
+ * not "what would we predict now, knowing what actually happened."
+ *
+ * Both functions here are called opportunistically from the Dashboard's
+ * own data-fetching path (`dashboard-data.ts`) rather than from a new
+ * scheduled job — there is no production cron infrastructure this session
+ * can provision (see `docs/infrastructure/scaleway-production.md`; adding
+ * a systemd timer requires direct VM access this environment doesn't
+ * have). Both are throttled so a busy Dashboard doesn't turn into a
+ * write/scan amplifier: `persistForecastVintageIfDue` is a no-op unless
+ * the last vintage for this plant is over an hour old (one indexed SELECT
+ * in the common case), and `reconcileForecastActuals` only ever looks at
+ * a small, bounded batch of not-yet-reconciled rows.
+ */
+import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
+import { prisma } from "@/lib/prisma";
+import type { PvForecastResult } from "@/lib/forecast/types";
+
+const VINTAGE_MIN_GAP_MINUTES = 60;
+const RECONCILE_LOOKBACK_DAYS = 3;
+const RECONCILE_BATCH_LIMIT = 500;
+const BUCKET_MS = 15 * 60 * 1000;
+const NATIVE_SAMPLES_PER_BUCKET = 3;
+
+/**
+ * Persists one forecast vintage — only the SHORT-tier portion (the real,
+ * weather-driven next ~48h), never the MEDIUM/LONG-tier days: those are
+ * dominated by a plant's own analog/climatology signal that barely moves
+ * hour to hour, so persisting a fresh vintage of them every hour would
+ * mostly store near-duplicate rows for comparatively little validation
+ * value, and each one would be superseded by a materially better-informed
+ * vintage long before its own target interval arrives anyway. A no-op
+ * once a vintage already exists for this plant within the last
+ * `VINTAGE_MIN_GAP_MINUTES` — this is what keeps "vintages" meaningfully
+ * spaced (roughly hourly) without new scheduler infrastructure.
+ */
+export async function persistForecastVintageIfDue(params: {
+  plantId: string;
+  organizationId: string;
+  forecast: PvForecastResult;
+}): Promise<void> {
+  const { plantId, organizationId, forecast } = params;
+  const issuedAt = forecast.generatedAt;
+
+  const recentVintage = await prisma.pvForecastRecord
+    .findFirst({
+      where: { plantId, issuedAt: { gte: new Date(issuedAt.getTime() - VINTAGE_MIN_GAP_MINUTES * 60_000) } },
+      select: { id: true },
+    })
+    .catch(() => null);
+
+  if (recentVintage) {
+    return;
+  }
+
+  const rows = forecast.intervals
+    .filter((interval) => interval.horizonTier === "SHORT")
+    .map((interval) => ({
+      organizationId,
+      plantId,
+      issuedAt,
+      targetIntervalStart: interval.timestamp,
+      horizonTier: interval.horizonTier,
+      leadTimeMinutes: Math.round((interval.timestamp.getTime() - issuedAt.getTime()) / 60_000),
+      forecastKw: interval.forecastKw,
+      forecastKwh: interval.forecastKwh,
+      modelVersion: forecast.modelVersion,
+      weatherSource: forecast.weatherSource,
+      confidence: interval.confidence,
+      inputs: {
+        physicalWeatherKw: interval.components.physicalWeatherKw,
+        calibrationFactor: interval.components.calibrationFactor,
+        analogKw: interval.components.analogKw,
+        analogWeight: interval.components.analogWeight,
+        glidePathFactor: interval.components.glidePathFactor,
+        capacityClipped: interval.capacityClipped,
+      },
+    }));
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  await prisma.pvForecastRecord.createMany({ data: rows, skipDuplicates: true }).catch(() => undefined);
+}
+
+/**
+ * Fills in `actualKwh`/`errorKwh`/`errorPct` for previously-stored vintages
+ * whose target interval has now elapsed, using the exact same
+ * `reconstructAvailablePv` (Zero-Export-independent) the forecast itself
+ * is calibrated against — never historical export. Only considers
+ * intervals fully settled (all 3 native 5-minute samples present, same
+ * convention `pv-forecast-engine.ts`'s `bucketObservedToday` uses) —
+ * anything not yet fully settled is left for a later reconciliation pass,
+ * never estimated from a partial reading. Returns how many rows were
+ * reconciled, purely for the caller's own diagnostics.
+ */
+export async function reconcileForecastActuals(params: {
+  plantId: string;
+  organizationId: string;
+}): Promise<number> {
+  const { plantId, organizationId } = params;
+  const now = new Date();
+  const lookbackStart = new Date(now.getTime() - RECONCILE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+
+  const pending = await prisma.pvForecastRecord
+    .findMany({
+      where: { plantId, actualKwh: null, targetIntervalStart: { lt: now, gte: lookbackStart } },
+      select: { id: true, targetIntervalStart: true, forecastKwh: true },
+      take: RECONCILE_BATCH_LIMIT,
+    })
+    .catch(() => []);
+
+  if (pending.length === 0) {
+    return 0;
+  }
+
+  const targetTimes = pending.map((row) => row.targetIntervalStart.getTime());
+  const earliestTarget = new Date(Math.min(...targetTimes));
+  const latestTarget = new Date(Math.max(...targetTimes) + BUCKET_MS);
+
+  const actualIntervals = await reconstructAvailablePv({
+    plantId,
+    organizationId,
+    start: earliestTarget,
+    end: latestTarget,
+  }).catch(() => []);
+
+  const actualByBucket = new Map<number, { sum: number; count: number; nullSeen: boolean }>();
+  for (const interval of actualIntervals) {
+    const bucketStart = Math.floor(interval.intervalStart.getTime() / BUCKET_MS) * BUCKET_MS;
+    const entry = actualByBucket.get(bucketStart) ?? { sum: 0, count: 0, nullSeen: false };
+    if (interval.availablePvKwh === null) {
+      entry.nullSeen = true;
+    } else {
+      entry.sum += interval.availablePvKwh;
+      entry.count += 1;
+    }
+    actualByBucket.set(bucketStart, entry);
+  }
+
+  let reconciledCount = 0;
+
+  for (const record of pending) {
+    const bucket = actualByBucket.get(record.targetIntervalStart.getTime());
+    if (!bucket || bucket.nullSeen || bucket.count !== NATIVE_SAMPLES_PER_BUCKET) {
+      continue;
+    }
+
+    const actualKwh = Math.round(bucket.sum * 1000) / 1000;
+    const forecastKwh = record.forecastKwh.toNumber();
+    const errorKwh = Math.round((forecastKwh - actualKwh) * 1000) / 1000;
+    const errorPct = actualKwh > 0 ? Math.round((errorKwh / actualKwh) * 1000 * 100) / 1000 : null;
+
+    await prisma.pvForecastRecord
+      .update({
+        where: { id: record.id },
+        data: { actualKwh, errorKwh, errorPct, reconciledAt: new Date() },
+      })
+      .catch(() => undefined);
+
+    reconciledCount += 1;
+  }
+
+  return reconciledCount;
+}
+
+/**
+ * Aggregate accuracy stats (item 11 of this milestone: MAE/RMSE/MAPE/
+ * normalized error) — computed on demand directly from the reconciled
+ * per-record errors already persisted above, rather than a separate
+ * duplicated rollup table: the fine-grained data (forecast, actual, and
+ * per-interval error) is what's genuinely worth persisting permanently;
+ * an aggregate is cheap to re-derive from it at read time and never goes
+ * stale relative to the underlying rows.
+ */
+export type ForecastAccuracyStats = {
+  sampleCount: number;
+  maeKwh: number | null;
+  rmseKwh: number | null;
+  mapePct: number | null;
+  normalizedError: number | null;
+  byHorizonTier: Partial<Record<"SHORT" | "MEDIUM" | "LONG", { sampleCount: number; maeKwh: number | null }>>;
+};
+
+export async function computeForecastAccuracyStats(params: {
+  plantId: string;
+  capacityKw: number;
+  lookbackDays?: number;
+}): Promise<ForecastAccuracyStats> {
+  const { plantId, capacityKw, lookbackDays = 30 } = params;
+  const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
+
+  const records = await prisma.pvForecastRecord
+    .findMany({
+      where: { plantId, actualKwh: { not: null }, issuedAt: { gte: since } },
+      select: { horizonTier: true, forecastKwh: true, actualKwh: true, errorKwh: true },
+    })
+    .catch(() => []);
+
+  if (records.length === 0) {
+    return { sampleCount: 0, maeKwh: null, rmseKwh: null, mapePct: null, normalizedError: null, byHorizonTier: {} };
+  }
+
+  const errors = records.map((r) => r.errorKwh?.toNumber() ?? 0);
+  const absErrors = errors.map((e) => Math.abs(e));
+  const sqErrors = errors.map((e) => e ** 2);
+  const mae = absErrors.reduce((sum, v) => sum + v, 0) / absErrors.length;
+  const rmse = Math.sqrt(sqErrors.reduce((sum, v) => sum + v, 0) / sqErrors.length);
+
+  const mapeEligible = records.filter((r) => (r.actualKwh?.toNumber() ?? 0) > capacityKw * 0.25 * 0.05);
+  const mape =
+    mapeEligible.length > 0
+      ? (mapeEligible.reduce((sum, r) => sum + Math.abs((r.errorKwh?.toNumber() ?? 0) / (r.actualKwh?.toNumber() ?? 1)), 0) /
+          mapeEligible.length) *
+        100
+      : null;
+
+  const byHorizonTier: ForecastAccuracyStats["byHorizonTier"] = {};
+  for (const tier of ["SHORT", "MEDIUM", "LONG"] as const) {
+    const tierRecords = records.filter((r) => r.horizonTier === tier);
+    if (tierRecords.length === 0) continue;
+    const tierAbsErrors = tierRecords.map((r) => Math.abs(r.errorKwh?.toNumber() ?? 0));
+    byHorizonTier[tier] = {
+      sampleCount: tierRecords.length,
+      maeKwh: tierAbsErrors.reduce((sum, v) => sum + v, 0) / tierAbsErrors.length,
+    };
+  }
+
+  return {
+    sampleCount: records.length,
+    maeKwh: mae,
+    rmseKwh: rmse,
+    mapePct: mape,
+    normalizedError: capacityKw > 0 ? mae / (capacityKw * 0.25) : null,
+    byHorizonTier,
+  };
+}

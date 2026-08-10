@@ -1,6 +1,16 @@
+import { unstable_cache } from "next/cache";
+
 import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { averageAnalogShape, analogBucketIndex, getAnalogDays } from "@/lib/forecast/analog-days";
 import { applyHourOfDayCalibration, getHourOfDayCalibration, type HourOfDayCalibration } from "@/lib/forecast/calibration";
+import {
+  analogWeightForTier,
+  classifyConfidence,
+  classifyHorizonTier,
+  meanClearSkyGhiForDay,
+  type ForecastConfidence,
+  type ForecastHorizonTier,
+} from "@/lib/forecast/forecast-tiers";
 import { applyGlidePath, computeRecentBias } from "@/lib/forecast/glide-path";
 import { estimatePhysicalPvKw } from "@/lib/forecast/physical-pv-model";
 import { FORECAST_INTERVAL_MINUTES, FORECAST_MODEL_VERSION, type PvForecastInterval, type PvForecastResult } from "@/lib/forecast/types";
@@ -129,6 +139,9 @@ export type ForecastCoreParams = {
   analogWeight: number;
   observedElapsedToday: Array<{ intervalStart: Date; availablePvKwh: number | null }>;
   decayHours?: number;
+  /** Which forecast-hierarchy tier this whole call represents (see `lib/forecast/forecast-tiers.ts`) — stamped onto every produced interval. Defaults preserve this function's original single-tier behavior for any caller that doesn't pass one (e.g. the backtest harness). */
+  horizonTier?: ForecastHorizonTier;
+  confidence?: ForecastConfidence;
 };
 
 export function generatePvForecastCore(params: ForecastCoreParams): PvForecastResult {
@@ -145,6 +158,8 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
     analogWeight,
     observedElapsedToday,
     decayHours = GLIDE_PATH_DECAY_HOURS,
+    horizonTier = "SHORT",
+    confidence = "MEDIUM",
   } = params;
 
   let weatherFallbackUsed = false;
@@ -215,6 +230,8 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
         forecastKwh: 0,
         forecastKw: 0,
         capacityClipped: false,
+        horizonTier,
+        confidence,
         components: { physicalWeatherKw: 0, calibrationFactor: 1, analogKw: null, analogWeight, glidePathFactor: 1 },
       };
     }
@@ -246,6 +263,8 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
       forecastKwh: forecastKw * (FORECAST_INTERVAL_MINUTES / 60),
       forecastKw,
       capacityClipped,
+      horizonTier,
+      confidence,
       components: { physicalWeatherKw, calibrationFactor, analogKw, analogWeight, glidePathFactor },
     };
   });
@@ -280,12 +299,23 @@ export type GeneratePvForecastParams = {
   analogWeight?: number;
 };
 
+function stddev(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+  return Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length);
+}
+
 /**
  * Live entry point: fetches real Open-Meteo weather, this plant's own
  * historical calibration/analog data, and today's elapsed reconstructed
- * Available PV, then delegates to `generatePvForecastCore`. Every fetch is
- * individually degraded (never thrown to the caller) so a weather or
- * historical-data outage narrows the forecast's inputs rather than
+ * Available PV, then runs the forecast hierarchy (`lib/forecast/
+ * forecast-tiers.ts`) one calendar day at a time — each day is classified
+ * into SHORT/MEDIUM/LONG by its lead time from `now`, gets its own
+ * analog-weight and (for days beyond real weather coverage) a
+ * climatological GHI estimate instead of a fabricated "0" — then delegates
+ * to the exact same, unmodified `generatePvForecastCore` per day. Every
+ * fetch is individually degraded (never thrown to the caller) so a weather
+ * or historical-data outage narrows the forecast's inputs rather than
  * breaking the Dashboard — same convention `fetchSolarWeatherSafe` already
  * established for this exact card's row.
  */
@@ -298,7 +328,7 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
     capacityKw,
     now = new Date(),
     horizonHours = DEFAULT_HORIZON_HOURS,
-    analogWeight = DEFAULT_ANALOG_WEIGHT,
+    analogWeight: analogWeightOverride,
   } = params;
 
   const horizonEnd = new Date(now.getTime() + horizonHours * 60 * 60 * 1000);
@@ -314,17 +344,29 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
 
   const weatherPoints = weather?.hourly ?? [];
 
-  const dayKeys: string[] = [];
+  const dayStarts: Date[] = [];
   for (let t = dayStartUtc(now).getTime(); t < horizonEnd.getTime(); t += 24 * 60 * 60 * 1000) {
-    dayKeys.push(dayKeyUtc(new Date(t)));
+    dayStarts.push(new Date(t));
   }
 
   const analogShapeByDayUtc = new Map<string, { shape: number[] | null; dates: string[] }>();
+  const tierByDayKey = new Map<string, ForecastHorizonTier>();
+  const confidenceByDayKey = new Map<string, ForecastConfidence>();
+
   await Promise.all(
-    dayKeys.map(async (dayKey) => {
+    dayStarts.map(async (dayStart) => {
+      const dayKey = dayKeyUtc(dayStart);
+      const leadTimeHours = Math.max(0, (dayStart.getTime() - now.getTime()) / (60 * 60 * 1000));
+      const tier = classifyHorizonTier(leadTimeHours);
+      tierByDayKey.set(dayKey, tier);
+
       const dayPoints = weatherPoints.filter((point) => dayKeyUtc(point.time) === dayKey);
-      const targetMeanGhi = dayPoints.length > 0 ? dayPoints.reduce((sum, p) => sum + p.irradiance, 0) / dayPoints.length : 0;
-      const targetMeanCloudCover = dayPoints.length > 0 ? dayPoints.reduce((sum, p) => sum + p.cloudCover, 0) / dayPoints.length : 50;
+      const hasRealWeather = dayPoints.length > 0;
+      const targetMeanGhi = hasRealWeather
+        ? dayPoints.reduce((sum, p) => sum + p.irradiance, 0) / dayPoints.length
+        : meanClearSkyGhiForDay(dayStart, latitude, longitude);
+      const targetMeanCloudCover = hasRealWeather ? dayPoints.reduce((sum, p) => sum + p.cloudCover, 0) / dayPoints.length : 50;
+      const cloudVolatility = hasRealWeather ? stddev(dayPoints.map((p) => p.cloudCover)) : null;
 
       const analogDays = await getAnalogDays({
         plantId,
@@ -338,20 +380,109 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
       }).catch(() => []);
 
       analogShapeByDayUtc.set(dayKey, { shape: averageAnalogShape(analogDays), dates: analogDays.map((d) => d.dateUtc) });
+      confidenceByDayKey.set(dayKey, classifyConfidence({ tier, cloudVolatility, analogDayCount: analogDays.length }));
     }),
   );
 
-  return generatePvForecastCore({
+  // One `generatePvForecastCore` call per calendar day (never a second
+  // forecasting algorithm) - each day gets its own tier-appropriate
+  // analog weight; only the first (today) carries real elapsed-today data,
+  // since glide-path/recent-bias correction has no meaning for a future day.
+  const dayResults = dayStarts.map((dayStart, index) => {
+    const dayKey = dayKeyUtc(dayStart);
+    const dayEnd = new Date(Math.min(dayStart.getTime() + 24 * 60 * 60 * 1000, horizonEnd.getTime()));
+    const tier = tierByDayKey.get(dayKey) ?? "LONG";
+    const confidence = confidenceByDayKey.get(dayKey) ?? "LOW";
+    const isFirstDay = index === 0;
+
+    return generatePvForecastCore({
+      plantId,
+      latitude,
+      longitude,
+      capacityKw,
+      now: isFirstDay ? now : dayStart,
+      horizonEnd: dayEnd,
+      weatherPoints,
+      calibration,
+      analogShapeByDayUtc,
+      analogWeight: analogWeightOverride ?? analogWeightForTier(tier),
+      observedElapsedToday: isFirstDay ? observedElapsedToday : [],
+      horizonTier: tier,
+      confidence,
+    });
+  });
+
+  const analogDayDates = new Set<string>();
+  for (const result of dayResults) {
+    for (const date of result.diagnostics.analogDayDates) {
+      analogDayDates.add(date);
+    }
+  }
+
+  const firstResult = dayResults[0];
+
+  return {
+    modelVersion: FORECAST_MODEL_VERSION,
+    weatherSource: "open-meteo",
+    generatedAt: now,
     plantId,
-    latitude,
-    longitude,
-    capacityKw,
-    now,
-    horizonEnd,
-    weatherPoints,
-    calibration,
-    analogShapeByDayUtc,
-    analogWeight,
-    observedElapsedToday,
+    intervalMinutes: FORECAST_INTERVAL_MINUTES,
+    intervals: dayResults.flatMap((result) => result.intervals),
+    observedToday: firstResult?.observedToday ?? [],
+    diagnostics: {
+      calibrationSampleCount: calibration.sampleCount,
+      calibrationLookbackDays: calibration.lookbackDays,
+      analogDayDates: Array.from(analogDayDates).sort(),
+      analogWeight: firstResult?.diagnostics.analogWeight ?? DEFAULT_ANALOG_WEIGHT,
+      recentBias: firstResult?.diagnostics.recentBias ?? 1,
+      weatherFallbackUsed: dayResults.some((result) => result.diagnostics.weatherFallbackUsed),
+    },
+  };
+}
+
+/** Long enough to cover "the rest of the current calendar month" starting from any day of any month (max 31 days), plus the rolling 7-day weekly stat, with a small buffer. */
+export const DEFAULT_EXTENDED_HORIZON_DAYS = 35;
+
+/** Rounds down to the current hour (UTC) — the cache-key granularity for `getExtendedPvForecast` below, so every request within the same hour reuses one computation instead of each one re-running the full multi-day forecast. */
+function roundDownToHour(date: Date): Date {
+  const ms = 60 * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / ms) * ms);
+}
+
+async function computeExtendedPvForecastUncached(params: {
+  plantId: string;
+  organizationId: string;
+  latitude: number;
+  longitude: number;
+  capacityKw: number;
+  nowHourIso: string;
+  horizonDays: number;
+}): Promise<PvForecastResult> {
+  return generatePvForecast({
+    plantId: params.plantId,
+    organizationId: params.organizationId,
+    latitude: params.latitude,
+    longitude: params.longitude,
+    capacityKw: params.capacityKw,
+    now: new Date(params.nowHourIso),
+    horizonHours: params.horizonDays * 24,
   });
 }
+
+/**
+ * Cached, multi-week/month-horizon forecast (Live Energy Forecast
+ * Integration milestone) — used only for the Weekly/Monthly forecast
+ * summary stats and the Week/Month chart's future-portion overlay, never
+ * for Today's near-term chart (that stays on the always-fresh, uncached
+ * `generatePvForecast` above, since "remaining today" genuinely needs
+ * precise, current "now"). Cached for 1 hour per plant (`nowHourIso`
+ * rounds down to the current hour so repeated calls within that hour hit
+ * the same key) — a multi-week forecast has no reason to be recomputed on
+ * every Dashboard render, per this milestone's explicit performance
+ * requirement.
+ */
+export const getExtendedPvForecast = unstable_cache(computeExtendedPvForecastUncached, ["pv-forecast-extended"], {
+  revalidate: 3600,
+});
+
+export { roundDownToHour };

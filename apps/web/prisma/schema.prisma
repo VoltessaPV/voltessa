@@ -336,6 +336,7 @@ model Organization {
   automationEvents   AutomationEvent[]
   deviceTelemetry    DeviceTelemetry[]
   plantDailyKpis     PlantDailyKpi[]
+  pvForecastRecords  PvForecastRecord[]
 
   billingInformation   BillingInformation?
   energyMarketSettings EnergyMarketSettings?
@@ -383,6 +384,7 @@ model Plant {
   telemetrySnapshots PlantTelemetrySnapshot[]
   deviceTelemetry    DeviceTelemetry[]
   dailyKpis          PlantDailyKpi[]
+  pvForecastRecords  PvForecastRecord[]
 
   @@unique([organizationId, stationCode])
 }
@@ -1285,4 +1287,84 @@ model HistoricalImportJob {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, status])
+}
+
+/// Which layer of the forecast hierarchy (Live Energy Forecast Integration
+/// milestone) produced this interval — see `lib/forecast/forecast-tiers.ts`.
+/// SHORT: real Open-Meteo weather forecast. MEDIUM: weather forecast
+/// unavailable, physical/clear-sky model + calibration + analog days.
+/// LONG: no weather forecast at all this far out — climatological analog
+/// (day-of-year + daylight geometry + historical production shape only).
+enum ForecastHorizonTier {
+  SHORT
+  MEDIUM
+  LONG
+}
+
+/// Simple, non-statistical confidence label (Live Energy Forecast
+/// Integration milestone) — never a fabricated precise percentage, see
+/// `lib/forecast/forecast-tiers.ts`'s `classifyConfidence`.
+enum ForecastConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+/// PV Generation Forecast persistence (Live Energy Forecast Integration
+/// milestone). One row per (plantId, issuedAt, targetIntervalStart) — a
+/// forecast VINTAGE, never overwritten once written. Only `actualKwh`/
+/// `errorKwh`/`errorPct`/`reconciledAt` are ever updated after insert, once
+/// the target interval has elapsed and real reconstructed Available PV
+/// exists (`lib/forecast/forecast-persistence.ts`) — every other field is
+/// immutable, so later analysis can always answer "what did we predict at
+/// the time" instead of comparing reality against a forecast recomputed
+/// after the fact.
+model PvForecastRecord {
+  id String @id @default(cuid())
+
+  organizationId String
+  plantId        String
+
+  /// When this forecast was generated - identifies the vintage.
+  issuedAt DateTime
+  /// The 15-minute interval this row predicts.
+  targetIntervalStart DateTime
+
+  horizonTier     ForecastHorizonTier
+  /// (targetIntervalStart - issuedAt) in minutes - the raw lead time this
+  /// forecast was made at, for later "error by forecast horizon" analysis.
+  leadTimeMinutes Int
+
+  forecastKw  Decimal @db.Decimal(10, 3)
+  forecastKwh Decimal @db.Decimal(10, 3)
+
+  modelVersion  String
+  weatherSource String
+
+  confidence ForecastConfidence?
+
+  /// Diagnostic inputs actually used for this interval - GHI, cloud cover,
+  /// temperature, calibration factor, analog day dates/weight, clear-sky
+  /// fallback flag, etc. Free-form (Json) since exactly what's captured
+  /// evolves with the model, but always enough to reconstruct why this
+  /// number came out the way it did.
+  inputs Json
+
+  /// Filled in once the interval has elapsed and reconstructAvailablePv has
+  /// a real value for it - never historical export, see
+  /// available-pv-reconstruction.ts. Null until reconciled.
+  actualKwh    Decimal?  @db.Decimal(10, 3)
+  errorKwh     Decimal?  @db.Decimal(10, 3)
+  errorPct     Decimal?  @db.Decimal(8, 3)
+  reconciledAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plant        Plant        @relation(fields: [plantId], references: [id], onDelete: Cascade)
+
+  @@unique([plantId, issuedAt, targetIntervalStart])
+  @@index([plantId, targetIntervalStart])
+  @@index([plantId, actualKwh])
+  @@index([organizationId, plantId, issuedAt])
 }

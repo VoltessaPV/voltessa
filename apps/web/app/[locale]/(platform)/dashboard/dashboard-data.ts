@@ -98,6 +98,8 @@ import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/re
 import {
   formatDateInZone,
   formatPeriodRangeLabel,
+  localDayBoundsUtc,
+  localMonthBoundsUtc,
   periodBoundsUtc,
   previousPeriodBoundsUtc,
   type CalendarPeriod,
@@ -123,8 +125,14 @@ import {
 } from "@/lib/telemetry/canonical";
 import { resolvePlantContext } from "@/lib/telemetry/plant-context";
 import { getSolarWeather, type SolarWeather } from "@/lib/weather/openMeteo";
-import { DEFAULT_HORIZON_HOURS, generatePvForecast } from "@/lib/forecast/pv-forecast-engine";
-import type { PvForecastResult } from "@/lib/forecast/types";
+import {
+  DEFAULT_EXTENDED_HORIZON_DAYS,
+  generatePvForecast,
+  getExtendedPvForecast,
+  roundDownToHour,
+} from "@/lib/forecast/pv-forecast-engine";
+import { persistForecastVintageIfDue, reconcileForecastActuals } from "@/lib/forecast/forecast-persistence";
+import type { ForecastConfidence, PvForecastInterval, PvForecastResult } from "@/lib/forecast/types";
 
 import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
 import { getProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
@@ -187,13 +195,29 @@ export type DashboardKpiComparison = {
  */
 export type EnergyFlowState = EnergyFlowResult;
 
-/** One point on the Live Energy Chart — `null` fields mean no real sample at that exact timestamp (a gap, or a not-yet-happened future time), never fabricated/interpolated. */
+/**
+ * One point on the Live Energy Chart — `null` fields mean no real sample at
+ * that exact timestamp (a gap, or a not-yet-happened future time), never
+ * fabricated/interpolated.
+ *
+ * Live Energy Forecast Integration milestone: `forecastPvKw` carries the
+ * forecast engine's own PV estimate (Zero-Export-independent, battery-
+ * independent — see `lib/forecast/pv-forecast-engine.ts`), only ever set
+ * for buckets at/after "now" within a period that genuinely covers the
+ * present (see `mergeForecastIntoChartSeries`) — `null` for every elapsed
+ * bucket (those show through `pvKw` instead) and for any period that's
+ * entirely in the past. Same dual kW/kWh meaning as `pvKw` itself: an
+ * instantaneous kW reading for Today, a per-bucket kWh total for Week/
+ * Month (see `chartUnit`) — never both a real reading and a forecast for
+ * the same point.
+ */
 export type EnergyFlowPoint = {
   time: number;
   pvKw: number | null;
   consumptionKw: number | null;
   gridImportKw: number | null;
   gridExportKw: number | null;
+  forecastPvKw: number | null;
 };
 
 export type DashboardMarketWidgetData = {
@@ -227,42 +251,49 @@ export type DashboardToolbarState = {
 };
 
 /**
- * One point on the Forecast card's chart — always on the same 15-minute,
- * midnight-aligned grid as `chartSeries`'s "today" mode. Exactly one of
- * `actualKw`/`forecastKw` is ever non-null for a given point: `actualKw`
- * for every elapsed interval (reconstructed Available PV, Zero-Export-
- * independent — never historical export), `forecastKw` for every interval
- * from "now" onward (the shipped forecast engine, unmodified). Both `null`
- * only for the brief in-progress 15-minute bucket telemetry hasn't fully
- * settled for yet, or for a bucket the forecast horizon doesn't reach —
- * never fabricated to avoid a gap.
+ * Live Energy Forecast Integration milestone. The compact forecast
+ * summary rendered inside/below the Live Energy card — every figure is
+ * always relative to real "now", regardless of which toolbar period
+ * (Today/Week/Month) the chart above happens to be displaying, since
+ * "what's forecast starting right now" doesn't depend on which historical
+ * period a user happens to be browsing.
+ *
+ * - `dailyForecastKwh`: total expected PV energy for the current calendar
+ *   day — today's real actual-so-far plus the forecast for the rest of
+ *   today. Deliberately distinct from `remainingTodayKwh` (forecast only,
+ *   from now onward) — the prior single "expected energy" framing (a
+ *   rolling next-8-hours window) was found to be the actual cause of an
+ *   apparent forecast-vs-actual mismatch a user reported (691.4 kWh over a
+ *   partial window vs. >1,000 kWh for a full historical day — not a
+ *   calculation defect): comparing a partial-day figure against a
+ *   full-day one always looks wrong even when the forecast itself is
+ *   correct. Having both an unambiguous full-day figure and an explicitly
+ *   labelled remaining-only figure removes that ambiguity structurally.
+ * - `remainingTodayKwh`: forecast only, from now through the end of today.
+ * - `weeklyForecastKwh`: the next 7 calendar days starting today (today's
+ *   actual-so-far + forecast for the rest of this rolling window) — a
+ *   deliberately different definition from the toolbar's own "Week" period
+ *   (always the Mon-Sun calendar week), since this stat is forward-looking
+ *   by definition, not the calendar week containing today.
+ * - `monthlyForecastKwh`: the entire current calendar month — real actual
+ *   production for every already-elapsed day, plus forecast for every day
+ *   (including today's remainder) that hasn't happened yet.
+ * - `peakForecastKw`: maximum forecast PV power for the remaining-today
+ *   window specifically (see `peakForecastKw`'s own label in the UI).
+ * - `confidence`: a simple, non-statistical label for the remaining-today
+ *   forecast specifically (see `lib/forecast/forecast-tiers.ts`) — `null`
+ *   only when there is no remaining-today forecast left to grade (e.g.
+ *   viewed after sunset with nothing left today).
  */
-export type ForecastChartPoint = {
-  time: number;
-  actualKw: number | null;
-  forecastKw: number | null;
-};
-
-/**
- * Forecast Card Visualization milestone. `peakForecastKw`/
- * `expectedEnergyKwh` describe only the *remaining* portion of today
- * (from "now" through midnight) — deliberately not the engine's full 24h
- * horizon and not a rolling "next N hours" window. The prior "next 8h"
- * framing was found to be the actual cause of an apparent forecast-vs-
- * actual mismatch a user reported (691.4 kWh over a partial window vs.
- * >1,000 kWh for a full historical day — not a calculation defect, see the
- * milestone's own investigation): comparing a partial-day figure against a
- * full-day one always looks wrong even when the underlying forecast is
- * correct. "Remaining today" is the one framing that's honestly comparable
- * to nothing else on this card, so there is no equivalent ambiguity left.
- */
-export type DashboardForecastChartData = {
-  chartSeries: ForecastChartPoint[];
+export type ForecastSummary = {
+  dailyForecastKwh: number | null;
+  remainingTodayKwh: number | null;
+  weeklyForecastKwh: number | null;
+  monthlyForecastKwh: number | null;
   peakForecastKw: number | null;
-  expectedEnergyKwh: number | null;
-  intervalMinutes: 15;
-  /** The underlying engine's own full forecast horizon (see `DEFAULT_HORIZON_HOURS`) — a caption fact, not a claim about how far the *chart* itself extends (the chart is clipped to today, see `chartSeries` above). */
-  horizonHours: number;
+  confidence: ForecastConfidence | null;
+  modelVersion: string;
+  weatherSource: string;
 };
 
 export type DashboardPageData =
@@ -286,26 +317,17 @@ export type DashboardPageData =
       /** `null` whenever the plant has no configured coordinates, or Open-Meteo is unavailable — see `fetchSolarWeatherSafe`. */
       weather: SolarWeather | null;
       /**
-       * PV Generation Forecast milestone (`lib/forecast/pv-forecast-engine.ts`)
-       * — `null` whenever the plant is missing coordinates/capacity, the
-       * period isn't "today" (a forecast is inherently about "now onward",
-       * same Category-A convention as `inverters`/`nowAnnotation` above), or
-       * every underlying data source failed. Never a mockup — see
-       * `fetchPvForecastSafe`.
-       *
-       * Forecast Card Visualization milestone: pre-shaped for the
-       * Dashboard's Forecast card chart specifically (a continuous
-       * actual-then-forecast series over today's calendar day, plus the
-       * *remaining-today* peak/expected-energy figures — deliberately not a
-       * rolling "next N hours" window, which is what produced an apparent
-       * mismatch against a full historical day's total before this
-       * milestone). The underlying `PvForecastResult` (full 24h horizon,
-       * every layer's components) remains available directly from
+       * Live Energy Forecast Integration milestone — `null` only when the
+       * plant is missing coordinates/capacity, or every underlying forecast
+       * source failed. Unlike the rest of this page's Category-A fields,
+       * this is fetched regardless of the selected toolbar period (see
+       * `ForecastSummary`'s own doc comment for why). The full
+       * `PvForecastResult`/extended forecast remain available directly from
        * `lib/forecast/pv-forecast-engine.ts` for any future trading/
-       * scheduling consumer — this field is the Dashboard's own derived view
-       * of it, not a replacement for it.
+       * scheduling consumer — this field is only the Dashboard's own
+       * derived summary view of them.
        */
-      forecastChart: DashboardForecastChartData | null;
+      forecastSummary: ForecastSummary | null;
     } & DashboardToolbarState);
 
 /**
@@ -326,7 +348,7 @@ export type DashboardPageData =
  */
 function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
   if (point.productionKw === null) {
-    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null, forecastPvKw: null };
   }
 
   if (point.exportKw === null || point.importKw === null) {
@@ -336,13 +358,14 @@ function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
       consumptionKw: null,
       gridImportKw: null,
       gridExportKw: null,
+      forecastPvKw: null,
     };
   }
 
   const flow = deriveEnergyFlow(point.productionKw, point.exportKw, point.importKw);
 
   if (!flow.available) {
-    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null };
+    return { time: point.timestamp.getTime(), pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null, forecastPvKw: null };
   }
 
   if (!flow.gridAvailable) {
@@ -352,6 +375,7 @@ function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
       consumptionKw: null,
       gridImportKw: null,
       gridExportKw: null,
+      forecastPvKw: null,
     };
   }
 
@@ -361,6 +385,7 @@ function toEnergyFlowPoint(point: PlantTelemetrySeriesPoint): EnergyFlowPoint {
     consumptionKw: flow.consumption.consistent ? flow.consumption.kw : null,
     gridImportKw: flow.direction === "importing" ? flow.gridKw : 0,
     gridExportKw: flow.direction === "exporting" ? flow.gridKw : 0,
+    forecastPvKw: null,
   };
 }
 
@@ -389,7 +414,7 @@ function buildFullDayChartSeries(
     grid.push(
       point
         ? toEnergyFlowPoint(point)
-        : { time: t, pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null },
+        : { time: t, pvKw: null, consumptionKw: null, gridImportKw: null, gridExportKw: null, forecastPvKw: null },
     );
   }
 
@@ -473,7 +498,81 @@ function buildPeriodChartSeries(
     gridExportKw: exportedByBucket.has(key)
       ? Math.round((exportedByBucket.get(key) as number) * 100) / 100
       : null,
+    forecastPvKw: null,
   }));
+}
+
+/**
+ * Live Energy Forecast Integration milestone. Groups a forecast's own
+ * intervals into the exact same Sofia-local calendar-day buckets
+ * `buildPeriodChartSeries` uses (`bucketKey`), summing each day's
+ * `forecastKwh` into one per-day total — only for intervals strictly at
+ * or after `now` and before `periodEnd`, so a bucket that's already
+ * elapsed never gets a forecast value alongside its real actual one. Keyed
+ * by that day's own local-midnight instant (`localDayBoundsUtc`) so the
+ * result lines up with `buildPeriodChartSeries`'s own bucket timestamps
+ * exactly, including for a future day that has no actual row yet at all
+ * (and therefore isn't in `bucketInstant` on that side).
+ */
+function buildDailyForecastBucketMap(
+  intervals: PvForecastInterval[],
+  now: Date,
+  periodEnd: Date,
+): Map<number, number> {
+  const kwhByDayKey = new Map<string, number>();
+  const instantByDayKey = new Map<string, number>();
+
+  for (const interval of intervals) {
+    if (interval.timestamp.getTime() < now.getTime() || interval.timestamp.getTime() >= periodEnd.getTime()) {
+      continue;
+    }
+    const key = bucketKey(interval.timestamp, "day");
+    kwhByDayKey.set(key, (kwhByDayKey.get(key) ?? 0) + interval.forecastKwh);
+    if (!instantByDayKey.has(key)) {
+      instantByDayKey.set(key, localDayBoundsUtc(interval.timestamp, BULGARIA_TIMEZONE).start.getTime());
+    }
+  }
+
+  const result = new Map<number, number>();
+  for (const [key, kwh] of kwhByDayKey) {
+    result.set(instantByDayKey.get(key) as number, Math.round(kwh * 100) / 100);
+  }
+  return result;
+}
+
+/**
+ * Merges a forecast-by-bucket map (kW for Today's 15-minute grid, kWh per
+ * day for Week/Month — see `EnergyFlowPoint.forecastPvKw`'s own doc
+ * comment) into an already-built actual chart series. A future bucket
+ * that has no actual row at all yet (e.g. a day later this week/month) is
+ * appended as a brand-new point — every other field `null` — rather than
+ * silently dropped, so the chart's X-axis genuinely extends to cover it.
+ */
+function mergeForecastIntoChartSeries(
+  chartSeries: EnergyFlowPoint[],
+  forecastByBucket: Map<number, number>,
+): EnergyFlowPoint[] {
+  if (forecastByBucket.size === 0) {
+    return chartSeries;
+  }
+
+  const existingTimes = new Set(chartSeries.map((point) => point.time));
+  const merged = chartSeries.map((point) => ({ ...point, forecastPvKw: forecastByBucket.get(point.time) ?? point.forecastPvKw }));
+
+  const extraTimes = [...forecastByBucket.keys()].filter((time) => !existingTimes.has(time));
+  for (const time of extraTimes) {
+    merged.push({
+      time,
+      pvKw: null,
+      consumptionKw: null,
+      gridImportKw: null,
+      gridExportKw: null,
+      forecastPvKw: forecastByBucket.get(time) as number,
+    });
+  }
+
+  merged.sort((a, b) => a.time - b.time);
+  return merged;
 }
 
 /**
@@ -571,6 +670,65 @@ async function fetchPvForecastSafe(params: {
 }
 
 /**
+ * Same "never break the Dashboard" convention as `fetchPvForecastSafe`,
+ * for the cached, multi-week/month-horizon forecast — used only for the
+ * Weekly/Monthly summary figures and the Week/Month chart's future-portion
+ * overlay. `now` is rounded down to the hour before being handed to
+ * `getExtendedPvForecast` so repeated calls within the same hour reuse its
+ * cached result (see that function's own doc comment).
+ */
+async function fetchExtendedPvForecastSafe(params: {
+  plantId: string;
+  organizationId: string;
+  latitude: number | null;
+  longitude: number | null;
+  capacityKw: number | null;
+  now: Date;
+}): Promise<PvForecastResult | null> {
+  const { plantId, organizationId, latitude, longitude, capacityKw, now } = params;
+  if (latitude === null || longitude === null || capacityKw === null) {
+    return null;
+  }
+
+  try {
+    return await getExtendedPvForecast({
+      plantId,
+      organizationId,
+      latitude,
+      longitude,
+      capacityKw,
+      nowHourIso: roundDownToHour(now).toISOString(),
+      horizonDays: DEFAULT_EXTENDED_HORIZON_DAYS,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Real actual production for every already-elapsed day of the current
+ * calendar month (`[monthStart, todayStart)` — today itself is handled
+ * separately via `observedToday`, never double-counted here) — the exact
+ * same `getDailyTotals`/`PlantDailyKpi` source the KPI cards already use,
+ * never a second production calculation. `null` (not `0`) whenever the
+ * range is empty (today is the 1st of the month) or the query fails, so
+ * `computeForecastSummary` never silently treats "no data" as "zero
+ * production".
+ */
+async function fetchMonthActualSoFarSafe(plantId: string, monthStart: Date, todayStart: Date): Promise<number | null> {
+  if (todayStart.getTime() <= monthStart.getTime()) {
+    return null;
+  }
+
+  try {
+    const totals = await getDailyTotals(plantId, monthStart, todayStart);
+    return totals.available ? totals.dailyProduction : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Forecast Card Visualization milestone. Builds the Forecast card's own
  * chart series and "remaining today" stats directly from `PvForecastResult`
  * — `periodStart`/`periodEnd` here are the exact same Sofia-local calendar-
@@ -581,31 +739,66 @@ async function fetchPvForecastSafe(params: {
  * different purpose — per-day analog/calibration scaling — and would not
  * line up with a Sofia-local day boundary).
  */
-function buildForecastChartData(
-  periodStart: Date,
-  periodEnd: Date,
-  forecast: PvForecastResult,
-): DashboardForecastChartData {
-  const actualByTime = new Map(forecast.observedToday.map((point) => [point.timestamp.getTime(), point.actualKw]));
+/**
+ * Live Energy Forecast Integration milestone. Computes the compact
+ * forecast summary (Daily/Remaining today/Weekly/Monthly/Peak/confidence)
+ * from three inputs, all already fetched: `todayForecast` (the always-
+ * fresh, uncached 24h forecast), `extended` (the cached ~35-day forecast,
+ * used only for the Weekly/Monthly totals' *future* portion), and
+ * `monthActualSoFarKwh` (real historical production for every day of the
+ * current calendar month strictly before today, via the exact same
+ * `getDailyTotals` KPI cards already use — never a second production
+ * calculation).
+ */
+function computeForecastSummary(params: {
+  now: Date;
+  todayForecast: PvForecastResult;
+  extended: PvForecastResult | null;
+  monthActualSoFarKwh: number | null;
+}): ForecastSummary {
+  const { now, todayForecast, extended, monthActualSoFarKwh } = params;
 
-  const todayIntervals = forecast.intervals.filter(
-    (interval) => interval.timestamp.getTime() >= periodStart.getTime() && interval.timestamp.getTime() < periodEnd.getTime(),
+  const todayBounds = localDayBoundsUtc(now, BULGARIA_TIMEZONE);
+  const monthBounds = localMonthBoundsUtc(now, BULGARIA_TIMEZONE);
+  const weekEnd = new Date(todayBounds.start.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+  const todayActualSoFarKwh = todayForecast.observedToday.reduce((sum, point) => sum + point.actualKwh, 0);
+
+  const remainingTodayIntervals = todayForecast.intervals.filter(
+    (interval) => interval.timestamp.getTime() < todayBounds.end.getTime(),
   );
-  const forecastByTime = new Map(todayIntervals.map((interval) => [interval.timestamp.getTime(), interval.forecastKw]));
+  const remainingTodayKwh =
+    remainingTodayIntervals.length > 0 ? remainingTodayIntervals.reduce((sum, i) => sum + i.forecastKwh, 0) : null;
+  const peakForecastKw =
+    remainingTodayIntervals.length > 0 ? Math.max(...remainingTodayIntervals.map((i) => i.forecastKw)) : null;
+  const confidence = remainingTodayIntervals[0]?.confidence ?? null;
 
-  const stepMs = 15 * 60 * 1000;
-  const chartSeries: ForecastChartPoint[] = [];
-  for (let t = periodStart.getTime(); t < periodEnd.getTime(); t += stepMs) {
-    chartSeries.push({ time: t, actualKw: actualByTime.get(t) ?? null, forecastKw: forecastByTime.get(t) ?? null });
+  const dailyForecastKwh = todayActualSoFarKwh + (remainingTodayKwh ?? 0);
+
+  let weeklyForecastKwh: number | null = null;
+  let monthlyForecastKwh: number | null = null;
+
+  if (extended) {
+    const weekForecastKwh = extended.intervals
+      .filter((interval) => interval.timestamp.getTime() >= now.getTime() && interval.timestamp.getTime() < weekEnd.getTime())
+      .reduce((sum, interval) => sum + interval.forecastKwh, 0);
+    weeklyForecastKwh = todayActualSoFarKwh + weekForecastKwh;
+
+    const monthForecastRemainingKwh = extended.intervals
+      .filter((interval) => interval.timestamp.getTime() >= now.getTime() && interval.timestamp.getTime() < monthBounds.end.getTime())
+      .reduce((sum, interval) => sum + interval.forecastKwh, 0);
+    monthlyForecastKwh = (monthActualSoFarKwh ?? 0) + todayActualSoFarKwh + monthForecastRemainingKwh;
   }
 
   return {
-    chartSeries,
-    peakForecastKw: todayIntervals.length > 0 ? Math.max(...todayIntervals.map((interval) => interval.forecastKw)) : null,
-    expectedEnergyKwh:
-      todayIntervals.length > 0 ? todayIntervals.reduce((sum, interval) => sum + interval.forecastKwh, 0) : null,
-    intervalMinutes: 15,
-    horizonHours: DEFAULT_HORIZON_HOURS,
+    dailyForecastKwh: Math.round(dailyForecastKwh * 100) / 100,
+    remainingTodayKwh: remainingTodayKwh !== null ? Math.round(remainingTodayKwh * 100) / 100 : null,
+    weeklyForecastKwh: weeklyForecastKwh !== null ? Math.round(weeklyForecastKwh * 100) / 100 : null,
+    monthlyForecastKwh: monthlyForecastKwh !== null ? Math.round(monthlyForecastKwh * 100) / 100 : null,
+    peakForecastKw,
+    confidence,
+    modelVersion: todayForecast.modelVersion,
+    weatherSource: todayForecast.weatherSource,
   };
 }
 
@@ -681,50 +874,76 @@ export async function getDashboardPageData(
     ? await getLatestInverterTelemetryForDevices(inverterDevices.map((device) => device.id))
     : [];
 
+  const latitude = plant.latitude?.toNumber() ?? null;
+  const longitude = plant.longitude?.toNumber() ?? null;
+  const capacityKw = plant.capacityKw?.toNumber() ?? null;
+
+  // Live Energy Forecast Integration milestone: the forecast summary is
+  // always about real "now", regardless of which toolbar period (Today/
+  // Week/Month) the chart above is displaying (see `ForecastSummary`'s own
+  // doc comment) — so, unlike every other Category-A field on this page,
+  // it is fetched unconditionally rather than gated on `isToday`. The
+  // extended (cached) forecast and the current month's real elapsed-day
+  // totals are only needed to compute the Weekly/Monthly summary figures.
+  const monthBoundsForSummary = localMonthBoundsUtc(now, BULGARIA_TIMEZONE);
+  const todayStartForSummary = localDayBoundsUtc(now, BULGARIA_TIMEZONE).start;
+
   // Dashboard & Market Analytics milestone: the Today chart still needs
   // the real 5-minute telemetry grid (`chartSeriesRaw`), but Week/Month/
   // Year build their chart from `PlantDailyKpi`/`settlementEnergySeries`
   // instead (see `buildPeriodChartSeries`) — fetching a full period's worth
   // of 5-minute samples for that would be a wasted query, so it's skipped
   // entirely whenever `period !== "today"`.
-  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather, forecast] =
+  const [
+    marketData,
+    production,
+    chartSeriesRaw,
+    dailyTotals,
+    previousPeriodDailyTotals,
+    weather,
+    todayForecast,
+    extendedForecast,
+    monthActualSoFar,
+  ] = await Promise.all([
+    getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
+    getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
+    period === "today"
+      ? getPlantTelemetrySeries(plant.id, periodStart, seriesEnd)
+      : Promise.resolve([]),
+    // A `[dayStart, dayEnd)` range always resolves to zero or one day, so
+    // this one canonical call serves both "today" and Week/Month/Year —
+    // see `getDailyTotals`'s own doc comment.
+    getDailyTotals(plant.id, periodStart, periodEnd),
+    period === "today"
+      ? Promise.resolve(undefined)
+      : (() => {
+          const { start: previousStart, end: previousEnd } = previousPeriodBoundsUtc(
+            period,
+            periodStart,
+            BULGARIA_TIMEZONE,
+          );
+          return getDailyTotals(plant.id, previousStart, previousEnd);
+        })(),
+    fetchSolarWeatherSafe(latitude, longitude),
+    fetchPvForecastSafe({ plantId: plant.id, organizationId, latitude, longitude, capacityKw }),
+    fetchExtendedPvForecastSafe({ plantId: plant.id, organizationId, latitude, longitude, capacityKw, now }),
+    fetchMonthActualSoFarSafe(plant.id, monthBoundsForSummary.start, todayStartForSummary),
+  ]);
+
+  const forecastSummary = todayForecast
+    ? computeForecastSummary({ now, todayForecast, extended: extendedForecast, monthActualSoFarKwh: monthActualSoFar })
+    : null;
+
+  // Persistence is opportunistic, not on the critical path to a slow page:
+  // both are cheap no-ops once already done for this hour/lookback window
+  // (see `lib/forecast/forecast-persistence.ts`'s own doc comment on why
+  // this runs from here rather than a new scheduled job).
+  if (todayForecast) {
     await Promise.all([
-      getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
-      getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
-      period === "today"
-        ? getPlantTelemetrySeries(plant.id, periodStart, seriesEnd)
-        : Promise.resolve([]),
-      // A `[dayStart, dayEnd)` range always resolves to zero or one day, so
-      // this one canonical call serves both "today" and Week/Month/Year —
-      // see `getDailyTotals`'s own doc comment.
-      getDailyTotals(plant.id, periodStart, periodEnd),
-      period === "today"
-        ? Promise.resolve(undefined)
-        : (() => {
-            const { start: previousStart, end: previousEnd } = previousPeriodBoundsUtc(
-              period,
-              periodStart,
-              BULGARIA_TIMEZONE,
-            );
-            return getDailyTotals(plant.id, previousStart, previousEnd);
-          })(),
-      fetchSolarWeatherSafe(
-        plant.latitude?.toNumber() ?? null,
-        plant.longitude?.toNumber() ?? null,
-      ),
-      // Category A ("current state"), same convention as inverters/
-      // `nowAnnotation` above — a forecast is inherently "now onward", so a
-      // browsed historical day never shows one.
-      isToday
-        ? fetchPvForecastSafe({
-            plantId: plant.id,
-            organizationId,
-            latitude: plant.latitude?.toNumber() ?? null,
-            longitude: plant.longitude?.toNumber() ?? null,
-            capacityKw: plant.capacityKw?.toNumber() ?? null,
-          })
-        : Promise.resolve(null),
-    ]);
+      persistForecastVintageIfDue({ plantId: plant.id, organizationId, forecast: todayForecast }),
+      reconcileForecastActuals({ plantId: plant.id, organizationId }),
+    ]).catch(() => undefined);
+  }
 
   const revenue: RevenueSummary = marketData.dataAvailable
     ? computeExportRevenue(marketData.series, production.settlementEnergySeries)
@@ -776,7 +995,7 @@ export async function getDashboardPageData(
   }
 
   const energyFlow = buildEnergyFlow(production);
-  const chartSeries =
+  const chartSeriesActual =
     period === "today"
       ? buildFullDayChartSeries(periodStart, periodEnd, chartSeriesRaw)
       : buildPeriodChartSeries(
@@ -784,6 +1003,29 @@ export async function getDashboardPageData(
           dailyTotals.available ? dailyTotals.days : [],
           production.settlementEnergySeries,
         );
+
+  // Live Energy Forecast Integration milestone: overlay the forecast onto
+  // the SAME chart, only when the selected period genuinely covers "now"
+  // (a period entirely in the past never gets a forecast line - there is
+  // nothing left to forecast). Today uses the always-fresh 24h forecast at
+  // its native 15-minute/kW resolution; Week/Month use the cached extended
+  // forecast, summed to the same per-day/kWh buckets the actual series
+  // already uses.
+  const periodCoversNow = periodEnd.getTime() > now.getTime();
+  let forecastByBucket = new Map<number, number>();
+  if (periodCoversNow && todayForecast) {
+    if (period === "today") {
+      forecastByBucket = new Map(
+        todayForecast.intervals
+          .filter((interval) => interval.timestamp.getTime() < periodEnd.getTime())
+          .map((interval) => [interval.timestamp.getTime(), interval.forecastKw]),
+      );
+    } else if ((period === "week" || period === "month") && extendedForecast) {
+      forecastByBucket = buildDailyForecastBucketMap(extendedForecast.intervals, now, periodEnd);
+    }
+  }
+  const chartSeries = mergeForecastIntoChartSeries(chartSeriesActual, forecastByBucket);
+
   const chartUnit: "kW" | "kWh" = period === "today" ? "kW" : "kWh";
   const nowAnnotation = buildNowAnnotation(energyFlow);
 
@@ -845,6 +1087,6 @@ export async function getDashboardPageData(
     market: { currentPrice, exportRecommended, threshold },
     eventLog: marketData.dataAvailable ? marketData.eventLog : [],
     weather,
-    forecastChart: forecast ? buildForecastChartData(periodStart, periodEnd, forecast) : null,
+    forecastSummary,
   };
 }
