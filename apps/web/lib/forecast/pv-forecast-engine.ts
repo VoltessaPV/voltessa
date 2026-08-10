@@ -469,6 +469,38 @@ async function computeExtendedPvForecastUncached(params: {
   });
 }
 
+const getExtendedPvForecastCached = unstable_cache(computeExtendedPvForecastUncached, ["pv-forecast-extended"], {
+  revalidate: 3600,
+});
+
+/**
+ * `unstable_cache`'s underlying cache handler round-trips its return value
+ * through JSON on a cache HIT (the value that comes back from Next's cache
+ * store, as opposed to a live/cold call, which returns the exact in-memory
+ * object `computeExtendedPvForecastUncached` constructed) — which silently
+ * turns every `Date` field into a plain ISO string, since `JSON.stringify`
+ * has no `Date` representation and `JSON.parse` never reconstructs one.
+ * `PvForecastResult`'s type still declares these as `Date` (correct for a
+ * cache MISS), so any caller trusting that type and calling
+ * `.timestamp.getTime()` crashes the instant a cache HIT hands back a
+ * string instead — this is exactly the production incident this function
+ * exists to prevent. Every `Date`-typed field is re-hydrated here,
+ * unconditionally, so every caller gets a real `Date` instance regardless
+ * of whether the value came from cache.
+ */
+function reviveDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+function reviveForecastResult(result: PvForecastResult): PvForecastResult {
+  return {
+    ...result,
+    generatedAt: reviveDate(result.generatedAt),
+    intervals: result.intervals.map((interval) => ({ ...interval, timestamp: reviveDate(interval.timestamp) })),
+    observedToday: result.observedToday.map((point) => ({ ...point, timestamp: reviveDate(point.timestamp) })),
+  };
+}
+
 /**
  * Cached, multi-week/month-horizon forecast (Live Energy Forecast
  * Integration milestone) — used only for the Weekly/Monthly forecast
@@ -481,8 +513,17 @@ async function computeExtendedPvForecastUncached(params: {
  * every Dashboard render, per this milestone's explicit performance
  * requirement.
  */
-export const getExtendedPvForecast = unstable_cache(computeExtendedPvForecastUncached, ["pv-forecast-extended"], {
-  revalidate: 3600,
-});
+export async function getExtendedPvForecast(params: {
+  plantId: string;
+  organizationId: string;
+  latitude: number;
+  longitude: number;
+  capacityKw: number;
+  nowHourIso: string;
+  horizonDays: number;
+}): Promise<PvForecastResult> {
+  const result = await getExtendedPvForecastCached(params);
+  return reviveForecastResult(result);
+}
 
 export { roundDownToHour };
