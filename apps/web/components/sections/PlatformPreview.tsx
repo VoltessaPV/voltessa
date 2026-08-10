@@ -193,6 +193,7 @@ function buildSampleForecastSummary(): ForecastSummary {
     confidence: "HIGH",
     modelVersion: "pv-forecast-v1",
     weatherSource: "open-meteo",
+    issuedAt: new Date(),
   };
 }
 

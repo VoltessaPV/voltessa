@@ -8,87 +8,73 @@
  * is what lets later analysis answer "what did we predict at the time",
  * not "what would we predict now, knowing what actually happened."
  *
- * Both functions here are called opportunistically from the Dashboard's
- * own data-fetching path (`dashboard-data.ts`) rather than from a new
- * scheduled job — there is no production cron infrastructure this session
- * can provision (see `docs/infrastructure/scaleway-production.md`; adding
- * a systemd timer requires direct VM access this environment doesn't
- * have). Both are throttled so a busy Dashboard doesn't turn into a
- * write/scan amplifier: `persistForecastVintageIfDue` is a no-op unless
- * the last vintage for this plant is over an hour old (one indexed SELECT
- * in the common case), and `reconcileForecastActuals` only ever looks at
- * a small, bounded batch of not-yet-reconciled rows.
+ * Dashboard Forecast Architecture Correction milestone: both functions
+ * here are now called ONLY from the scheduled route
+ * (`app/api/internal/forecast/refresh/route.ts`, a Scaleway systemd timer
+ * firing twice daily — see `docs/infrastructure/scaleway-production.md`),
+ * never from the Dashboard's own render path. Persisting a forecast is an
+ * expensive operation (weather fetch, calibration lookback, analog-day
+ * search, ~35 days x 96 intervals/day) — it belongs in a background job,
+ * not a request handler. The Dashboard only ever *reads* the latest
+ * already-persisted vintage (`lib/forecast/forecast-read.ts`).
  */
 import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { prisma } from "@/lib/prisma";
 import type { PvForecastResult } from "@/lib/forecast/types";
 
-const VINTAGE_MIN_GAP_MINUTES = 60;
 const RECONCILE_LOOKBACK_DAYS = 3;
 const RECONCILE_BATCH_LIMIT = 500;
 const BUCKET_MS = 15 * 60 * 1000;
 const NATIVE_SAMPLES_PER_BUCKET = 3;
 
 /**
- * Persists one forecast vintage — only the SHORT-tier portion (the real,
- * weather-driven next ~48h), never the MEDIUM/LONG-tier days: those are
- * dominated by a plant's own analog/climatology signal that barely moves
- * hour to hour, so persisting a fresh vintage of them every hour would
- * mostly store near-duplicate rows for comparatively little validation
- * value, and each one would be superseded by a materially better-informed
- * vintage long before its own target interval arrives anyway. A no-op
- * once a vintage already exists for this plant within the last
- * `VINTAGE_MIN_GAP_MINUTES` — this is what keeps "vintages" meaningfully
- * spaced (roughly hourly) without new scheduler infrastructure.
+ * Persists one forecast vintage in full — every interval across every
+ * horizon tier (SHORT/MEDIUM/LONG), not just the near-term SHORT portion:
+ * unlike the old opportunistic-from-the-Dashboard design, the Dashboard no
+ * longer computes a live forecast at all, so the persisted store must be
+ * the complete source of truth for Today/Week/Month alike, at the same
+ * 15-minute resolution the engine itself produces (display-time
+ * aggregation to daily buckets happens in `dashboard-data.ts`, never here
+ * — the persisted values themselves are never altered). Called once per
+ * scheduled run (no throttling needed — the caller IS the schedule).
+ * Returns the number of rows written, purely for the caller's own logging.
  */
-export async function persistForecastVintageIfDue(params: {
+export async function persistFullForecastVintage(params: {
   plantId: string;
   organizationId: string;
   forecast: PvForecastResult;
-}): Promise<void> {
+}): Promise<number> {
   const { plantId, organizationId, forecast } = params;
   const issuedAt = forecast.generatedAt;
 
-  const recentVintage = await prisma.pvForecastRecord
-    .findFirst({
-      where: { plantId, issuedAt: { gte: new Date(issuedAt.getTime() - VINTAGE_MIN_GAP_MINUTES * 60_000) } },
-      select: { id: true },
-    })
-    .catch(() => null);
-
-  if (recentVintage) {
-    return;
-  }
-
-  const rows = forecast.intervals
-    .filter((interval) => interval.horizonTier === "SHORT")
-    .map((interval) => ({
-      organizationId,
-      plantId,
-      issuedAt,
-      targetIntervalStart: interval.timestamp,
-      horizonTier: interval.horizonTier,
-      leadTimeMinutes: Math.round((interval.timestamp.getTime() - issuedAt.getTime()) / 60_000),
-      forecastKw: interval.forecastKw,
-      forecastKwh: interval.forecastKwh,
-      modelVersion: forecast.modelVersion,
-      weatherSource: forecast.weatherSource,
-      confidence: interval.confidence,
-      inputs: {
-        physicalWeatherKw: interval.components.physicalWeatherKw,
-        calibrationFactor: interval.components.calibrationFactor,
-        analogKw: interval.components.analogKw,
-        analogWeight: interval.components.analogWeight,
-        glidePathFactor: interval.components.glidePathFactor,
-        capacityClipped: interval.capacityClipped,
-      },
-    }));
+  const rows = forecast.intervals.map((interval) => ({
+    organizationId,
+    plantId,
+    issuedAt,
+    targetIntervalStart: interval.timestamp,
+    horizonTier: interval.horizonTier,
+    leadTimeMinutes: Math.round((interval.timestamp.getTime() - issuedAt.getTime()) / 60_000),
+    forecastKw: interval.forecastKw,
+    forecastKwh: interval.forecastKwh,
+    modelVersion: forecast.modelVersion,
+    weatherSource: forecast.weatherSource,
+    confidence: interval.confidence,
+    inputs: {
+      physicalWeatherKw: interval.components.physicalWeatherKw,
+      calibrationFactor: interval.components.calibrationFactor,
+      analogKw: interval.components.analogKw,
+      analogWeight: interval.components.analogWeight,
+      glidePathFactor: interval.components.glidePathFactor,
+      capacityClipped: interval.capacityClipped,
+    },
+  }));
 
   if (rows.length === 0) {
-    return;
+    return 0;
   }
 
-  await prisma.pvForecastRecord.createMany({ data: rows, skipDuplicates: true }).catch(() => undefined);
+  const result = await prisma.pvForecastRecord.createMany({ data: rows, skipDuplicates: true });
+  return result.count;
 }
 
 /**
