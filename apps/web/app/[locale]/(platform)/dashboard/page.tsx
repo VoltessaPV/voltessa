@@ -464,7 +464,7 @@ export default async function DashboardPage({
           <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
             <InvertersCard inverters={data.inverters} zeroExportActive={zeroExportActive} />
             <WeatherCard weather={data.weather} />
-            <GlidepathCard forecast={data.forecast} />
+            <GlidepathCard forecastChart={data.forecastChart} />
             <MarketEventLog entries={data.eventLog} />
           </section>
         </>

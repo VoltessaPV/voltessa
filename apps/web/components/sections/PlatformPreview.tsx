@@ -2,6 +2,7 @@
 
 import { Suspense, useState, type ReactElement } from "react";
 
+import type { DashboardForecastChartData, ForecastChartPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import CardHeader from "@/components/dashboard/CardHeader";
@@ -25,7 +26,6 @@ import {
   SNAPSHOT_PRODUCTION_DATA,
 } from "@/lib/demo/landing-snapshot";
 import { useElementWidth } from "@/lib/hooks/useElementWidth";
-import { FORECAST_MODEL_VERSION, type PvForecastResult } from "@/lib/forecast/types";
 import type { SolarWeather, SolarWeatherPoint } from "@/lib/weather/openMeteo";
 
 import BrowserBar from "../dashboard/BrowserBar";
@@ -138,43 +138,46 @@ const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
 
 /**
  * Same reasoning as `buildSampleSolarWeather` above — `GlidepathCard`'s real
- * `PvForecastResult` prop has no per-organization data this file can
- * freeze, and computing the real forecast here would mean this file
+ * `DashboardForecastChartData` prop has no per-organization data this file
+ * can freeze, and computing the real forecast here would mean this file
  * performing live I/O (weather fetch, historical DB reads), which it
- * deliberately never does. Hand-written illustrative sample data instead, a
- * plausible bell-shaped midday curve shaped exactly like `PvForecastResult`
- * so it renders through the identical, unmodified `GlidepathCard`
- * component production uses.
+ * deliberately never does. Hand-written illustrative sample data instead —
+ * a plausible ramp-up-to-peak-then-decline curve split into an "actual"
+ * half (before now) and a "forecast" half (from now on), shaped exactly
+ * like `DashboardForecastChartData` so it renders through the identical,
+ * unmodified `GlidepathCard`/`ForecastChart` components production uses.
+ * Built from `Date.now()` (not a frozen date) so the chart's real-time NOW
+ * divider always sits between the two halves, regardless of when a visitor
+ * loads the landing page.
  */
-function buildSamplePvForecast(): PvForecastResult {
-  const now = new Date();
-  const shape = [30, 55, 80, 100, 112, 118, 112, 100, 80, 55, 30, 10];
+function buildSampleForecastChart(): DashboardForecastChartData {
+  const nowRounded = Math.ceil(Date.now() / (15 * 60 * 1000)) * (15 * 60 * 1000);
+  const pastShape = [10, 18, 28, 40, 55, 70, 85, 98, 108, 113, 116, 118];
+  const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
+
+  const chartSeries: ForecastChartPoint[] = [
+    ...pastShape.map((kw, index) => ({
+      time: nowRounded - (pastShape.length - index) * 15 * 60 * 1000,
+      actualKw: kw,
+      forecastKw: null,
+    })),
+    ...futureShape.map((kw, index) => ({
+      time: nowRounded + index * 15 * 60 * 1000,
+      actualKw: null,
+      forecastKw: kw,
+    })),
+  ];
 
   return {
-    modelVersion: FORECAST_MODEL_VERSION,
-    weatherSource: "open-meteo",
-    generatedAt: now,
-    plantId: "sample",
+    chartSeries,
+    peakForecastKw: Math.max(...futureShape),
+    expectedEnergyKwh: futureShape.reduce((sum, kw) => sum + kw, 0) * 0.25,
     intervalMinutes: 15,
-    intervals: shape.map((forecastKw, index) => ({
-      timestamp: new Date(now.getTime() + index * 15 * 60 * 1000),
-      forecastKw,
-      forecastKwh: forecastKw * 0.25,
-      capacityClipped: false,
-      components: { physicalWeatherKw: forecastKw, calibrationFactor: 1, analogKw: null, analogWeight: 0, glidePathFactor: 1 },
-    })),
-    diagnostics: {
-      calibrationSampleCount: 0,
-      calibrationLookbackDays: 0,
-      analogDayDates: [],
-      analogWeight: 0,
-      recentBias: 1,
-      weatherFallbackUsed: false,
-    },
+    horizonHours: 24,
   };
 }
 
-const SAMPLE_PV_FORECAST = buildSamplePvForecast();
+const SAMPLE_FORECAST_CHART = buildSampleForecastChart();
 
 function DashboardPanel() {
   return (
@@ -215,7 +218,7 @@ function DashboardPanel() {
       <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
         <InvertersCard inverters={data.inverters} />
         <WeatherCard weather={SAMPLE_SOLAR_WEATHER} />
-        <GlidepathCard forecast={SAMPLE_PV_FORECAST} />
+        <GlidepathCard forecastChart={SAMPLE_FORECAST_CHART} />
         <MarketEventLog entries={data.eventLog} />
       </section>
     </PageContainer>
