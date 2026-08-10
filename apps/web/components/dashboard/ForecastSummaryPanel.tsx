@@ -32,6 +32,7 @@ function statValueLabel(kwh: number | null): string {
 
 export function ForecastSummaryPanel({ summary }: ForecastSummaryPanelProps) {
   const t = useTranslations("dashboard.forecastSummary");
+  const tTerm = useTranslations("terminology");
 
   if (!summary) {
     return <p className="mt-2 text-[11px] text-slate-600">{t("unavailable")}</p>;
@@ -52,7 +53,7 @@ export function ForecastSummaryPanel({ summary }: ForecastSummaryPanelProps) {
   return (
     <div className="mt-2.5 border-t border-white/10 pt-2.5">
       <div className="flex flex-wrap items-center justify-between gap-1">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{t("title")}</p>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{tTerm("forecast")}</p>
         {summary.confidence && (
           <span className="flex items-center gap-1.5 text-[11px] text-slate-400">
             <span className={`h-1.5 w-1.5 rounded-full ${CONFIDENCE_DOT_CLASS[summary.confidence]}`} />

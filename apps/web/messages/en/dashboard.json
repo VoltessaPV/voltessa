@@ -86,7 +86,6 @@
     }
   },
   "forecastSummary": {
-    "title": "Forecast",
     "unavailable": "Forecast unavailable — plant location or capacity not configured.",
     "dailyForecast": "Daily forecast",
     "remainingToday": "Remaining today",
