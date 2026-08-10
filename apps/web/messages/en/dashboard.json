@@ -87,7 +87,7 @@
   },
   "forecastSummary": {
     "subtitle": "Expected PV generation, 15-minute resolution",
-    "unavailable": "Forecast unavailable — plant location or capacity not configured.",
+    "unavailable": "Forecast unavailable — no forecast has been generated for this plant yet.",
     "dailyForecast": "Daily forecast",
     "remainingToday": "Remaining today",
     "weeklyForecast": "Weekly forecast (7d)",
@@ -98,7 +98,8 @@
       "high": "High",
       "medium": "Medium",
       "low": "Low"
-    }
+    },
+    "updated": "Forecast updated {time}"
   },
   "lastTelemetry": {
     "label": "Last telemetry:",

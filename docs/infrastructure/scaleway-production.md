@@ -38,7 +38,7 @@ repo root and CLAUDE.md's "Automation Service" section) also runs on this VM as 
 service, but was never added to this document when it was deployed. Flagging it here rather than
 silently leaving it undocumented; fully documenting it is separate future work.
 
-Five independent `systemd` units run on it (plus the undocumented one above):
+Six independent `systemd` units run on it (plus the undocumented one above):
 
 1. **`voltessa-fusionsolar-proxy.service`** — the FusionSolar gateway proxy. The only thing in the
    entire system allowed to call Huawei's FusionSolar API directly. `apps/web` never calls Huawei
@@ -54,8 +54,11 @@ Five independent `systemd` units run on it (plus the undocumented one above):
 5. **`voltessa-automation-reconciliation.timer`** — fires once daily at 06:00 Europe/Sofia, calls
    back into Vercel to reconcile Voltessa's stored automation state against FusionSolar's real
    state. See "Systemd Timers" below.
+6. **`voltessa-forecast-refresh.timer`** — fires twice daily, 00:10 and 12:10 Europe/Sofia, calls
+   back into Vercel to reconcile+regenerate the persisted PV forecast (`PvForecastRecord`). See
+   "Systemd Timers" below.
 
-The four timers only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); none of
+The six timers only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); none of
 them run Huawei/business logic itself — all of that lives in `apps/web`. They are deliberately
 independent units (separate service files, separate env files) so that a failure or change to one
 can never affect the others, even though they currently share the same underlying `CRON_SECRET`
@@ -258,6 +261,52 @@ voltessa-automation-reconciliation.timer  (OnCalendar=*-*-* 06:00:00 Europe/Sofi
 - Exists to catch drift between Voltessa's stored state and reality — e.g. a manual mode change via
   `/dev/huawei-api` that the 15-minute engine was never told about.
 
+## `voltessa-forecast-refresh.timer`
+
+Dashboard Forecast Architecture Correction milestone. See
+`apps/web/app/api/internal/forecast/refresh/route.ts`,
+`apps/web/lib/forecast/pv-forecast-engine.ts`, `apps/web/lib/forecast/forecast-persistence.ts`.
+
+```
+voltessa-forecast-refresh.timer  (OnCalendar=00:10:00 and 12:10:00 Europe/Sofia — twice daily)
+  -> voltessa-forecast-refresh.service  (curl, Bearer CRON_SECRET, --max-time 600)
+  -> POST https://app.voltessa.ai/api/internal/forecast/refresh
+  -> route.ts: crypto.timingSafeEqual auth check
+  -> for every Plant with latitude/longitude/capacityKw configured:
+       reconcileForecastActuals(plantId, organizationId)
+         -> fills actualKwh/errorKwh/errorPct on previously-persisted, now-elapsed PvForecastRecord
+            rows, from reconstructAvailablePv (never historical export)
+       generatePvForecast({ ..., horizonHours: DEFAULT_EXTENDED_HORIZON_DAYS * 24 })
+         -> the same physical/weather/calibration/analog/glide-path engine the Dashboard's Live
+            Energy chart and Forecast card used to run inline, on every request, before this
+            milestone
+       persistFullForecastVintage(plantId, organizationId, forecast)
+         -> writes every interval, every horizon tier (SHORT/MEDIUM/LONG), as one new
+            PvForecastRecord vintage (never overwrites a prior vintage - see that model's own doc
+            comment in prisma/schema.prisma)
+  -> Dashboard reads ONLY the latest persisted vintage (lib/forecast/forecast-read.ts's
+     getLatestForecastVintage - a couple of indexed SELECTs) on every render; it never calls
+     generatePvForecast itself any more. This is what makes a normal Dashboard render fast
+     regardless of forecasting.
+```
+
+- This is the ONLY place `generatePvForecast` runs in production — a genuinely expensive call
+  (Open-Meteo fetch, plant-specific calibration lookback query, analog-day search, ~35 days x 96
+  intervals/day x however many plants are configured). Previously this ran inline on every
+  Dashboard request (opportunistically throttled to roughly hourly); this milestone moved it here
+  entirely, following the exact same "scheduled timer calls back into Vercel" pattern the other
+  five units already use.
+- **EnvironmentFile**: `/etc/voltessa-forecast-refresh.env` (root-only, `chmod 600`) — its own
+  `CRON_SECRET` copy, same convention as every other scheduler's env file.
+- `--max-time 600` (vs. the other schedulers' shorter timeouts) because a full-horizon forecast for
+  every configured plant, sequentially, can genuinely take longer than a single telemetry-ingestion
+  tick — if this unit starts timing out as more plants are added, raise this value rather than
+  parallelizing plant processing (deliberately sequential for now, matching this codebase's
+  "simplicity over cleverness" principle at the current 2-plant scale).
+- One plant's failure never blocks another's — `route.ts` wraps each plant independently and
+  reports `ok: true` only if every plant succeeded; a partial failure still persists whichever
+  plants did succeed.
+
 Commands:
 
 ```
@@ -266,9 +315,11 @@ systemctl status voltessa-telemetry-ingestion.timer
 systemctl status voltessa-market-price-scheduler.timer
 systemctl status voltessa-automation-execution.timer
 systemctl status voltessa-automation-reconciliation.timer
+systemctl status voltessa-forecast-refresh.timer
 journalctl -u voltessa-telemetry-ingestion.service -f
 journalctl -u voltessa-market-price-scheduler.service -f
 journalctl -u voltessa-automation-execution.service -f
+journalctl -u voltessa-forecast-refresh.service -f
 journalctl -u voltessa-automation-reconciliation.service -f
 systemd-analyze calendar '*-*-* 14:00:00 Europe/Sofia'   # check what a timer's OnCalendar actually resolves to
 ```
@@ -496,6 +547,7 @@ systemctl cat voltessa-fusionsolar-proxy
 systemctl list-timers
 systemctl status voltessa-telemetry-ingestion.timer
 systemctl status voltessa-market-price-scheduler.timer
+systemctl status voltessa-forecast-refresh.timer
 systemd-analyze calendar '*-*-* 14:00:00 Europe/Sofia'
 
 # Logs
@@ -503,6 +555,7 @@ journalctl -u voltessa-fusionsolar-proxy -f
 journalctl -u voltessa-fusionsolar-proxy --since "10 min ago"
 journalctl -u voltessa-telemetry-ingestion.service --since "15 min ago"
 journalctl -u voltessa-market-price-scheduler.service --since "today"
+journalctl -u voltessa-forecast-refresh.service --since "today"
 
 # Inspecting source/config
 cat /opt/voltessa-fusionsolar-proxy/server.js

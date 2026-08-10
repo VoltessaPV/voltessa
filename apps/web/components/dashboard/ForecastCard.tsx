@@ -26,6 +26,11 @@ function statValueLabel(kwh: number | null): string {
   return kwh !== null ? `${kwh.toFixed(1)} kWh` : "—";
 }
 
+/** Sofia-local `HH:MM`, matching this page's other Europe/Sofia time labels — see `page.tsx`'s `sofiaDateTimeLabel`. */
+function sofiaTimeLabel(date: Date): string {
+  return date.toLocaleTimeString("en-GB", { timeZone: "Europe/Sofia", hour: "2-digit", minute: "2-digit" });
+}
+
 export function ForecastCard({ summary }: ForecastCardProps) {
   const t = useTranslations("dashboard.forecastSummary");
   const tTerm = useTranslations("terminology");
@@ -76,6 +81,12 @@ export function ForecastCard({ summary }: ForecastCardProps) {
             </div>
           )}
         </dl>
+      )}
+
+      {summary && (
+        <p className="mt-3 text-[10px] text-slate-600">
+          {t("updated", { time: sofiaTimeLabel(summary.issuedAt) })}
+        </p>
       )}
     </div>
   );
