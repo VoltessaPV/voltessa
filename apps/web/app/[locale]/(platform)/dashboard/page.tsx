@@ -10,7 +10,7 @@ import { revalidateTelemetryPagesIfSynced } from "@/lib/telemetry/revalidate-tel
 
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
-import { ForecastSummaryPanel } from "@/components/dashboard/ForecastSummaryPanel";
+import { ForecastCard } from "@/components/dashboard/ForecastCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
@@ -448,7 +448,7 @@ export default async function DashboardPage({
                 </p>
               </div>
 
-              <div className="mt-2.5 h-[200px] sm:h-[250px] lg:h-[280px] xl:h-[320px]">
+              <div className="mt-2.5 h-[220px] sm:h-[280px] lg:h-[320px] xl:h-[360px]">
                 <Suspense fallback={<ChartSkeleton />}>
                   <DynamicLiveEnergyChart
                     data={data.chartSeries}
@@ -458,14 +458,13 @@ export default async function DashboardPage({
                   />
                 </Suspense>
               </div>
-
-              <ForecastSummaryPanel summary={data.forecastSummary} />
             </div>
           </section>
 
-          <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+          <section className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
             <InvertersCard inverters={data.inverters} zeroExportActive={zeroExportActive} />
             <WeatherCard weather={data.weather} />
+            <ForecastCard summary={data.forecastSummary} />
             <MarketEventLog entries={data.eventLog} />
           </section>
         </>

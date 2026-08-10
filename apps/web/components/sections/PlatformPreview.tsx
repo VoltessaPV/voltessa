@@ -7,7 +7,7 @@ import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimiz
 import { ChartSkeleton } from "@/components/charts/ChartSkeleton";
 import CardHeader from "@/components/dashboard/CardHeader";
 import { EnergyFlowDiagram } from "@/components/dashboard/EnergyFlowDiagram";
-import { ForecastSummaryPanel } from "@/components/dashboard/ForecastSummaryPanel";
+import { ForecastCard } from "@/components/dashboard/ForecastCard";
 import { InvertersCard } from "@/components/dashboard/InvertersCard";
 import { DynamicLiveEnergyChart } from "@/components/dashboard/LiveEnergyChart.dynamic";
 import { WeatherCard } from "@/components/dashboard/WeatherCard";
@@ -227,19 +227,18 @@ function DashboardPanel() {
             <h2 className="text-sm font-semibold text-white">Live Energy</h2>
             <p className="mt-0.5 text-xs text-slate-500">Today&apos;s production, consumption, and grid exchange</p>
           </div>
-          <div className="mt-2.5 h-[280px]">
+          <div className="mt-2.5 h-[320px]">
             <Suspense fallback={<ChartSkeleton />}>
               <DynamicLiveEnergyChart data={SAMPLE_FORECAST_CHART_SERIES} nowAnnotation={data.nowAnnotation} />
             </Suspense>
           </div>
-
-          <ForecastSummaryPanel summary={SAMPLE_FORECAST_SUMMARY} />
         </div>
       </section>
 
-      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-3">
+      <section className="grid gap-2.5 lg:grid-cols-2 xl:grid-cols-4">
         <InvertersCard inverters={data.inverters} />
         <WeatherCard weather={SAMPLE_SOLAR_WEATHER} />
+        <ForecastCard summary={SAMPLE_FORECAST_SUMMARY} />
         <MarketEventLog entries={data.eventLog} />
       </section>
     </PageContainer>
