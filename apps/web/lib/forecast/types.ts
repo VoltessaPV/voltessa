@@ -58,6 +58,8 @@ export type PvForecastResult = {
     recentBias: number;
     /** `true` when live weather was unavailable and the physical clear-sky model was used as a neutral fallback input instead — see `pv-forecast-engine.ts`. Never hidden from the output. */
     weatherFallbackUsed: boolean;
+    /** Historical analog-day candidates rejected by `analog-days.ts`'s quality filter (insufficient telemetry coverage, zero energy, or an unexplained production collapse) — see that module's own doc comment. Surfaced for transparency, not required by consumers. */
+    analogCandidatesRejected: { dateUtc: string; reason: string }[];
   };
 };
 

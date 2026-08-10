@@ -1,5 +1,3 @@
-import { unstable_cache } from "next/cache";
-
 import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { estimatePhysicalPvKw } from "@/lib/forecast/physical-pv-model";
 import { interpolateWeatherAt } from "@/lib/forecast/weather-interpolation";
@@ -115,22 +113,6 @@ export async function computeHourOfDayCalibrationUncached(params: {
 
   return { factors, sampleCount, lookbackDays: LOOKBACK_DAYS };
 }
-
-/**
- * Cached for 6 hours per plant+day — this recomputes a 60-day historical
- * reconstruction plus an archive-weather fetch, real cost that must not run
- * on every Dashboard render (same pattern `lib/admin/platform-health.ts`'s
- * `getDataIntegrityReport` already established for a comparably expensive
- * scan). `asOf` is passed in as a `YYYY-MM-DD` cache-key component (backtest
- * callers pass distinct historical dates so each walk-forward day gets its
- * own correctly-scoped, non-leaking cache entry instead of colliding on
- * "today").
- */
-export const getHourOfDayCalibration = unstable_cache(
-  computeHourOfDayCalibrationUncached,
-  ["pv-forecast-hour-of-day-calibration"],
-  { revalidate: 21_600 },
-);
 
 export function applyHourOfDayCalibration(calibration: HourOfDayCalibration, timestamp: Date, physicalWeatherKw: number): number {
   const factor = calibration.factors.get(timestamp.getUTCHours()) ?? 1;

@@ -1,5 +1,3 @@
-import { unstable_cache } from "next/cache";
-
 import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { sunriseSunsetUtc } from "@/lib/forecast/solar-position";
 import { getHistoricalSolarWeather } from "@/lib/weather/openMeteo";
@@ -31,6 +29,8 @@ export type AnalogDay = {
   normalizedShape: number[];
 };
 
+export type AnalogDayRejection = { dateUtc: string; reason: string };
+
 function dayStartUtc(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
@@ -47,6 +47,99 @@ function daylightHours(date: Date, latitude: number, longitude: number): number 
   return (window.sunset.getTime() - window.sunrise.getTime()) / (60 * 60 * 1000);
 }
 
+/**
+ * Atlanta forecast regression investigation - evidence-based quality
+ * filter. `MIN_VALID_BUCKET_FRACTION` alone doesn't catch a real defect
+ * found in production: two candidate days (2026-07-19, 2026-07-20) passed
+ * every existing check (97.6% valid-bucket fraction, positive total
+ * energy) yet had physically implausible bucket-level shapes - confirmed
+ * by inspecting their raw 15-minute Available PV directly:
+ *
+ * - 2026-07-20: a plant producing near-clear-sky output (30-38 kWh/bucket)
+ *   dropped to ~0.03 kWh/bucket for exactly 4 consecutive buckets, then
+ *   jumped straight back to 25-38 kWh/bucket - a near-instantaneous
+ *   full-scale dropout-and-recovery, not a gradual cloud transition.
+ * - 2026-07-19: production collapsed to ~3% of that day's own peak for a
+ *   continuous 6.5-hour stretch bounded on both sides by 30%+-of-peak
+ *   readings (a real morning ramp before, a real afternoon peak after) -
+ *   implausible for genuine weather (clouds don't clear a plant's output
+ *   to near-nothing for 6+ hours and then instantly restore it).
+ *
+ * Both are the same underlying signature: a run of buckets collapsed to
+ * a small fraction of the day's own peak, bounded on both sides (not at
+ * the sunrise/sunset edges) by buckets that prove the plant was already
+ * capable of meaningful production shortly before AND shortly after -
+ * i.e. an unexplained mid-day collapse, not a cloud-driven decline (which
+ * doesn't recover to near-peak within minutes to a few hours on both
+ * sides of a total blackout). `LOW_FRACTION_OF_PEAK`/`RECOVERY_FRACTION_OF_PEAK`
+ * were chosen by checking every real candidate this session actually
+ * selected: 0.15/0.30 separates both confirmed-bad days from every
+ * legitimately-cloudy day in the same 40-day window (including
+ * 2026-07-25, kept as valid - its dip is bounded by a slow, multi-hour
+ * recovery, never a sharp back-to-peak jump).
+ */
+const LOW_FRACTION_OF_PEAK = 0.15;
+const RECOVERY_FRACTION_OF_PEAK = 0.3;
+const RECOVERY_LOOKAROUND_BUCKETS = 3;
+const MIN_COLLAPSE_RUN_BUCKETS = 2;
+
+/**
+ * Scans a day's own daylight-bucket energies for an unexplained mid-day
+ * production collapse (see this module's own doc comment above). Returns
+ * a human-readable reason when found, `null` when the day's shape is
+ * plausible. Pure/deterministic - a function of this one day's own
+ * energy values only.
+ */
+export function detectProductionCollapse(dailyEnergyByBucket: number[], daylightBucketIndices: number[]): string | null {
+  if (daylightBucketIndices.length === 0) {
+    return null;
+  }
+
+  const daylightEnergies = daylightBucketIndices.map((b) => dailyEnergyByBucket[b] ?? 0);
+  const peak = Math.max(...daylightEnergies);
+  if (peak <= 0) {
+    return null;
+  }
+
+  const lowThreshold = peak * LOW_FRACTION_OF_PEAK;
+  const recoveryThreshold = peak * RECOVERY_FRACTION_OF_PEAK;
+
+  let runStart = -1;
+  for (let i = 0; i <= daylightEnergies.length; i += 1) {
+    const isLow = i < daylightEnergies.length && daylightEnergies[i]! < lowThreshold;
+    if (isLow && runStart === -1) {
+      runStart = i;
+      continue;
+    }
+    if (!isLow && runStart !== -1) {
+      const runEnd = i - 1; // inclusive, indices into daylightEnergies
+      const runLength = runEnd - runStart + 1;
+
+      if (runLength >= MIN_COLLAPSE_RUN_BUCKETS) {
+        const beforeStart = Math.max(0, runStart - RECOVERY_LOOKAROUND_BUCKETS);
+        const afterEnd = Math.min(daylightEnergies.length - 1, runEnd + RECOVERY_LOOKAROUND_BUCKETS);
+        const before = daylightEnergies.slice(beforeStart, runStart);
+        const after = daylightEnergies.slice(runEnd + 1, afterEnd + 1);
+        const beforeMax = before.length > 0 ? Math.max(...before) : 0;
+        const afterMax = after.length > 0 ? Math.max(...after) : 0;
+
+        // Bounded on both sides (not a sunrise/sunset edge) by production
+        // that proves the plant was already capable of meaningful output
+        // shortly before AND shortly after the collapse.
+        if (before.length > 0 && after.length > 0 && beforeMax >= recoveryThreshold && afterMax >= recoveryThreshold) {
+          const runHours = Math.round((runLength * BUCKET_MINUTES) / 60 * 100) / 100;
+          return `unexplained production collapse: ${runHours}h at <${Math.round(LOW_FRACTION_OF_PEAK * 100)}% of peak, bounded by >${Math.round(RECOVERY_FRACTION_OF_PEAK * 100)}% of peak on both sides`;
+        }
+      }
+      runStart = -1;
+    }
+  }
+
+  return null;
+}
+
+export type AnalogDaysResult = { candidates: AnalogDay[]; rejected: AnalogDayRejection[] };
+
 export async function computeAnalogDaysUncached(params: {
   plantId: string;
   organizationId: string;
@@ -56,7 +149,7 @@ export async function computeAnalogDaysUncached(params: {
   targetMeanGhi: number;
   targetMeanCloudCover: number;
   count: number;
-}): Promise<AnalogDay[]> {
+}): Promise<AnalogDaysResult> {
   const { plantId, organizationId, latitude, longitude, count } = params;
   const targetDate = dayStartUtc(new Date(params.targetDateUtc));
   const historyStart = new Date(targetDate.getTime() - LOOKBACK_DAYS * DAY_MS);
@@ -65,7 +158,7 @@ export async function computeAnalogDaysUncached(params: {
   const historyEnd = new Date(Math.min(targetDate.getTime(), Date.now()));
 
   if (historyEnd.getTime() <= historyStart.getTime()) {
-    return [];
+    return { candidates: [], rejected: [] };
   }
 
   const [availablePv, weatherPoints] = await Promise.all([
@@ -105,16 +198,40 @@ export async function computeAnalogDaysUncached(params: {
   const targetDaylightHours = daylightHours(targetDate, latitude, longitude);
 
   const candidates: AnalogDay[] = [];
+  const rejected: AnalogDayRejection[] = [];
 
   for (const [dayKey, entry] of byDay) {
     const candidateDate = new Date(dayKey);
+    const dateUtc = candidateDate.toISOString().slice(0, 10);
     const validFraction = entry.validBuckets / (BUCKETS_PER_DAY * expectedSamplesPerBucket);
     if (validFraction < MIN_VALID_BUCKET_FRACTION) {
+      rejected.push({ dateUtc, reason: `insufficient telemetry coverage: ${Math.round(validFraction * 1000) / 10}% of expected samples (need >=${MIN_VALID_BUCKET_FRACTION * 100}%)` });
       continue;
     }
 
     const totalEnergy = entry.energyByBucket.reduce((sum, value) => sum + value, 0);
     if (totalEnergy <= 0) {
+      rejected.push({ dateUtc, reason: "zero total energy" });
+      continue;
+    }
+
+    const candidateDaylightWindow = sunriseSunsetUtc(candidateDate, latitude, longitude);
+    const daylightBucketIndices: number[] = [];
+    if (candidateDaylightWindow) {
+      for (let b = 0; b < BUCKETS_PER_DAY; b += 1) {
+        const bucketStart = new Date(dayKey + b * BUCKET_MINUTES * 60_000);
+        if (
+          bucketStart.getTime() >= candidateDaylightWindow.sunrise.getTime() &&
+          bucketStart.getTime() < candidateDaylightWindow.sunset.getTime()
+        ) {
+          daylightBucketIndices.push(b);
+        }
+      }
+    }
+
+    const collapseReason = detectProductionCollapse(entry.energyByBucket, daylightBucketIndices);
+    if (collapseReason) {
+      rejected.push({ dateUtc, reason: collapseReason });
       continue;
     }
 
@@ -137,17 +254,17 @@ export async function computeAnalogDaysUncached(params: {
 
     const normalizedShape = entry.energyByBucket.map((value) => value / totalEnergy);
 
-    candidates.push({ dateUtc: candidateDate.toISOString().slice(0, 10), similarityScore, normalizedShape });
+    candidates.push({ dateUtc, similarityScore, normalizedShape });
   }
 
   candidates.sort((a, b) => a.similarityScore - b.similarityScore);
-  return candidates.slice(0, count);
+  // Never pad with rejected candidates just to reach `count` - fewer (or
+  // zero) valid candidates is the correct, honest outcome when that's all
+  // the history genuinely supports; `averageAnalogShape([])` already
+  // degrades to `null`, which the caller already treats as "no analog
+  // component this run" rather than fabricating one.
+  return { candidates: candidates.slice(0, count), rejected };
 }
-
-/** Cached for 6 hours per plant+target-day+weather-bucket — see `calibration.ts`'s identical rationale. */
-export const getAnalogDays = unstable_cache(computeAnalogDaysUncached, ["pv-forecast-analog-days"], {
-  revalidate: 21_600,
-});
 
 export function averageAnalogShape(analogDays: AnalogDay[]): number[] | null {
   if (analogDays.length === 0) {
