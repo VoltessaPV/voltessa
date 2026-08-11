@@ -8,9 +8,16 @@ import type { ForecastSummary } from "@/app/[locale]/(platform)/dashboard/dashbo
  * Weather, Forecast, Event Log), not folded into Live Energy. Live Energy
  * itself already overlays the same forecast data as a grey PV line
  * (`LiveEnergyChart.tsx`'s `forecastPvKw` series) — this card is the
- * dedicated forecast *summary*, not a second chart: Daily/Remaining today/
- * Weekly/Monthly/Peak/Confidence, straight from `ForecastSummary`
+ * dedicated forecast *summary*, not a second chart: Daily/Weekly/Monthly/
+ * Daily peak/Confidence, straight from `ForecastSummary`
  * (`dashboard-data.ts`) with no calculation happening here.
+ *
+ * Forecast Semantics & Measurement Accuracy milestone: "Remaining today" was
+ * removed entirely and "Peak (remaining today)" is now "Daily peak" — both
+ * changes exist to make `dailyForecastKwh` a fixed, full-day figure you can
+ * actually compare against a day's real production after the fact, instead
+ * of a number that silently re-fits itself to actual production as the day
+ * goes on (see `forecast-bucket-aggregation.ts`'s own top doc comment).
  */
 type ForecastCardProps = {
   summary: ForecastSummary | null;
@@ -54,8 +61,10 @@ export function ForecastCard({ summary }: ForecastCardProps) {
             <dd className="text-sm font-medium tabular-nums text-white">{statValueLabel(summary.dailyForecastKwh)}</dd>
           </div>
           <div>
-            <dt className="text-[11px] text-slate-500">{t("remainingToday")}</dt>
-            <dd className="text-sm font-medium tabular-nums text-white">{statValueLabel(summary.remainingTodayKwh)}</dd>
+            <dt className="text-[11px] text-slate-500">{t("dailyPeak")}</dt>
+            <dd className="text-sm font-medium tabular-nums text-white">
+              {summary.dailyPeakKw !== null ? `${summary.dailyPeakKw.toFixed(1)} kW` : "—"}
+            </dd>
           </div>
           <div>
             <dt className="text-[11px] text-slate-500">{t("weeklyForecast")}</dt>
@@ -64,12 +73,6 @@ export function ForecastCard({ summary }: ForecastCardProps) {
           <div>
             <dt className="text-[11px] text-slate-500">{t("monthlyForecast")}</dt>
             <dd className="text-sm font-medium tabular-nums text-white">{statValueLabel(summary.monthlyForecastKwh)}</dd>
-          </div>
-          <div>
-            <dt className="text-[11px] text-slate-500">{t("peak")}</dt>
-            <dd className="text-sm font-medium tabular-nums text-white">
-              {summary.peakForecastKw !== null ? `${summary.peakForecastKw.toFixed(1)} kW` : "—"}
-            </dd>
           </div>
           {summary.confidence && (
             <div>

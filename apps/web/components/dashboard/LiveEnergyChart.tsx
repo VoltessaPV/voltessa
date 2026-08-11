@@ -5,6 +5,7 @@ import { Line, ReferenceLine } from "recharts";
 
 import type { EnergyFlowPoint } from "@/app/[locale]/(platform)/dashboard/dashboard-data";
 import { ChartFrame, type ChartFrameYAxis } from "@/components/charts/ChartFrame";
+import { hasMeaningfulGridData } from "@/components/dashboard/producer-chart-classification";
 import {
   CHART_TOOLTIP_CLASSNAME,
   computeFixedChartTicks,
@@ -147,18 +148,18 @@ export function LiveEnergyChart({
 }: LiveEnergyChartProps) {
   const t = useTranslations("dashboard.liveEnergy");
 
-  // Producer Topology milestone: a plant with no real meter never has a
-  // real consumption/import/export reading at any timestamp, in any period
-  // — every point already has `null` for these three fields (see
-  // `dashboard-data.ts`'s `toEnergyFlowPoint`/`buildPeriodChartSeries`).
-  // Detected directly from the data already passed in, not a new prop:
-  // the chart becomes a plain real-time PV production widget for such a
-  // plant, instead of three permanently-empty lines/legend entries next to
-  // the one real line. A plant with a real meter (Atlanta) always has at
-  // least one real point for these fields and is completely unaffected.
-  const hasGridData = data.some(
-    (point) => point.consumptionKw !== null || point.gridImportKw !== null || point.gridExportKw !== null,
-  );
+  // Producer Topology / Forecast Semantics & Measurement Accuracy
+  // milestones: a plant with no real meter never has a real consumption/
+  // import/export reading at any timestamp (every point already has `null`
+  // for these three fields — see `dashboard-data.ts`'s `toEnergyFlowPoint`/
+  // `buildPeriodChartSeries`), and correctly renders as producer-only via
+  // `hasMeaningfulGridData`'s `totalPv <= 0` guard below. A plant WITH a
+  // real meter (Atlanta) is no longer automatically treated as having
+  // meaningful grid data just because a reading exists — see
+  // `producer-chart-classification.ts`'s own top doc comment for why a
+  // presence check alone was wrong, and the real-data evidence behind the
+  // ratio threshold used here instead.
+  const hasGridData = hasMeaningfulGridData(data);
 
   // Live Energy Forecast Integration milestone: the grey forecast line only
   // ever appears once `dashboard-data.ts` has actually merged forecast

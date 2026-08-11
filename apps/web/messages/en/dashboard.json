@@ -89,10 +89,9 @@
     "subtitle": "Expected PV generation, 15-minute resolution",
     "unavailable": "Forecast unavailable — no forecast has been generated for this plant yet.",
     "dailyForecast": "Daily forecast",
-    "remainingToday": "Remaining today",
+    "dailyPeak": "Daily peak",
     "weeklyForecast": "Weekly forecast (7d)",
     "monthlyForecast": "Monthly forecast",
-    "peak": "Peak (remaining today)",
     "confidence": {
       "label": "Confidence",
       "high": "High",

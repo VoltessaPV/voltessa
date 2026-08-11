@@ -15,7 +15,13 @@ import { analogBucketIndex } from "@/lib/forecast/analog-days";
 import type { ForecastConfidence, ForecastHorizonTier } from "@/lib/forecast/forecast-tiers";
 import { applyGlidePath, computeRecentBias } from "@/lib/forecast/glide-path";
 import { estimatePhysicalPvKw } from "@/lib/forecast/physical-pv-model";
-import { FORECAST_INTERVAL_MINUTES, FORECAST_MODEL_VERSION, type PvForecastInterval, type PvForecastResult } from "@/lib/forecast/types";
+import {
+  FORECAST_INTERVAL_MINUTES,
+  FORECAST_MODEL_VERSION,
+  type PvForecastInterval,
+  type PvForecastResult,
+  type WeatherInputSource,
+} from "@/lib/forecast/types";
 import { interpolateWeatherAt } from "@/lib/forecast/weather-interpolation";
 import { haurwitzClearSkyGhi } from "@/lib/forecast/clear-sky";
 import { solarPositionAt } from "@/lib/forecast/solar-position";
@@ -136,13 +142,35 @@ export type ForecastCoreParams = {
   horizonEnd: Date;
   weatherPoints: SolarWeatherPoint[];
   calibration: HourOfDayCalibration;
-  analogShapeByDayUtc: Map<string, { shape: number[] | null; dates: string[] }>;
+  analogShapeByDayUtc: Map<string, { shape: number[] | null; dates: string[]; analogMagnitudeKwh?: number | null }>;
   analogWeight: number;
   observedElapsedToday: Array<{ intervalStart: Date; availablePvKwh: number | null }>;
   decayHours?: number;
   /** Which forecast-hierarchy tier this whole call represents (see `lib/forecast/forecast-tiers.ts`) — stamped onto every produced interval. Defaults preserve this function's original single-tier behavior for any caller that doesn't pass one (e.g. the backtest harness). */
   horizonTier?: ForecastHorizonTier;
   confidence?: ForecastConfidence;
+  /**
+   * Weather-horizon honesty fix (Aug 2026 Chomakovtsi investigation):
+   * whether the caller's OWN day-level check (`pv-forecast-engine.ts`'s
+   * `hasRealWeather`) found any real Open-Meteo coverage for this call's
+   * day — decoupled from `horizonTier`, since a day can be nominally SHORT
+   * by lead-time while Open-Meteo's actual coverage doesn't reach it (see
+   * `types.ts`'s `WeatherInputSource`). Defaults to `"REAL_FORECAST"` so
+   * every existing caller (including the generation-time-invariance e2e
+   * fixture, which never specifies this) keeps byte-identical behavior —
+   * the historical-envelope blend below never activates unless a caller
+   * explicitly says the day has no real weather.
+   */
+  weatherSource?: WeatherInputSource;
+  /**
+   * Median(actual / calibrated-clear-sky) across this plant's own recent
+   * real days (`cloudiness-envelope.ts`) — `null` when there isn't enough
+   * history to trust one, or when the caller doesn't supply it (e.g. the
+   * generation-time-invariance fixture). Only ever consulted for a day
+   * that is BOTH `weatherSource === "CLEAR_SKY_FALLBACK"` AND has no valid
+   * analog-day candidate — see the blend logic below.
+   */
+  historicalCloudinessFactor?: number | null;
 };
 
 export function generatePvForecastCore(params: ForecastCoreParams): PvForecastResult {
@@ -161,6 +189,8 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
     decayHours = GLIDE_PATH_DECAY_HOURS,
     horizonTier = "SHORT",
     confidence = "MEDIUM",
+    weatherSource = "REAL_FORECAST",
+    historicalCloudinessFactor = null,
   } = params;
 
   let weatherFallbackUsed = false;
@@ -211,13 +241,28 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
       capacityKw,
     });
     const calibratedKw = applyHourOfDayCalibration(calibration, timestamp, physical.forecastKw);
-    return { timestamp, physicalWeatherKw: physical.forecastKw, calibratedKw, isDaylight: physical.forecastKw > 0 || physical.elevationDeg > 0 };
+    const weatherInputSource: WeatherInputSource = weather.usedFallback ? "CLEAR_SKY_FALLBACK" : "REAL_FORECAST";
+    return {
+      timestamp,
+      physicalWeatherKw: physical.forecastKw,
+      calibratedKw,
+      isDaylight: physical.forecastKw > 0 || physical.elevationDeg > 0,
+      weatherInputSource,
+    };
   });
 
   const dailyCalibratedTotalKwh = new Map<string, number>();
+  // Historical cloudiness envelope (Aug 2026 Chomakovtsi investigation):
+  // the SAME per-instant physical estimate before calibration, summed per
+  // day — for a `CLEAR_SKY_FALLBACK` day this is exactly the "pure
+  // clear-sky physical total" the envelope's own denominator (in
+  // `cloudiness-envelope.ts`) was computed against, so the two are
+  // directly comparable.
+  const dailyPhysicalOnlyKwh = new Map<string, number>();
   for (const point of perTimestamp) {
     const key = dayKeyUtc(point.timestamp);
     dailyCalibratedTotalKwh.set(key, (dailyCalibratedTotalKwh.get(key) ?? 0) + point.calibratedKw * (FORECAST_INTERVAL_MINUTES / 60));
+    dailyPhysicalOnlyKwh.set(key, (dailyPhysicalOnlyKwh.get(key) ?? 0) + point.physicalWeatherKw * (FORECAST_INTERVAL_MINUTES / 60));
   }
 
   // Bug fix (Atlanta forecast regression investigation): `perTimestamp` only
@@ -245,7 +290,7 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
 
   const analogDatesUsed = new Set<string>();
 
-  const intervals: PvForecastInterval[] = perTimestamp.map(({ timestamp, physicalWeatherKw, calibratedKw, isDaylight }) => {
+  const intervals: PvForecastInterval[] = perTimestamp.map(({ timestamp, physicalWeatherKw, calibratedKw, isDaylight, weatherInputSource }) => {
     // Night is structural, not statistical: no analog/glide-path/
     // calibration noise can ever push a night interval above zero.
     if (!isDaylight) {
@@ -256,25 +301,93 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
         capacityClipped: false,
         horizonTier,
         confidence,
-        components: { physicalWeatherKw: 0, calibrationFactor: 1, analogKw: null, analogWeight, glidePathFactor: 1 },
+        components: { physicalWeatherKw: 0, calibrationFactor: 1, analogKw: null, analogWeight, glidePathFactor: 1, weatherInputSource, historicalEnvelopeKwh: null },
       };
     }
 
     const dayKey = dayKeyUtc(timestamp);
     const analogEntry = analogShapeByDayUtc.get(dayKey);
-    const dailyTotalKwh = dailyCalibratedTotalKwh.get(dayKey) ?? 0;
+    const physicalDailyTotalKwh = dailyCalibratedTotalKwh.get(dayKey) ?? 0;
+    const physicalOnlyDailyTotalKwh = dailyPhysicalOnlyKwh.get(dayKey) ?? 0;
 
     let analogKw: number | null = null;
-    if (analogEntry?.shape && dailyTotalKwh > 0) {
+    if (analogEntry?.shape && physicalDailyTotalKwh > 0) {
       const bucket = analogBucketIndex(timestamp);
       const shapeFraction = analogEntry.shape[bucket] ?? 0;
+
+      // MEDIUM/LONG tier realism fix (Aug 2026 investigation): beyond the
+      // real-weather horizon, `physicalDailyTotalKwh` is itself an
+      // optimistic clear-sky assumption (`weatherOrClearSkyFallback`) -
+      // confirmed by backtest to run ~13-16% hot on typical days versus
+      // this plant's own real history. The analog days already selected
+      // above are this plant's own real historical production for
+      // similar days; blend their real magnitude into the day's energy
+      // budget - not just their shape - using the SAME `analogWeight`
+      // the outer physical/analog blend below already trusts, so
+      // confidence in analog magnitude grows exactly in step with
+      // confidence in analog shape. Never inflates: capped at the
+      // physical ceiling, since clear sky is the physical maximum a real
+      // day cannot exceed. SHORT tier (real weather available) is
+      // completely untouched - always pure physical, exactly as before
+      // this fix. `analogMagnitudeKwh` is a median across the (up to 3)
+      // selected analog days precisely so one unusually strong or weak
+      // day can never unilaterally drag the forecast - see
+      // `pv-forecast-engine.ts`'s `median` helper.
+      const analogMagnitudeKwh = analogEntry.analogMagnitudeKwh ?? null;
+      const dailyTotalKwh =
+        horizonTier !== "SHORT" && analogMagnitudeKwh !== null
+          ? physicalDailyTotalKwh * (1 - analogWeight) + Math.min(analogMagnitudeKwh, physicalDailyTotalKwh) * analogWeight
+          : physicalDailyTotalKwh;
+
       analogKw = (shapeFraction * dailyTotalKwh) / (FORECAST_INTERVAL_MINUTES / 60);
       for (const date of analogEntry.dates) {
         analogDatesUsed.add(date);
       }
     }
 
-    const combinedKw = analogKw !== null ? calibratedKw * (1 - analogWeight) + analogKw * analogWeight : calibratedKw;
+    // Historical cloudiness envelope fallback (Aug 2026 Chomakovtsi
+    // investigation): only reached when there was no analog shape to
+    // blend above (`analogKw` still `null`) AND this day has no real
+    // weather AND the tier trusts historical signal enough to apply it
+    // (never SHORT). Root cause this exists for: for a plant with zero
+    // valid analog-day candidates (Chomakovtsi's permanent state - its
+    // telemetry coverage fails `analog-days.ts`'s 80% quality gate), a
+    // clear-sky-fallback day previously had NOTHING to moderate the
+    // physical model's inherent clear-sky optimism - confirmed via
+    // backtest to push Chomakovtsi's 2026-08-13 forecast to 735.2 kWh
+    // against a 40-day historical maximum of 703.9 kWh, even though the
+    // plant's OWN 1.316 hour-of-day calibration factor is itself
+    // statistically justified (stable across every lookback window
+    // tested). There is no analog SHAPE available here to redistribute
+    // (unlike the block above), so this scales the physical/calibration
+    // model's OWN already-physically-derived intraday shape by a single
+    // day-level factor instead of substituting a different one - the
+    // clear-sky model's time-of-day curve is still physically valid, only
+    // its total magnitude was overconfident. `historicalCloudinessFactor`
+    // (`cloudiness-envelope.ts`) is this plant's own median
+    // actual/calibrated-clear-sky ratio across its recent real history -
+    // never a flat/arbitrary discount - blended in via the SAME
+    // `analogWeight` the tier already uses to trust historical signal
+    // over raw physical, and capped at the physical ceiling exactly like
+    // the analog magnitude above (never inflates).
+    let historicalEnvelopeKwh: number | null = null;
+    let envelopeScaleFactor = 1;
+    if (
+      analogKw === null &&
+      horizonTier !== "SHORT" &&
+      weatherSource === "CLEAR_SKY_FALLBACK" &&
+      historicalCloudinessFactor !== null &&
+      physicalOnlyDailyTotalKwh > 0 &&
+      physicalDailyTotalKwh > 0
+    ) {
+      historicalEnvelopeKwh = physicalOnlyDailyTotalKwh * historicalCloudinessFactor;
+      const blendedDailyTotalKwh =
+        physicalDailyTotalKwh * (1 - analogWeight) + Math.min(historicalEnvelopeKwh, physicalDailyTotalKwh) * analogWeight;
+      envelopeScaleFactor = blendedDailyTotalKwh / physicalDailyTotalKwh;
+    }
+    const scaledCalibratedKw = calibratedKw * envelopeScaleFactor;
+
+    const combinedKw = analogKw !== null ? scaledCalibratedKw * (1 - analogWeight) + analogKw * analogWeight : scaledCalibratedKw;
     const glideKw = applyGlidePath(combinedKw, timestamp, now, recentBias, decayHours);
 
     const capacityClipped = glideKw > capacityKw;
@@ -289,7 +402,7 @@ export function generatePvForecastCore(params: ForecastCoreParams): PvForecastRe
       capacityClipped,
       horizonTier,
       confidence,
-      components: { physicalWeatherKw, calibrationFactor, analogKw, analogWeight, glidePathFactor },
+      components: { physicalWeatherKw, calibrationFactor, analogKw, analogWeight, glidePathFactor, weatherInputSource, historicalEnvelopeKwh },
     };
   });
 

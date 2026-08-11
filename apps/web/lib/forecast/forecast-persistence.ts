@@ -66,6 +66,15 @@ export async function persistFullForecastVintage(params: {
       analogWeight: interval.components.analogWeight,
       glidePathFactor: interval.components.glidePathFactor,
       capacityClipped: interval.capacityClipped,
+      // Weather-horizon honesty fix (Aug 2026 Chomakovtsi investigation):
+      // per-interval ground truth for what weather input actually backed
+      // this forecast, and how much the historical-cloudiness-envelope
+      // fallback moderated it — see `types.ts`'s `WeatherInputSource` and
+      // `cloudiness-envelope.ts`. Persisted so a past vintage's own
+      // assumptions stay inspectable after the fact, not just the tier
+      // label.
+      weatherInputSource: interval.components.weatherInputSource,
+      historicalEnvelopeKwh: interval.components.historicalEnvelopeKwh,
     },
   }));
 

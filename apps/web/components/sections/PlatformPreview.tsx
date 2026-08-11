@@ -182,14 +182,12 @@ function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
 
 function buildSampleForecastSummary(): ForecastSummary {
   const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
-  const remainingTodayKwh = futureShape.reduce((sum, kw) => sum + kw, 0) * 0.25;
 
   return {
     dailyForecastKwh: 612.4,
-    remainingTodayKwh,
     weeklyForecastKwh: 3840.2,
     monthlyForecastKwh: 15420.7,
-    peakForecastKw: Math.max(...futureShape),
+    dailyPeakKw: Math.max(...futureShape),
     confidence: "HIGH",
     modelVersion: "pv-forecast-v1",
     weatherSource: "open-meteo",

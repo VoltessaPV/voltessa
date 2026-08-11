@@ -27,6 +27,8 @@ export type AnalogDay = {
   similarityScore: number;
   /** 96 fractions (15-minute buckets, midnight-aligned UTC), summing to 1 over the daylight buckets — the day's normalized intraday production shape. */
   normalizedShape: number[];
+  /** This day's own real reconstructed Available PV total, kWh — the exact same Zero-Export-independent source (`reconstructAvailablePv`) the forecast's calibration layer already trusts, never a second "actual" accounting. Already computed below to build `normalizedShape`; exposed so a caller can anchor the analog component's absolute magnitude to real history instead of only its intraday shape (Aug 2026 MEDIUM/LONG realism investigation). */
+  totalEnergyKwh: number;
 };
 
 export type AnalogDayRejection = { dateUtc: string; reason: string };
@@ -254,7 +256,7 @@ export async function computeAnalogDaysUncached(params: {
 
     const normalizedShape = entry.energyByBucket.map((value) => value / totalEnergy);
 
-    candidates.push({ dateUtc, similarityScore, normalizedShape });
+    candidates.push({ dateUtc, similarityScore, normalizedShape, totalEnergyKwh: totalEnergy });
   }
 
   candidates.sort((a, b) => a.similarityScore - b.similarityScore);
