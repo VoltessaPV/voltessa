@@ -2,6 +2,7 @@ import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstr
 import { averageAnalogShape, type AnalogDayRejection } from "@/lib/forecast/analog-days";
 import { getAnalogDays } from "@/lib/forecast/analog-days-cache";
 import { getHourOfDayCalibration } from "@/lib/forecast/calibration-cache";
+import { getHistoricalCloudinessFactor } from "@/lib/forecast/cloudiness-envelope-cache";
 import {
   analogWeightForTier,
   classifyConfidence,
@@ -17,7 +18,7 @@ import {
   dayStartUtc,
   generatePvForecastCore,
 } from "@/lib/forecast/pv-forecast-core";
-import { FORECAST_INTERVAL_MINUTES, FORECAST_MODEL_VERSION, type PvForecastResult } from "@/lib/forecast/types";
+import { FORECAST_INTERVAL_MINUTES, FORECAST_MODEL_VERSION, type PvForecastResult, type WeatherInputSource } from "@/lib/forecast/types";
 import { getSolarWeather } from "@/lib/weather/openMeteo";
 
 export { DEFAULT_ANALOG_WEIGHT, DEFAULT_HORIZON_HOURS, generatePvForecastCore };
@@ -57,6 +58,13 @@ function stddev(values: number[]): number {
   return Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length);
 }
 
+/** Median, not mean — a single anomalous analog day (unusually strong or unusually weak) should not unilaterally drag the MEDIUM/LONG magnitude anchor (see `pv-forecast-core.ts`'s use of `analogMagnitudeKwh`) the way an average of up to 3 samples otherwise would. */
+function median(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2 : (sorted[mid] ?? 0);
+}
+
 /**
  * Live entry point: fetches real Open-Meteo weather, this plant's own
  * historical calibration/analog data, and today's elapsed reconstructed
@@ -86,13 +94,17 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
   const horizonEnd = new Date(now.getTime() + horizonHours * 60 * 60 * 1000);
   const todayStart = dayStartUtc(now);
 
-  const [weather, observedElapsedToday, calibration] = await Promise.all([
+  const [weather, observedElapsedToday, calibration, historicalCloudiness] = await Promise.all([
     getSolarWeather(latitude, longitude).catch(() => null),
     reconstructAvailablePv({ plantId, organizationId, start: todayStart, end: now }).catch(() => []),
     getHourOfDayCalibration({ plantId, organizationId, latitude, longitude, capacityKw, asOf: now.toISOString() }).catch(
       () => ({ factors: new Map<number, number>(), sampleCount: 0, lookbackDays: 0 }),
     ),
+    getHistoricalCloudinessFactor({ plantId, organizationId, latitude, longitude, capacityKw, asOf: now.toISOString() }).catch(
+      () => ({ factor: null, sampleDayCount: 0, lookbackDays: 0 }),
+    ),
   ]);
+  const historicalCloudinessFactor = historicalCloudiness.factor;
 
   const weatherPoints = weather?.hourly ?? [];
 
@@ -101,20 +113,31 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
     dayStarts.push(new Date(t));
   }
 
-  const analogShapeByDayUtc = new Map<string, { shape: number[] | null; dates: string[] }>();
+  const analogShapeByDayUtc = new Map<string, { shape: number[] | null; dates: string[]; analogMagnitudeKwh: number | null }>();
   const tierByDayKey = new Map<string, ForecastHorizonTier>();
   const confidenceByDayKey = new Map<string, ForecastConfidence>();
+  const weatherSourceByDayKey = new Map<string, WeatherInputSource>();
   const analogRejections: AnalogDayRejection[] = [];
 
   await Promise.all(
     dayStarts.map(async (dayStart) => {
       const dayKey = dayKeyUtc(dayStart);
       const leadTimeHours = Math.max(0, (dayStart.getTime() - now.getTime()) / (60 * 60 * 1000));
-      const tier = classifyHorizonTier(leadTimeHours);
-      tierByDayKey.set(dayKey, tier);
+      const nominalTier = classifyHorizonTier(leadTimeHours);
 
       const dayPoints = weatherPoints.filter((point) => dayKeyUtc(point.time) === dayKey);
       const hasRealWeather = dayPoints.length > 0;
+      // Weather-horizon honesty fix (Aug 2026 Chomakovtsi investigation): a
+      // day can be nominally SHORT by lead time alone while Open-Meteo's
+      // actual `forecast_days` coverage doesn't reach it (confirmed: a
+      // mid-day-issued forecast for +41h out had zero real weather points).
+      // A tier must never claim a stronger weather horizon than the data
+      // backing it actually supports - MEDIUM/LONG already assume no real
+      // weather by design, so only a falsely-SHORT day is downgraded.
+      const tier: ForecastHorizonTier = hasRealWeather ? nominalTier : nominalTier === "SHORT" ? "MEDIUM" : nominalTier;
+      tierByDayKey.set(dayKey, tier);
+      weatherSourceByDayKey.set(dayKey, hasRealWeather ? "REAL_FORECAST" : "CLEAR_SKY_FALLBACK");
+
       const targetMeanGhi = hasRealWeather
         ? dayPoints.reduce((sum, p) => sum + p.irradiance, 0) / dayPoints.length
         : meanClearSkyGhiForDay(dayStart, latitude, longitude);
@@ -132,7 +155,12 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
         count: ANALOG_DAY_COUNT,
       }).catch(() => ({ candidates: [], rejected: [] }));
 
-      analogShapeByDayUtc.set(dayKey, { shape: averageAnalogShape(analogDays), dates: analogDays.map((d) => d.dateUtc) });
+      const analogMagnitudeKwh = analogDays.length > 0 ? median(analogDays.map((d) => d.totalEnergyKwh)) : null;
+      analogShapeByDayUtc.set(dayKey, {
+        shape: averageAnalogShape(analogDays),
+        dates: analogDays.map((d) => d.dateUtc),
+        analogMagnitudeKwh,
+      });
       confidenceByDayKey.set(dayKey, classifyConfidence({ tier, cloudVolatility, analogDayCount: analogDays.length }));
       analogRejections.push(...rejected);
     }),
@@ -163,6 +191,8 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
       observedElapsedToday: isFirstDay ? observedElapsedToday : [],
       horizonTier: tier,
       confidence,
+      weatherSource: weatherSourceByDayKey.get(dayKey) ?? "REAL_FORECAST",
+      historicalCloudinessFactor,
     });
   });
 

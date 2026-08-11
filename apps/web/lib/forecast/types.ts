@@ -3,6 +3,20 @@ import type { ForecastConfidence, ForecastHorizonTier } from "@/lib/forecast/for
 export type { ForecastConfidence, ForecastHorizonTier };
 
 /**
+ * Weather-horizon honesty fix (Aug 2026 Chomakovtsi investigation):
+ * whether THIS specific interval's physical-model input was real
+ * Open-Meteo weather or the clear-sky fallback — determined per interval
+ * (`weatherOrClearSkyFallback`'s own `usedFallback` flag), independent of
+ * the day-level `horizonTier` label. Exists because a day can be
+ * classified `SHORT` by lead-time alone while Open-Meteo's actual
+ * `forecast_days` coverage window doesn't reach it (confirmed for
+ * Chomakovtsi's 2026-08-13: nominally SHORT, zero real weather points) —
+ * this field lets a consumer see the truth regardless of what the tier
+ * label claims.
+ */
+export type WeatherInputSource = "REAL_FORECAST" | "CLEAR_SKY_FALLBACK";
+
+/**
  * PV Generation Forecast — shared output contract.
  *
  * This is the one shape every consumer (today: the Dashboard's Live Energy
@@ -28,6 +42,10 @@ export type PvForecastInterval = {
     analogKw: number | null;
     analogWeight: number;
     glidePathFactor: number;
+    /** See `WeatherInputSource`'s own doc comment. */
+    weatherInputSource: WeatherInputSource;
+    /** The historical-cloudiness-envelope magnitude actually blended in for this interval's day, when the clear-sky-fallback/no-analog path applied (see `pv-forecast-core.ts`) — `null` whenever that path didn't apply (real weather, or a valid analog was used instead). Surfaced for the same transparency reason `analogKw` already is. */
+    historicalEnvelopeKwh: number | null;
   };
 };
 
