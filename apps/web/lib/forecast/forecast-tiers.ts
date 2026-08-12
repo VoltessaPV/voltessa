@@ -30,6 +30,21 @@ import { solarPositionAt } from "@/lib/forecast/solar-position";
 export type ForecastHorizonTier = "SHORT" | "MEDIUM" | "LONG";
 export type ForecastConfidence = "HIGH" | "MEDIUM" | "LOW";
 
+/**
+ * D+1 learning-infrastructure milestone (Aug 2026): a day-level label for
+ * later analysis/training-example stratification ("clear-day accuracy" vs
+ * "cloudy-day accuracy") — NOT consumed anywhere in the forecast-value
+ * computation itself, only archived alongside a vintage's other diagnostic
+ * inputs. `UNKNOWN` is the honest answer whenever there's no real weather
+ * to classify from (clear-sky-fallback days) — never guessed.
+ */
+export type WeatherRegime =
+  | "CLEAR"
+  | "PARTLY_CLOUDY"
+  | "CLOUDY"
+  | "RAPIDLY_CHANGING"
+  | "UNKNOWN";
+
 const SHORT_RANGE_HOURS = 48;
 const MEDIUM_RANGE_HOURS = 10 * 24;
 
@@ -40,7 +55,9 @@ const ANALOG_WEIGHT_BY_TIER: Record<ForecastHorizonTier, number> = {
   LONG: 0.9,
 };
 
-export function classifyHorizonTier(leadTimeHours: number): ForecastHorizonTier {
+export function classifyHorizonTier(
+  leadTimeHours: number,
+): ForecastHorizonTier {
   if (leadTimeHours <= SHORT_RANGE_HOURS) return "SHORT";
   if (leadTimeHours <= MEDIUM_RANGE_HOURS) return "MEDIUM";
   return "LONG";
@@ -85,6 +102,38 @@ export function classifyConfidence(params: {
 }
 
 /**
+ * Classifies a day's weather regime from the SAME two signals
+ * `classifyConfidence` already trusts for "how stable is this day's
+ * weather" — `meanCloudCoverPct` (this day's own mean cloud cover) and
+ * `cloudVolatility` (its stddev across the day) — not a new, separately
+ * tuned pair of thresholds. `cloudVolatility >= 30` reuses exactly the
+ * boundary `classifyConfidence` already calls "not moderate weather";
+ * the 20/50 mean-cloud-cover buckets match what this session's own
+ * clear-sky validation already used to separate clear/partly-cloudy/cloudy
+ * days. `null` mean cloud cover (no real weather - clear-sky fallback)
+ * always returns `UNKNOWN`, never a guessed regime.
+ */
+export function classifyWeatherRegime(params: {
+  meanCloudCoverPct: number | null;
+  cloudVolatility: number | null;
+}): WeatherRegime {
+  const { meanCloudCoverPct, cloudVolatility } = params;
+  if (meanCloudCoverPct === null) {
+    return "UNKNOWN";
+  }
+  if (cloudVolatility !== null && cloudVolatility >= 30) {
+    return "RAPIDLY_CHANGING";
+  }
+  if (meanCloudCoverPct < 20) {
+    return "CLEAR";
+  }
+  if (meanCloudCoverPct < 50) {
+    return "PARTLY_CLOUDY";
+  }
+  return "CLOUDY";
+}
+
+/**
  * Climatological irradiance estimate for a calendar day with no real
  * weather forecast coverage — the mean clear-sky GHI (Haurwitz) across
  * that day's own daylight hours, purely from solar geometry. Used only to
@@ -94,18 +143,28 @@ export function classifyConfidence(params: {
  * physical-model layer already falls back to its own per-instant
  * clear-sky estimate independently, see `weatherOrClearSkyFallback`).
  */
-export function meanClearSkyGhiForDay(dayStart: Date, latitude: number, longitude: number): number {
+export function meanClearSkyGhiForDay(
+  dayStart: Date,
+  latitude: number,
+  longitude: number,
+): number {
   const stepMs = 15 * 60 * 1000;
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
   const samples: number[] = [];
 
   for (let t = dayStart.getTime(); t < dayEnd.getTime(); t += stepMs) {
     const timestamp = new Date(t);
-    const { zenithDeg, elevationDeg } = solarPositionAt(timestamp, latitude, longitude);
+    const { zenithDeg, elevationDeg } = solarPositionAt(
+      timestamp,
+      latitude,
+      longitude,
+    );
     if (elevationDeg > 0) {
       samples.push(haurwitzClearSkyGhi(zenithDeg));
     }
   }
 
-  return samples.length > 0 ? samples.reduce((sum, value) => sum + value, 0) / samples.length : 0;
+  return samples.length > 0
+    ? samples.reduce((sum, value) => sum + value, 0) / samples.length
+    : 0;
 }

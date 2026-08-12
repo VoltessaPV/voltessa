@@ -34,6 +34,16 @@ test.describe("interpolateWeatherAt", () => {
     expect(result!.irradiance).toBeCloseTo(150, 5);
   });
 
+  test("D+1 learning-infrastructure milestone: cloudCover interpolates linearly the same way irradiance/temperature already do", () => {
+    const points = [
+      { time: new Date(0), irradiance: 100, cloudCover: 10, temperature: 20, windSpeed: 0, weatherCode: 0 },
+      { time: new Date(60 * 60 * 1000), irradiance: 200, cloudCover: 90, temperature: 20, windSpeed: 0, weatherCode: 0 },
+    ];
+    const result = interpolateWeatherAt(points, new Date(30 * 60 * 1000)); // 30 min in - halfway
+    expect(result).not.toBeNull();
+    expect(result!.cloudCover).toBeCloseTo(50, 5);
+  });
+
   test("holds the nearest edge sample within the grace window beyond real coverage", () => {
     const points = [point(0, 100), point(1, 200)];
     // 30 minutes past the last real sample - within the 1h grace window.

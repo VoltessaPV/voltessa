@@ -1,6 +1,10 @@
-import type { ForecastConfidence, ForecastHorizonTier } from "@/lib/forecast/forecast-tiers";
+import type {
+  ForecastConfidence,
+  ForecastHorizonTier,
+  WeatherRegime,
+} from "@/lib/forecast/forecast-tiers";
 
-export type { ForecastConfidence, ForecastHorizonTier };
+export type { ForecastConfidence, ForecastHorizonTier, WeatherRegime };
 
 /**
  * Weather-horizon honesty fix (Aug 2026 Chomakovtsi investigation):
@@ -46,6 +50,21 @@ export type PvForecastInterval = {
     weatherInputSource: WeatherInputSource;
     /** The historical-cloudiness-envelope magnitude actually blended in for this interval's day, when the clear-sky-fallback/no-analog path applied (see `pv-forecast-core.ts`) — `null` whenever that path didn't apply (real weather, or a valid analog was used instead). Surfaced for the same transparency reason `analogKw` already is. */
     historicalEnvelopeKwh: number | null;
+    /**
+     * D+1 learning-infrastructure milestone (Aug 2026): the exact raw
+     * weather inputs and day-level regime label available AT ISSUANCE for
+     * this interval — archived (via `forecast-persistence.ts`) so a past
+     * vintage's inputs can be reconstructed later without contamination
+     * from weather observed after the fact. Diagnostic-only: none of these
+     * four fields are read back into `forecastKw`/`forecastKwh` or any
+     * other numeric output — see `pv-forecast-core.ts`'s own doc comment
+     * at the call site for why this is guaranteed additive.
+     */
+    ghiWm2: number;
+    ambientTempC: number;
+    /** `null` only when this interval used the clear-sky fallback (no real weather point available) — never a fabricated reading. */
+    cloudCoverPct: number | null;
+    weatherRegime: WeatherRegime;
   };
 };
 

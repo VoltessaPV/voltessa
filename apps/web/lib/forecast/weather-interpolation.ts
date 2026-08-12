@@ -10,8 +10,20 @@ import type { SolarWeatherPoint } from "@/lib/weather/openMeteo";
  * irradiance genuinely does move roughly linearly hour-to-hour outside of
  * fast-moving cloud transients this data source can't resolve at sub-hourly
  * detail anyway.
+ *
+ * D+1 learning-infrastructure milestone (Aug 2026): `cloudCover` is
+ * interpolated the same way as `irradiance`/`temperature` purely so it can
+ * be ARCHIVED alongside the other issuance-time weather inputs
+ * (`forecast-persistence.ts`) and used to classify a day's weather regime
+ * (`forecast-tiers.ts`'s `classifyWeatherRegime`) — it is never read back
+ * into the physical model or any forecast-value computation, so adding it
+ * here cannot change any existing numeric forecast output.
  */
-export type InterpolatedWeather = { irradiance: number; temperature: number };
+export type InterpolatedWeather = {
+  irradiance: number;
+  temperature: number;
+  cloudCover: number;
+};
 
 /**
  * Dashboard Week/Month Forecast Correction milestone — fixes a real bug
@@ -41,23 +53,41 @@ export type InterpolatedWeather = { irradiance: number; temperature: number };
  * calibration weight, or analog-day methodology is touched — this only
  * fixes *whether real weather data is honestly reported as available*.
  */
-export function interpolateWeatherAt(points: SolarWeatherPoint[], instant: Date): InterpolatedWeather | null {
+export function interpolateWeatherAt(
+  points: SolarWeatherPoint[],
+  instant: Date,
+): InterpolatedWeather | null {
   if (points.length === 0) {
     return null;
   }
 
   const t = instant.getTime();
   const sorted = points; // Both openMeteo.ts functions already return points in ascending time order.
-  const graceMs = sorted.length > 1 ? sorted[1]!.time.getTime() - sorted[0]!.time.getTime() : 60 * 60 * 1000;
+  const graceMs =
+    sorted.length > 1
+      ? sorted[1]!.time.getTime() - sorted[0]!.time.getTime()
+      : 60 * 60 * 1000;
 
   const first = sorted[0]!;
   if (t <= first.time.getTime()) {
-    return t >= first.time.getTime() - graceMs ? { irradiance: first.irradiance, temperature: first.temperature } : null;
+    return t >= first.time.getTime() - graceMs
+      ? {
+          irradiance: first.irradiance,
+          temperature: first.temperature,
+          cloudCover: first.cloudCover,
+        }
+      : null;
   }
 
   const last = sorted[sorted.length - 1]!;
   if (t >= last.time.getTime()) {
-    return t <= last.time.getTime() + graceMs ? { irradiance: last.irradiance, temperature: last.temperature } : null;
+    return t <= last.time.getTime() + graceMs
+      ? {
+          irradiance: last.irradiance,
+          temperature: last.temperature,
+          cloudCover: last.cloudCover,
+        }
+      : null;
   }
 
   for (let i = 0; i < sorted.length - 1; i += 1) {
@@ -70,8 +100,13 @@ export function interpolateWeatherAt(points: SolarWeatherPoint[], instant: Date)
       const span = afterTime - beforeTime;
       const fraction = span === 0 ? 0 : (t - beforeTime) / span;
       return {
-        irradiance: before.irradiance + (after.irradiance - before.irradiance) * fraction,
-        temperature: before.temperature + (after.temperature - before.temperature) * fraction,
+        irradiance:
+          before.irradiance + (after.irradiance - before.irradiance) * fraction,
+        temperature:
+          before.temperature +
+          (after.temperature - before.temperature) * fraction,
+        cloudCover:
+          before.cloudCover + (after.cloudCover - before.cloudCover) * fraction,
       };
     }
   }

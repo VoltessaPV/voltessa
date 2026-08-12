@@ -5,6 +5,7 @@ import {
   Battery,
   Bell,
   Bot,
+  Brain,
   Building2,
   CalendarClock,
   ClipboardList,
@@ -138,6 +139,11 @@ const adminNavigation = [
     label: "Digital Twin",
     href: "/admin/digital-twin",
     icon: Layers,
+  },
+  {
+    label: "ML Forecast",
+    href: "/admin/ml-forecast",
+    icon: Brain,
   },
 ];
 

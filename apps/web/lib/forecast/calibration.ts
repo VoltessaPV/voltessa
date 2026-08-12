@@ -114,7 +114,32 @@ export async function computeHourOfDayCalibrationUncached(params: {
   return { factors, sampleCount, lookbackDays: LOOKBACK_DAYS };
 }
 
+/**
+ * Shape-smoothing fix (Aug 2026 jagged-curve investigation): a direct
+ * `factors.get(hour)` lookup created a hard step at every hour boundary —
+ * confirmed as one of the two sources of the forecast's intraday
+ * discontinuities (the other being unsmoothed analog shape, see
+ * `analog-days.ts`'s `smoothNormalizedShape`), even on days where the
+ * physical/weather input on both sides of the boundary is itself smooth.
+ * Linearly interpolates from this hour's own anchor factor toward the
+ * next hour's, reaching the next hour's exact value only at that hour's
+ * own `:00` mark — the same anchor-and-interpolate convention
+ * `weather-interpolation.ts` already uses for hourly Open-Meteo points,
+ * applied here to this plant's own per-hour correction instead. A missing
+ * hour still defaults to 1 (no correction), exactly as before — this only
+ * removes the abruptness of the transition between two known hours, never
+ * changes which hours are considered fitted vs. uncalibrated, the fitted
+ * values themselves, or how they were computed.
+ */
+export function interpolatedHourOfDayFactor(calibration: HourOfDayCalibration, timestamp: Date): number {
+  const hour = timestamp.getUTCHours();
+  const nextHour = (hour + 1) % 24;
+  const factorAtHour = calibration.factors.get(hour) ?? 1;
+  const factorAtNextHour = calibration.factors.get(nextHour) ?? 1;
+  const fractionThroughHour = timestamp.getUTCMinutes() / 60;
+  return factorAtHour + (factorAtNextHour - factorAtHour) * fractionThroughHour;
+}
+
 export function applyHourOfDayCalibration(calibration: HourOfDayCalibration, timestamp: Date, physicalWeatherKw: number): number {
-  const factor = calibration.factors.get(timestamp.getUTCHours()) ?? 1;
-  return physicalWeatherKw * factor;
+  return physicalWeatherKw * interpolatedHourOfDayFactor(calibration, timestamp);
 }

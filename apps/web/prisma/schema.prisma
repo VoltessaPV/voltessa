@@ -337,6 +337,7 @@ model Organization {
   deviceTelemetry    DeviceTelemetry[]
   plantDailyKpis     PlantDailyKpi[]
   pvForecastRecords  PvForecastRecord[]
+  mlForecastRecords  MlForecastRecord[]
 
   billingInformation   BillingInformation?
   energyMarketSettings EnergyMarketSettings?
@@ -385,6 +386,7 @@ model Plant {
   deviceTelemetry    DeviceTelemetry[]
   dailyKpis          PlantDailyKpi[]
   pvForecastRecords  PvForecastRecord[]
+  mlForecastRecords  MlForecastRecord[]
 
   @@unique([organizationId, stationCode])
 }
@@ -1367,4 +1369,163 @@ model PvForecastRecord {
   @@index([plantId, targetIntervalStart])
   @@index([plantId, actualKwh])
   @@index([organizationId, plantId, issuedAt])
+}
+
+/// D+1 Self-Learning Forecast milestone (Aug 2026). Which trained-model
+/// implementation produced a `ForecastModelVersion` — extensible: a future
+/// family (e.g. a probabilistic layer, a different tree library) is a new
+/// enum value, never a schema rewrite. `PHYSICAL_BASELINE` and
+/// `RIDGE_REGRESSION` exist so the current production pipeline and the
+/// Phase 1 offline experiment can both be represented in the same registry
+/// for direct comparison, even though neither is ONNX-backed.
+enum ForecastModelFamily {
+  PHYSICAL_BASELINE
+  RIDGE_REGRESSION
+  LIGHTGBM
+  XGBOOST
+}
+
+/// Lifecycle state of one `ForecastModelVersion` in the champion/challenger
+/// system. Exactly one CHAMPION is expected globally at a time (not DB-
+/// enforced — see `lib/forecast/ml/model-registry.ts` for why a partial
+/// unique index isn't used here); CANDIDATE rows are pending walk-forward
+/// evaluation, REJECTED rows keep their `rejectionReason` permanently for
+/// audit, RETIRED marks a former champion superseded by a later promotion.
+enum ForecastModelStatus {
+  CANDIDATE
+  CHAMPION
+  REJECTED
+  RETIRED
+}
+
+/// Mirrors `lib/forecast/forecast-tiers.ts`'s `WeatherRegime` TS type
+/// exactly (kept in sync manually — see that type's own doc comment). A
+/// real Prisma enum (not buried in a Json blob) specifically so the
+/// monitoring page and promotion-gate evaluation can group/filter by
+/// regime with an indexed query instead of scanning Json.
+enum WeatherRegime {
+  CLEAR
+  PARTLY_CLOUDY
+  CLOUDY
+  RAPIDLY_CHANGING
+  UNKNOWN
+}
+
+/// D+1 Self-Learning Forecast milestone. The model registry — every trained
+/// candidate, whether it ever became champion or not, is a permanent row
+/// here. This is deliberately the single source of truth for "what model
+/// produced this forecast" (`MlForecastRecord.modelVersionId`) and "why was
+/// a candidate rejected" (`rejectionReason`), per this milestone's own
+/// requirement to never have an opaque "current model.bin".
+///
+/// Two-stage architecture (magnitude + shape correction, per this
+/// project's own validated Phase 1 finding that two-stage beat one unified
+/// model on real data): both ONNX artifacts live on the same row, since a
+/// "model version" is the pair together, never independently versioned.
+/// Storing the ONNX bytes directly in Postgres (not a file path, not a
+/// separate blob-storage product) is a deliberate choice: this repo's
+/// production forecast/inference runtime is a stateless Vercel deployment
+/// with no persistent local filesystem to read a trained-model file back
+/// from between requests, and Postgres is already the single source of
+/// truth for everything else in this system (calibration factors, market
+/// prices, telemetry) — no new storage service introduced for this.
+model ForecastModelVersion {
+  id String @id @default(cuid())
+
+  /// Human-readable, e.g. "lightgbm-xgboost-2026-08-12-coldstart" -
+  /// assigned at training time, never reused.
+  versionLabel String @unique
+
+  family ForecastModelFamily
+  status ForecastModelStatus @default(CANDIDATE)
+
+  magnitudeModelOnnx Bytes
+  shapeModelOnnx     Bytes
+
+  /// Checked against the live feature builder's own
+  /// `FEATURE_SCHEMA_VERSION` at inference time - a mismatch throws rather
+  /// than silently running a mismatched feature vector through the model.
+  featureSchemaVersion String
+
+  hyperparameters Json
+
+  trainingDataStart      DateTime
+  trainingDataEnd        DateTime
+  trainingSampleCount    Int
+  trueVintageSampleCount Int
+  plantsCovered          String[]
+
+  /// Full walk-forward holdout metric suite (overall, per-plant, per-
+  /// weather-regime, per-horizon-tier, stage1/stage2 head-to-head) - see
+  /// `lib/forecast/ml/promotion.ts`'s `ValidationMetrics` type for the
+  /// exact shape this is read back as.
+  validationMetrics Json
+
+  promotedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+
+  createdAt DateTime @default(now())
+
+  mlForecastRecords MlForecastRecord[]
+
+  @@index([status, createdAt])
+  @@index([family, status])
+}
+
+/// D+1 Self-Learning Forecast milestone. The ML pipeline's own forecast
+/// table - entirely separate from `PvForecastRecord` (the physical+hand-
+/// tuned production pipeline), so this system can run, be monitored, and
+/// be reconciled against real outcomes with zero risk of ever touching a
+/// value the Dashboard/Market pages actually render.
+model MlForecastRecord {
+  id String @id @default(cuid())
+
+  organizationId String
+  plantId        String
+  modelVersionId String
+
+  /// When this forecast was generated - identifies the vintage, same
+  /// convention as `PvForecastRecord.issuedAt`.
+  issuedAt DateTime
+  /// The 15-minute interval this row predicts.
+  targetIntervalStart DateTime
+
+  /// (targetIntervalStart - issuedAt) in minutes - the raw lead time this
+  /// forecast was made at.
+  leadTimeMinutes Int
+  horizonTier     ForecastHorizonTier
+
+  /// The physical-model forecast for this same interval, kept alongside
+  /// the ML output so every row can show its own baseline-vs-corrected
+  /// comparison without a join.
+  physicalForecastKw Decimal @db.Decimal(10, 3)
+  mlForecastKw       Decimal @db.Decimal(10, 3)
+  mlForecastKwh      Decimal @db.Decimal(10, 3)
+
+  weatherRegime WeatherRegime
+
+  /// The exact numeric feature vector fed to the model for this row -
+  /// permanent audit trail for "why did the model predict this," per this
+  /// project's explainability principle.
+  featureVector Json
+
+  /// Filled in once the interval has elapsed and reconstructAvailablePv
+  /// has a real value for it. Null until reconciled.
+  actualKwh    Decimal?  @db.Decimal(10, 3)
+  errorKwh     Decimal?  @db.Decimal(10, 3)
+  errorPct     Decimal?  @db.Decimal(8, 3)
+  reconciledAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plant        Plant                @relation(fields: [plantId], references: [id], onDelete: Cascade)
+  modelVersion ForecastModelVersion @relation(fields: [modelVersionId], references: [id])
+
+  @@unique([plantId, modelVersionId, issuedAt, targetIntervalStart])
+  @@index([plantId, targetIntervalStart])
+  @@index([plantId, actualKwh])
+  @@index([modelVersionId])
+  @@index([weatherRegime])
 }
