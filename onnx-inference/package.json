@@ -1,0 +1,24 @@
+{
+  "name": "voltessa-onnx-inference-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Node process that runs onnxruntime-node's native binary on the Scaleway VM, where it works reliably, instead of Vercel's serverless runtime, where it does not (libonnxruntime.so.1 fails to load there - confirmed in production after two standard Next.js fixes both failed). Voltessa (apps/web) sends already-built feature matrices plus ONNX model bytes over authenticated HTTP and receives back raw numeric predictions; this service holds zero business logic (no plants, no weather, no DB) - purely numeric compute, mirroring automation/'s own narrow-purpose pattern. Independent process, not part of the pnpm workspace.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node src/server.ts",
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "onnxruntime-node": "1.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
