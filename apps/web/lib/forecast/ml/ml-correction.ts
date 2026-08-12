@@ -1,5 +1,3 @@
-import * as ort from "onnxruntime-node";
-
 import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { estimatePhysicalPvKw } from "@/lib/forecast/physical-pv-model";
 import { haurwitzClearSkyGhi } from "@/lib/forecast/clear-sky";
@@ -8,14 +6,23 @@ import { interpolateWeatherAt } from "@/lib/forecast/weather-interpolation";
 import { classifyWeatherRegime, classifyHorizonTier, type WeatherRegime, type ForecastHorizonTier } from "@/lib/forecast/forecast-tiers";
 import { buildFeatureVector, buildDailyFeatureVector, FEATURE_SCHEMA_VERSION } from "@/lib/forecast/ml/feature-schema";
 import { getCurrentChampion } from "@/lib/forecast/ml/model-registry";
+import { runOnnxInference } from "@/lib/forecast/ml/onnx-inference-client";
 import { DEFAULT_EXTENDED_HORIZON_DAYS } from "@/lib/forecast/pv-forecast-engine";
 import { getSolarWeather, type SolarWeatherPoint } from "@/lib/weather/openMeteo";
 
 /**
- * Multi-Horizon Self-Learning Forecast milestone — live ONNX inference.
- * Loads the current CHAMPION's two ONNX artifacts (magnitude + shape) from
- * `ForecastModelVersion` and runs the two-stage combination validated
- * offline in `ml-forecasting/train.py`, for EVERY day from D+1 through
+ * Multi-Horizon Self-Learning Forecast milestone — live ML forecast
+ * generation. Loads the current CHAMPION's two ONNX artifacts (magnitude +
+ * shape) from `ForecastModelVersion`, builds every feature vector locally
+ * (unchanged from before), then delegates only the actual ONNX inference
+ * call to the standalone ONNX Inference Service running on the Scaleway VM
+ * via `onnx-inference-client.ts` — onnxruntime-node's native binary does
+ * not load in Vercel's serverless runtime (confirmed in production), so
+ * this is the one piece of this pipeline that cannot run here directly.
+ * Everything else (weather fetch, physical model, feature building,
+ * two-stage rescale/bounding) is unchanged and still runs in this process.
+ * Applies the two-stage combination validated offline in
+ * `ml-forecasting/train.py`, for EVERY day from D+1 through
  * `DEFAULT_EXTENDED_HORIZON_DAYS` — the same full-horizon span the
  * physical+hand-tuned pipeline already persists (`pv-forecast-engine.ts`),
  * not a D+1-only model. D+1 gets no special code path here; it gets the
@@ -222,20 +229,14 @@ export async function generateMlForecast(params: {
     }),
   );
 
-  const [magnitudeSession, shapeSession] = await Promise.all([
-    ort.InferenceSession.create(new Uint8Array(champion.magnitudeModelOnnx)),
-    ort.InferenceSession.create(new Uint8Array(champion.shapeModelOnnx)),
-  ]);
-
   // One batched inference call across every day, not one call per day - trivial cost for a small
-  // tree model, avoids repeating session overhead `horizonDays` times.
-  const magnitudeInput = new ort.Tensor("float32", Float32Array.from(dailyFeatures.flat()), [dailyFeatures.length, dailyFeatures[0]!.length]);
-  const magnitudeOutput = await magnitudeSession.run({ input: magnitudeInput });
-  const magnitudeCorrectionsKwh = magnitudeOutput.variable!.data as Float32Array;
-
-  const shapeInput = new ort.Tensor("float32", Float32Array.from(intervalFeatures.flat()), [intervalFeatures.length, intervalFeatures[0]!.length]);
-  const shapeOutput = await shapeSession.run({ input: shapeInput });
-  const shapeCorrectionsKw = shapeOutput.variable!.data as Float32Array;
+  // tree model, avoids repeating the ONNX Inference Service round-trip `horizonDays` times.
+  const { magnitudeCorrectionsKwh, shapeCorrectionsKw } = await runOnnxInference({
+    magnitudeModelOnnx: champion.magnitudeModelOnnx,
+    shapeModelOnnx: champion.shapeModelOnnx,
+    dailyFeatures,
+    intervalFeatures,
+  });
 
   const intervals: MlForecastInterval[] = [];
   let intervalIndex = 0;
