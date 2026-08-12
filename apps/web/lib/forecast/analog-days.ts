@@ -268,6 +268,76 @@ export async function computeAnalogDaysUncached(params: {
   return { candidates: candidates.slice(0, count), rejected };
 }
 
+/**
+ * Classic Savitzky-Golay quartic/quintic smoothing coefficients for a
+ * 7-point window (published, e.g. Savitzky & Golay 1964; Numerical
+ * Recipes' SG smoothing tables, order-4 row) - not a tuned/arbitrary
+ * weighting. A first attempt at this fix used the simpler 5-point
+ * quadratic/cubic SG filter ([-3,12,17,12,-3]/35); backtested against 24
+ * real days of both plants' actual production, it cut Atlanta's
+ * intraday jaggedness by ~43-55% but still cost ~5.8%/1.11 kW of
+ * peak-tracking accuracy (Aug 2026 jaggedness-fix follow-up) - a real,
+ * disclosed, but not-yet-acceptable trade-off. A higher-order fit through
+ * a wider window is the standard, principled way to buy back peak
+ * fidelity from an SG filter: a quartic can flex to follow real local
+ * curvature (a genuine parabola- or higher-order-shaped peak/valley)
+ * far more precisely than a quadratic can, while still being a genuine
+ * low-pass filter that damps single-bucket noise not well-fit by any
+ * smooth quartic. Re-backtested against the same 24 real days: recovers
+ * materially more of the peak accuracy while retaining most of the
+ * jaggedness reduction (see that investigation's numbers for the exact
+ * before/after).
+ */
+const SAVITZKY_GOLAY_7_COEFFICIENTS = [5, -30, 75, 131, 75, -30, 5];
+const SAVITZKY_GOLAY_7_NORMALIZATION = 231;
+const SAVITZKY_GOLAY_HALF_WINDOW = 3;
+
+/**
+ * Shape-smoothing fix (Aug 2026 jagged-curve investigation): the averaged
+ * shape is built directly from real historical 15-minute telemetry, which
+ * carries genuine sample-to-sample noise (cloud transients, sensor
+ * jitter) — confirmed as the dominant cause of high-frequency zig-zag on
+ * analog-active forecast days, since it gets blended at MEDIUM/LONG
+ * tier's high `analogWeight` unchanged.
+ *
+ * Never blends across the sunrise/sunset edge: a bucket whose own value
+ * is already 0 (no analog day produced anything there — true night) is
+ * left at exactly 0. A neighbor that's out of array range or itself 0
+ * (true night, or a day that hasn't started yet) is replaced by THIS
+ * bucket's own value rather than 0 — so a bucket near the boundary is
+ * pulled toward itself, not toward darkness, which both preserves the
+ * daylight window's start/end exactly and makes the filter progressively
+ * closer to identity (more peak-preserving) as it nears the edge of
+ * daylight, exactly the right behavior for a sunrise/sunset ramp. Clamped
+ * at 0 (the two negative end-coefficients can, in principle, push a
+ * value slightly negative next to an extreme discontinuity — never
+ * observed in real data, but structurally guarded against regardless).
+ * Renormalized afterward so the shape still sums to 1, preserving the
+ * exact contract `pv-forecast-core.ts`'s magnitude-anchoring blend
+ * depends on: shape only ever redistributes an already-decided daily
+ * total kWh, never changes it.
+ */
+export function smoothNormalizedShape(shape: number[]): number[] {
+  const smoothed = shape.map((value, i) => {
+    if (value === 0) {
+      return 0;
+    }
+    let weightedSum = 0;
+    for (let offset = -SAVITZKY_GOLAY_HALF_WINDOW; offset <= SAVITZKY_GOLAY_HALF_WINDOW; offset += 1) {
+      const neighbor = shape[i + offset];
+      const sample = neighbor !== undefined && neighbor > 0 ? neighbor : value;
+      weightedSum += sample * SAVITZKY_GOLAY_7_COEFFICIENTS[offset + SAVITZKY_GOLAY_HALF_WINDOW]!;
+    }
+    return Math.max(0, weightedSum / SAVITZKY_GOLAY_7_NORMALIZATION);
+  });
+
+  const total = smoothed.reduce((sum, v) => sum + v, 0);
+  if (total <= 0) {
+    return shape;
+  }
+  return smoothed.map((v) => v / total);
+}
+
 export function averageAnalogShape(analogDays: AnalogDay[]): number[] | null {
   if (analogDays.length === 0) {
     return null;
@@ -279,7 +349,7 @@ export function averageAnalogShape(analogDays: AnalogDay[]): number[] | null {
       shape[i]! += (day.normalizedShape[i] ?? 0) / analogDays.length;
     }
   }
-  return shape;
+  return smoothNormalizedShape(shape);
 }
 
 export { BUCKETS_PER_DAY as ANALOG_BUCKETS_PER_DAY, bucketIndex as analogBucketIndex };

@@ -93,17 +93,15 @@
  * the rest of today (re-fitting itself as actual production accumulated,
  * which silently hides model error instead of exposing it), and the whole
  * summary described real "now" even when a different `selectedDate` was
- * browsed. Both are now pure, deterministic functions of the persisted
+ * browsed. Both became pure, deterministic functions of the persisted
  * vintage and `referenceInstant` (the selected date) alone — see
  * `lib/forecast/forecast-bucket-aggregation.ts`'s own top doc comment.
- * `fetchTodayActualSoFarSafe`/`fetchWeekActualSoFarSafe`/
- * `fetchMonthActualSoFarSafe` (the actual-production blending inputs) were
- * removed along with this — nothing in this module feeds real actuals into
- * the forecast anymore. The chart's forecast overlay (`buildDayForecastBucketMap`,
+ * The chart's forecast overlay (`buildDayForecastBucketMap`,
  * `buildDailyForecastBucketMap`) similarly always shows the persisted
- * forecast for the FULL selected day now, never gapped wherever an actual
+ * forecast for the FULL selected day, never gapped wherever an actual
  * reading exists — actual and forecast are drawn as two independent lines
  * over the same day so they can be visually compared, not merged into one.
+ * This part is unchanged by the fix below.
  *
  * Known scope boundary (not a bug, a property of "the latest persisted
  * vintage" as the only forecast source): a vintage only ever contains
@@ -112,6 +110,34 @@
  * (`dailyForecastKwh`/`dailyPeakKw` correctly come back `null`) — this
  * module intentionally does not search older vintages to backfill a
  * historical date's forecast.
+ *
+ * ### Full-day semantics fix (Aug 2026)
+ *
+ * A real defect was found in the "pure function of the persisted vintage
+ * alone" design above: for TODAY specifically, the persisted vintage only
+ * ever has rows from its own generation time forward (a day's forecast
+ * generation starts at `ceilTo15Min(now)` at generation time, never
+ * midnight) — so "sum of every persisted row for today" silently produced
+ * a *remaining-from-generation-time* total, not a genuine full calendar
+ * day, whenever the latest vintage was generated intraday (true for
+ * roughly half of every day). Confirmed directly against production data:
+ * a live "Daily forecast: 729.9 kWh" for Atlanta was exactly the sum of
+ * the persisted rows from 12:15 Sofia (that vintage's own generation
+ * time) onward, while the true full-day magnitude was ~1088 kWh.
+ *
+ * The fix reintroduces a real-actual-production input — deliberately, and
+ * narrowly: `todayActualPv` (`reconstructAvailablePv` for TODAY only,
+ * local midnight to real `now`) is fetched unconditionally alongside
+ * `latestVintage` and passed into `computeForecastSummary`, which uses it
+ * ONLY when the selected date is genuinely today, to compute
+ * `actual(midnight..now) + remaining-forecast(now..end-of-day)` —
+ * overlap-free by construction (see that function's own doc comment for
+ * exactly how). This is NOT a return to the old "remaining today" design:
+ * that mixed actual into a number being compared against forecast
+ * accuracy; this fixes what "the full day" means for a number that was
+ * always supposed to describe the whole day, for today specifically. A
+ * non-today `selectedDate` is completely unaffected — still a pure,
+ * deterministic function of the persisted vintage alone.
  */
 
 import type { ExportThresholdConfig } from "@/lib/automation/export-threshold-config";
@@ -126,11 +152,13 @@ import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/re
 import {
   formatDateInZone,
   formatPeriodRangeLabel,
+  localDayBoundsUtc,
   periodBoundsUtc,
   previousPeriodBoundsUtc,
   type CalendarPeriod,
 } from "@/lib/market-price/timezone";
 import { prisma } from "@/lib/prisma";
+import { reconstructAvailablePv } from "@/lib/digital-twin/available-pv-reconstruction";
 import { deriveEnergyFlow, type EnergyFlowResult } from "@/lib/telemetry/energy-flow";
 import {
   computeConsumedFromPv,
@@ -738,7 +766,7 @@ export async function getDashboardPageData(
   // instead (see `buildPeriodChartSeries`) — fetching a full period's worth
   // of 5-minute samples for that would be a wasted query, so it's skipped
   // entirely whenever `period !== "today"`.
-  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather, latestVintage] =
+  const [marketData, production, chartSeriesRaw, dailyTotals, previousPeriodDailyTotals, weather, latestVintage, todayActualPv] =
     await Promise.all([
       getMarketPageData({ organizationId, selectedDateParam, period, automationSettings }),
       getProductionPageData(organizationId, selectedDateParam, period, { context, inverterTelemetry }),
@@ -761,6 +789,23 @@ export async function getDashboardPageData(
           })(),
       fetchSolarWeatherSafe(latitude, longitude),
       getLatestForecastVintage(plant.id).catch(() => null),
+      // Full-day "Daily forecast" semantics fix: real actual production for
+      // TODAY only (local midnight to real `now`), regardless of which date
+      // is being browsed — needed both when `referenceInstant` IS today
+      // (the daily figure itself) and when a browsed Week/Month happens to
+      // contain today (that day's own contribution to the weekly/monthly
+      // total needs the same correction — see `computeForecastSummary`'s
+      // own top doc comment). Fetched unconditionally, same reasoning
+      // `latestVintage` itself already uses for not being gated on
+      // `isToday`. Degrades to `[]` on failure — `computeForecastSummary`
+      // treats that as "no actual data available" and gracefully falls
+      // back to the remaining-forecast-only figure, never throws.
+      reconstructAvailablePv({
+        plantId: plant.id,
+        organizationId,
+        start: localDayBoundsUtc(now, BULGARIA_TIMEZONE).start,
+        end: now,
+      }).catch(() => []),
     ]);
 
   // Forecasting is an enhancement layered onto an otherwise-complete
@@ -777,6 +822,11 @@ export async function getDashboardPageData(
       forecastSummary = computeForecastSummary({
         selectedDate: referenceInstant,
         latestVintage,
+        now,
+        todayActualIntervals: todayActualPv.map((interval) => ({
+          intervalStart: interval.intervalStart,
+          availablePvKwh: interval.availablePvKwh,
+        })),
       });
     } catch (error) {
       console.error("[Dashboard] Forecast summary computation failed", error);

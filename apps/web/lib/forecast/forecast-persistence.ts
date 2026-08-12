@@ -75,6 +75,16 @@ export async function persistFullForecastVintage(params: {
       // label.
       weatherInputSource: interval.components.weatherInputSource,
       historicalEnvelopeKwh: interval.components.historicalEnvelopeKwh,
+      // D+1 learning-infrastructure milestone (Aug 2026): the exact raw weather inputs and
+      // day-level regime available AT ISSUANCE - archived so a future training pass (or a
+      // manual audit six weeks from now) can reconstruct "what did the system actually know
+      // at generation time" without any contamination from weather observed after the fact.
+      // Purely additive to this already-free-form Json blob; never read back into any
+      // forecast-value computation (see pv-forecast-core.ts's own doc comment).
+      ghiWm2: interval.components.ghiWm2,
+      ambientTempC: interval.components.ambientTempC,
+      cloudCoverPct: interval.components.cloudCoverPct,
+      weatherRegime: interval.components.weatherRegime,
     },
   }));
 

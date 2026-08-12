@@ -7,9 +7,11 @@ import {
   analogWeightForTier,
   classifyConfidence,
   classifyHorizonTier,
+  classifyWeatherRegime,
   meanClearSkyGhiForDay,
   type ForecastConfidence,
   type ForecastHorizonTier,
+  type WeatherRegime,
 } from "@/lib/forecast/forecast-tiers";
 import {
   DEFAULT_ANALOG_WEIGHT,
@@ -117,6 +119,7 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
   const tierByDayKey = new Map<string, ForecastHorizonTier>();
   const confidenceByDayKey = new Map<string, ForecastConfidence>();
   const weatherSourceByDayKey = new Map<string, WeatherInputSource>();
+  const weatherRegimeByDayKey = new Map<string, WeatherRegime>();
   const analogRejections: AnalogDayRejection[] = [];
 
   await Promise.all(
@@ -143,6 +146,15 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
         : meanClearSkyGhiForDay(dayStart, latitude, longitude);
       const targetMeanCloudCover = hasRealWeather ? dayPoints.reduce((sum, p) => sum + p.cloudCover, 0) / dayPoints.length : 50;
       const cloudVolatility = hasRealWeather ? stddev(dayPoints.map((p) => p.cloudCover)) : null;
+      // D+1 learning-infrastructure milestone: reuses the exact same mean/volatility this
+      // block already computes for classifyConfidence below - no second cloud-cover pass.
+      // `meanCloudCoverPct` is deliberately null (not the same `50` placeholder used above
+      // for analog-similarity scoring) whenever there's no real weather, so the regime is
+      // honestly UNKNOWN rather than misclassified as PARTLY_CLOUDY.
+      weatherRegimeByDayKey.set(
+        dayKey,
+        classifyWeatherRegime({ meanCloudCoverPct: hasRealWeather ? targetMeanCloudCover : null, cloudVolatility }),
+      );
 
       const { candidates: analogDays, rejected } = await getAnalogDays({
         plantId,
@@ -193,6 +205,7 @@ export async function generatePvForecast(params: GeneratePvForecastParams): Prom
       confidence,
       weatherSource: weatherSourceByDayKey.get(dayKey) ?? "REAL_FORECAST",
       historicalCloudinessFactor,
+      weatherRegime: weatherRegimeByDayKey.get(dayKey) ?? "UNKNOWN",
     });
   });
 
