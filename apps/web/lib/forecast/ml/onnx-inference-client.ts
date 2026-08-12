@@ -37,7 +37,14 @@ export async function runOnnxInference(params: {
   let response: Response;
 
   try {
-    response = await fetch(new URL("/infer", serviceUrl).toString(), {
+    // A leading "/" here would resolve relative to the ORIGIN, discarding
+    // serviceUrl's own /onnx-inference path prefix entirely (confirmed in
+    // production: requests were landing on the wrong nginx location block,
+    // fusionsolar-proxy.service on :3000, not this service on :4200) -
+    // "infer" (no leading slash) against a trailing-slash base is required
+    // for correct path-relative resolution.
+    const inferUrl = new URL("infer", serviceUrl.endsWith("/") ? serviceUrl : `${serviceUrl}/`).toString();
+    response = await fetch(inferUrl, {
       method: "POST",
       headers: {
         "x-onnx-inference-secret": serviceSecret,
