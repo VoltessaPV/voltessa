@@ -150,43 +150,46 @@ const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
  * components. No `Date.now()`/real wall-clock time anywhere in this demo
  * data - see below for why.
  *
- * Anchored to `data.chartSeries`'s own LAST REAL (non-null `pvKw`) point,
- * not its last array slot and not `Date.now()`. `data.chartSeries` always
- * spans a full 00:00-24:00 day with `null` for anything not yet happened at
- * capture time (see `dashboard-data.ts`'s `buildFullDayChartSeries`) - this
- * snapshot was captured mid-afternoon, so its final array element is itself
- * `null`, hours after the real (green) line actually stops. Anchoring to
- * that last slot (as an earlier fix here did) or to the real wall clock
- * (the original bug) both put the forecast overlay far from where the real
- * data ends, making it look detached/compressed either way. Anchoring to
- * the last point that actually has a reading instead picks up exactly
- * where the real line leaves off, with zero dependency on when this
- * snapshot was generated or when a visitor loads the page.
+ * Anchored to `data.chartSeries`'s own LAST REAL (non-null `pvKw`) point -
+ * both its timestamp AND its value - not its last array slot and not
+ * `Date.now()`. `data.chartSeries` always spans a full 00:00-24:00 day with
+ * `null` for anything not yet happened at capture time (see
+ * `dashboard-data.ts`'s `buildFullDayChartSeries`) - this snapshot was
+ * captured mid-afternoon, so its final array element is itself `null`,
+ * hours after the real (green) line actually stops. Anchoring to that last
+ * slot (as an earlier fix here did) or to the real wall clock (the
+ * original bug) both put the forecast overlay far from where the real data
+ * ends, making it look detached/compressed either way. Anchoring to the
+ * last point that actually has a reading instead picks up exactly where
+ * the real line leaves off, with zero dependency on when this snapshot was
+ * generated or when a visitor loads the page.
+ *
+ * The real data's own peak (~526 kW, mid-morning) has already happened by
+ * the time this overlay begins - a same-day afternoon forecast can only
+ * decline from here, never climb back above a peak that's already in the
+ * past. So this curve is the last real reading itself, times a fixed,
+ * monotonically-decreasing fraction per step down to ~0 by nightfall -
+ * never hardcoded kW values that could drift out of sync with, or exceed,
+ * whatever the snapshot's real last reading actually is.
  */
 function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
-  // Demo plant is ~600+ kW installed (the ~306 kW visible in System
-  // Overview/inverter cards is a point-in-time reading, not capacity - see
-  // this file's own `data` snapshot, whose real `pvKw` already reaches
-  // ~526 kW that same morning). This forecast continuation - the model's
-  // predicted rest-of-day, not a re-statement of the real reading it starts
-  // from - climbs to a same-order-of-magnitude peak (545 kW, matching
-  // `buildSampleForecastSummary`'s `dailyPeakKw` below) before tapering to
-  // ~0 by nightfall, rather than the old 116 kW-max tail that undersold the
-  // plant by nearly 5x next to its own Daily peak KPI.
-  const futureShape = [
-    330, 420, 490, 530, 545, 530, 505, 470, 430, 385, 340, 295, 250, 205, 165, 128, 95, 66, 42, 24,
-    11, 3, 0,
+  // 1 -> 0 over the rest of the afternoon/evening, strictly decreasing.
+  const declineFraction = [
+    1, 0.9, 0.8, 0.71, 0.62, 0.54, 0.46, 0.39, 0.32, 0.26, 0.21, 0.16, 0.12, 0.09, 0.06, 0.04, 0.03,
+    0.02, 0.01, 0.006, 0.003, 0.001, 0,
   ];
 
-  function lastRealTime(series: EnergyFlowPoint[]): number {
+  function lastRealPoint(series: EnergyFlowPoint[]): { time: number; pvKw: number } {
     for (let i = series.length - 1; i >= 0; i--) {
-      if (series[i]!.pvKw !== null) {
-        return series[i]!.time;
+      const point = series[i]!;
+      if (point.pvKw !== null) {
+        return { time: point.time, pvKw: point.pvKw };
       }
     }
-    return series[0]?.time ?? 0;
+    return { time: series[0]?.time ?? 0, pvKw: 0 };
   }
-  const lastHistoricalTime = lastRealTime(data.chartSeries);
+  const { time: lastHistoricalTime, pvKw: lastRealPvKw } = lastRealPoint(data.chartSeries);
+  const futureShape = declineFraction.map((fraction) => lastRealPvKw * fraction);
 
   const forecastByTime = new Map<number, number>(
     futureShape.map((kw, index) => [lastHistoricalTime + index * 15 * 60 * 1000, kw]),
