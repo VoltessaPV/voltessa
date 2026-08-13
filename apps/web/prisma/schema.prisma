@@ -503,10 +503,35 @@ model AutomationSettings {
 
   energyTrader String?
 
+  /// Weekly Day-of-Week Scheduling milestone. Which days this automation is
+  /// allowed to execute on, evaluated against the automation engine's own
+  /// Europe/Sofia timezone (lib/automation/day-of-week.ts), never the
+  /// browser's or UTC. Defaults to every day so existing rows keep their
+  /// current always-on behavior unchanged after this field is added -
+  /// narrowing the days is an explicit, opt-in action the owner takes
+  /// later, never a silent side effect of this migration. An enabled
+  /// automation with an empty array is a valid but inert configuration (it
+  /// never executes on any day) - findEligibleOrganizations relies on
+  /// exactly that property rather than special-casing "no days selected";
+  /// updateMarketPriceAutomation additionally refuses to save that
+  /// combination so it's never reached by user action, only ever by (an
+  /// already-guarded-against) direct data manipulation.
+  enabledDays DayOfWeek[] @default([MONDAY, TUESDAY, WEDNESDAY, THURSDAY, FRIDAY, SATURDAY, SUNDAY])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
 }
 
 /// Settings > Billing Information. One row per organization (same 1:1 shape

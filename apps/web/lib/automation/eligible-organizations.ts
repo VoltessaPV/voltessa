@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { currentDayOfWeekInZone } from "./day-of-week";
 
 const ATLANTA_PLANT_NAME = "Atlanta";
 
@@ -10,18 +11,30 @@ export type EligibleOrganization = {
 /**
  * Organizations in scope for the Market Price Optimization Execution
  * Engine: automation must be enabled (AutomationSettings.automationEnabled)
- * AND the organization must own a Plant named "Atlanta" — the Automation
- * Service itself is hardcoded to Atlanta only (see automation/src/
- * fusionSolar/atlanta-service.ts), so there is nothing to execute for any
- * other organization regardless of its automation settings. Reuses the
+ * AND today (in the automation engine's own Europe/Sofia timezone - see
+ * day-of-week.ts) must be one of the organization's configured
+ * `enabledDays` AND the organization must own a Plant named "Atlanta" — the
+ * Automation Service itself is hardcoded to Atlanta only (see automation/
+ * src/fusionSolar/atlanta-service.ts), so there is nothing to execute for
+ * any other organization regardless of its automation settings. Reuses the
  * exact same "does this org own Atlanta" check as
  * app/dev/fusionsolar_atlanta/page.tsx, rather than inventing a second one.
+ *
+ * The day-of-week filter lives here, at query time, alongside
+ * `automationEnabled` — the same eligibility layer, not a second check
+ * bolted on elsewhere — so an organization whose today isn't enabled (or
+ * whose `enabledDays` is empty) is simply absent from this function's
+ * result for the whole day, exactly like `automationEnabled: false` already
+ * makes it absent. `decideExportAction` (the hysteresis/price logic) never
+ * sees, and never needs to know about, day-of-week at all.
  */
 export async function findEligibleOrganizations(): Promise<
   EligibleOrganization[]
 > {
+  const today = currentDayOfWeekInZone(new Date());
+
   const settings = await prisma.automationSettings.findMany({
-    where: { automationEnabled: true },
+    where: { automationEnabled: true, enabledDays: { has: today } },
     select: { organizationId: true, minimumExportPrice: true },
   });
 

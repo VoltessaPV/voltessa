@@ -7,6 +7,7 @@ import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSol
 import { EmptyState } from "@/components/platform/EmptyState";
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
+import { ALL_DAYS_OF_WEEK } from "@/lib/automation/day-of-week";
 import { Permissions } from "@/lib/auth/permissions";
 import {
   requireCurrentUser,
@@ -81,6 +82,7 @@ async function renderAutomations(organizationId: string | null, readOnly: boolea
           <MarketPriceOptimizationSummaryCard
             enabled={automationSettings?.automationEnabled ?? false}
             minimumExportPrice={automationSettings?.minimumExportPrice.toString() ?? "15.00"}
+            enabledDays={automationSettings?.enabledDays ?? ALL_DAYS_OF_WEEK}
           />
         ) : (
           <MarketPriceOptimizationCard
@@ -88,6 +90,7 @@ async function renderAutomations(organizationId: string | null, readOnly: boolea
             initialMinimumExportPrice={
               automationSettings?.minimumExportPrice.toString() ?? "15.00"
             }
+            initialEnabledDays={automationSettings?.enabledDays ?? ALL_DAYS_OF_WEEK}
           />
         )}
 

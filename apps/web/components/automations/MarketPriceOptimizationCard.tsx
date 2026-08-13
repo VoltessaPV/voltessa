@@ -7,9 +7,36 @@ import { updateMarketPriceAutomation } from "@/app/[locale]/(platform)/automatio
 import CardHeader from "@/components/dashboard/CardHeader";
 import Card from "@/components/ui/Card";
 
+/**
+ * Matches Prisma's generated `DayOfWeek` enum structurally (same string
+ * values) without importing `@prisma/client` into client-side code - same
+ * reasoning as `lib/automation/export-decision.ts`'s hand-written
+ * `ExportMode` union for the Automation Service's vocabulary: a plain
+ * client component must never bundle the Prisma client runtime.
+ */
+type DayOfWeek =
+  | "MONDAY"
+  | "TUESDAY"
+  | "WEDNESDAY"
+  | "THURSDAY"
+  | "FRIDAY"
+  | "SATURDAY"
+  | "SUNDAY";
+
+const DAYS_OF_WEEK: DayOfWeek[] = [
+  "MONDAY",
+  "TUESDAY",
+  "WEDNESDAY",
+  "THURSDAY",
+  "FRIDAY",
+  "SATURDAY",
+  "SUNDAY",
+];
+
 type Props = {
   initialEnabled: boolean;
   initialMinimumExportPrice: string;
+  initialEnabledDays: DayOfWeek[];
 };
 
 type ToastState = { kind: "success" | "error"; message: string } | null;
@@ -25,11 +52,13 @@ type ToastState = { kind: "success" | "error"; message: string } | null;
 export function MarketPriceOptimizationCard({
   initialEnabled,
   initialMinimumExportPrice,
+  initialEnabledDays,
 }: Props) {
   const t = useTranslations("automations.marketPriceCard");
   const tActions = useTranslations("shared.actions");
   const [enabled, setEnabled] = useState(initialEnabled);
   const [threshold, setThreshold] = useState(initialMinimumExportPrice);
+  const [enabledDays, setEnabledDays] = useState<DayOfWeek[]>(initialEnabledDays);
   const [isPending, startTransition] = useTransition();
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -42,6 +71,12 @@ export function MarketPriceOptimizationCard({
     return () => clearTimeout(timer);
   }, [toast]);
 
+  function toggleDay(day: DayOfWeek) {
+    setEnabledDays((prev) =>
+      prev.includes(day) ? prev.filter((selected) => selected !== day) : [...prev, day],
+    );
+  }
+
   function handleSave() {
     if (isPending) {
       return;
@@ -53,12 +88,13 @@ export function MarketPriceOptimizationCard({
       const result = await updateMarketPriceAutomation({
         enabled,
         minimumExportPrice: threshold,
+        enabledDays,
       });
 
       setToast(
         result.ok
           ? { kind: "success", message: t("savedToast") }
-          : { kind: "error", message: result.error },
+          : { kind: "error", message: t(result.code) },
       );
     });
   }
@@ -87,6 +123,35 @@ export function MarketPriceOptimizationCard({
             />
           </button>
         </div>
+
+        {enabled && (
+          <div className="mt-4">
+            <span className="block text-sm text-white/80">{t("daysOfWeekLabel")}</span>
+
+            <div className="mt-2 flex flex-wrap gap-2">
+              {DAYS_OF_WEEK.map((day) => {
+                const isSelected = enabledDays.includes(day);
+
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={isSelected}
+                    onClick={() => toggleDay(day)}
+                    className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${
+                      isSelected
+                        ? "border-emerald-400/40 bg-emerald-400/80 text-white"
+                        : "border-white/10 bg-white/5 text-white/60 hover:bg-white/10"
+                    }`}
+                  >
+                    {t(`days.${day.toLowerCase()}` as never)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="mt-4">
           <label
