@@ -142,34 +142,51 @@ const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
  * per-organization data this file can freeze, and computing the real
  * forecast here would mean this file performing live I/O (weather fetch,
  * historical DB reads), which it deliberately never does. Hand-written
- * illustrative sample data instead — a plausible ramp-up-to-peak-then-
- * decline curve appended onto the frozen `data.chartSeries` as its
- * `forecastPvKw` field (past half `null`, future half a forecast value),
- * plus a matching sample `ForecastSummary`, shaped exactly like production
- * so both render through the identical, unmodified `LiveEnergyChart`/
- * `ForecastSummaryPanel` components.
+ * illustrative sample data instead — a plausible ramp-to-peak-then-decline
+ * curve appended onto the frozen `data.chartSeries` as its `forecastPvKw`
+ * field (real half `null`, forecast half a value), plus a matching sample
+ * `ForecastSummary`, shaped exactly like production so both render through
+ * the identical, unmodified `LiveEnergyChart`/`ForecastSummaryPanel`
+ * components. No `Date.now()`/real wall-clock time anywhere in this demo
+ * data - see below for why.
  *
- * Anchored to `data.chartSeries`'s own last timestamp, not `Date.now()`:
- * `data` is `SNAPSHOT_DASHBOARD_DATA`, frozen at whatever moment
- * `scripts/create-landing-snapshot.ts` last ran (see `lib/demo/
- * landing-snapshot.ts`'s `selectedDate`), which drifts further from the
- * real "now" every day this snapshot isn't refreshed. Anchoring the
- * forecast overlay to the real wall clock instead opened an ever-growing
- * gap between the frozen day's timestamps and "today" - the chart's X axis
- * (`domain={["dataMin", "dataMax"]}`) stretched to cover that whole gap,
- * squeezing the actual plotted line into a sliver at one edge. Anchoring to
- * the snapshot's own last point keeps the forecast contiguous with the
- * historical line regardless of snapshot age, at the cost of the real
- * `LiveEnergyChart`'s live "NOW" reference line never landing inside this
- * frozen demo's date range - an acceptable trade for a static preview, and
- * not something fixable here without changing that shared component.
+ * Anchored to `data.chartSeries`'s own LAST REAL (non-null `pvKw`) point,
+ * not its last array slot and not `Date.now()`. `data.chartSeries` always
+ * spans a full 00:00-24:00 day with `null` for anything not yet happened at
+ * capture time (see `dashboard-data.ts`'s `buildFullDayChartSeries`) - this
+ * snapshot was captured mid-afternoon, so its final array element is itself
+ * `null`, hours after the real (green) line actually stops. Anchoring to
+ * that last slot (as an earlier fix here did) or to the real wall clock
+ * (the original bug) both put the forecast overlay far from where the real
+ * data ends, making it look detached/compressed either way. Anchoring to
+ * the last point that actually has a reading instead picks up exactly
+ * where the real line leaves off, with zero dependency on when this
+ * snapshot was generated or when a visitor loads the page.
  */
 function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
-  const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
-  const lastHistoricalTime =
-    data.chartSeries.length > 0
-      ? data.chartSeries[data.chartSeries.length - 1]!.time
-      : Date.now();
+  // Demo plant is ~600+ kW installed (the ~306 kW visible in System
+  // Overview/inverter cards is a point-in-time reading, not capacity - see
+  // this file's own `data` snapshot, whose real `pvKw` already reaches
+  // ~526 kW that same morning). This forecast continuation - the model's
+  // predicted rest-of-day, not a re-statement of the real reading it starts
+  // from - climbs to a same-order-of-magnitude peak (545 kW, matching
+  // `buildSampleForecastSummary`'s `dailyPeakKw` below) before tapering to
+  // ~0 by nightfall, rather than the old 116 kW-max tail that undersold the
+  // plant by nearly 5x next to its own Daily peak KPI.
+  const futureShape = [
+    330, 420, 490, 530, 545, 530, 505, 470, 430, 385, 340, 295, 250, 205, 165, 128, 95, 66, 42, 24,
+    11, 3, 0,
+  ];
+
+  function lastRealTime(series: EnergyFlowPoint[]): number {
+    for (let i = series.length - 1; i >= 0; i--) {
+      if (series[i]!.pvKw !== null) {
+        return series[i]!.time;
+      }
+    }
+    return series[0]?.time ?? 0;
+  }
+  const lastHistoricalTime = lastRealTime(data.chartSeries);
 
   const forecastByTime = new Map<number, number>(
     futureShape.map((kw, index) => [lastHistoricalTime + index * 15 * 60 * 1000, kw]),
@@ -197,10 +214,10 @@ function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
 
 function buildSampleForecastSummary(): ForecastSummary {
   return {
-    dailyForecastKwh: 2296.8,
-    weeklyForecastKwh: 14840.2,
-    monthlyForecastKwh: 58154.7,
-    dailyPeakKw: 281.3,
+    dailyForecastKwh: 3650.0,
+    weeklyForecastKwh: 24150.0,
+    monthlyForecastKwh: 101800.0,
+    dailyPeakKw: 545.0,
     confidence: "HIGH",
     modelVersion: "pv-forecast-v1",
     weatherSource: "open-meteo",
