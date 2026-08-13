@@ -27,7 +27,7 @@ export default async function Hero() {
       <Navbar />
 
       <section id="hero" className="min-h-screen bg-[#050816] text-white flex items-center pt-8">
-        <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-8 grid lg:grid-cols-[35%_65%] gap-12 items-center">
+        <div className="mx-auto w-full max-w-[1600px] px-4 sm:px-8 grid grid-cols-1 lg:grid-cols-[minmax(0,35fr)_minmax(0,65fr)] gap-12 items-center">
 
           <div>
             <Badge>

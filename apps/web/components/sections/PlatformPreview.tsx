@@ -147,16 +147,32 @@ const SAMPLE_SOLAR_WEATHER = buildSampleSolarWeather();
  * `forecastPvKw` field (past half `null`, future half a forecast value),
  * plus a matching sample `ForecastSummary`, shaped exactly like production
  * so both render through the identical, unmodified `LiveEnergyChart`/
- * `ForecastSummaryPanel` components. Built from `Date.now()` (not a frozen
- * date) so the chart's real-time NOW divider always sits between the two
- * halves, regardless of when a visitor loads the landing page.
+ * `ForecastSummaryPanel` components.
+ *
+ * Anchored to `data.chartSeries`'s own last timestamp, not `Date.now()`:
+ * `data` is `SNAPSHOT_DASHBOARD_DATA`, frozen at whatever moment
+ * `scripts/create-landing-snapshot.ts` last ran (see `lib/demo/
+ * landing-snapshot.ts`'s `selectedDate`), which drifts further from the
+ * real "now" every day this snapshot isn't refreshed. Anchoring the
+ * forecast overlay to the real wall clock instead opened an ever-growing
+ * gap between the frozen day's timestamps and "today" - the chart's X axis
+ * (`domain={["dataMin", "dataMax"]}`) stretched to cover that whole gap,
+ * squeezing the actual plotted line into a sliver at one edge. Anchoring to
+ * the snapshot's own last point keeps the forecast contiguous with the
+ * historical line regardless of snapshot age, at the cost of the real
+ * `LiveEnergyChart`'s live "NOW" reference line never landing inside this
+ * frozen demo's date range - an acceptable trade for a static preview, and
+ * not something fixable here without changing that shared component.
  */
 function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
-  const nowRounded = Math.ceil(Date.now() / (15 * 60 * 1000)) * (15 * 60 * 1000);
   const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
+  const lastHistoricalTime =
+    data.chartSeries.length > 0
+      ? data.chartSeries[data.chartSeries.length - 1]!.time
+      : Date.now();
 
   const forecastByTime = new Map<number, number>(
-    futureShape.map((kw, index) => [nowRounded + index * 15 * 60 * 1000, kw]),
+    futureShape.map((kw, index) => [lastHistoricalTime + index * 15 * 60 * 1000, kw]),
   );
 
   const merged = data.chartSeries.map((point) => ({
@@ -164,10 +180,9 @@ function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
     forecastPvKw: forecastByTime.get(point.time) ?? null,
   }));
 
-  const lastTime = merged.length > 0 ? merged[merged.length - 1]!.time : nowRounded;
   const extraPoints = futureShape
-    .map((kw, index) => ({ time: nowRounded + index * 15 * 60 * 1000, kw }))
-    .filter((point) => point.time > lastTime)
+    .map((kw, index) => ({ time: lastHistoricalTime + index * 15 * 60 * 1000, kw }))
+    .filter((point) => point.time > lastHistoricalTime)
     .map((point) => ({
       time: point.time,
       pvKw: null,
@@ -181,13 +196,11 @@ function buildSampleForecastChartSeries(): EnergyFlowPoint[] {
 }
 
 function buildSampleForecastSummary(): ForecastSummary {
-  const futureShape = [116, 110, 100, 88, 72, 55, 38, 22, 10, 3];
-
   return {
-    dailyForecastKwh: 612.4,
-    weeklyForecastKwh: 3840.2,
-    monthlyForecastKwh: 15420.7,
-    dailyPeakKw: Math.max(...futureShape),
+    dailyForecastKwh: 2296.8,
+    weeklyForecastKwh: 14840.2,
+    monthlyForecastKwh: 58154.7,
+    dailyPeakKw: 281.3,
     confidence: "HIGH",
     modelVersion: "pv-forecast-v1",
     weatherSource: "open-meteo",
