@@ -38,6 +38,16 @@ function baseInput(overrides: Partial<Parameters<typeof buildFeatureVector>[0]> 
 }
 
 test.describe("buildFeatureVector - determinism and leakage prevention", () => {
+  test("Continuous Retraining Loop milestone: a genuinely new plant (recentResidualKw=0, the documented neutral default for zero history) still produces a complete, finite feature vector - global inference must never require local history first", () => {
+    const newPlantVector = buildFeatureVector(baseInput({ recentResidualKw: 0 }));
+
+    expect(newPlantVector.length).toBe(FEATURE_NAMES.length);
+    expect(newPlantVector.every((v) => Number.isFinite(v))).toBe(true);
+    // Plant identity (capacity/lat/long) is present and normalized regardless of history -
+    // the new plant is fully represented to the global model from its very first inference.
+    expect(newPlantVector).not.toEqual(buildFeatureVector(baseInput({ capacityKw: 999, latitude: 10, longitude: 10, recentResidualKw: 0 })));
+  });
+
   test("identical input always produces an identical output vector (no hidden Date.now()/state dependency)", () => {
     const input = baseInput();
     const first = buildFeatureVector(input);

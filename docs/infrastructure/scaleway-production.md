@@ -38,7 +38,7 @@ repo root and CLAUDE.md's "Automation Service" section) also runs on this VM as 
 service, but was never added to this document when it was deployed. Flagging it here rather than
 silently leaving it undocumented; fully documenting it is separate future work.
 
-Six independent `systemd` units run on it (plus the undocumented one above):
+Eight independent `systemd` units run on it (plus the undocumented one above):
 
 1. **`voltessa-fusionsolar-proxy.service`** — the FusionSolar gateway proxy. The only thing in the
    entire system allowed to call Huawei's FusionSolar API directly. `apps/web` never calls Huawei
@@ -57,9 +57,19 @@ Six independent `systemd` units run on it (plus the undocumented one above):
 6. **`voltessa-forecast-refresh.timer`** — fires twice daily, 00:10 and 12:10 Europe/Sofia, calls
    back into Vercel to reconcile+regenerate the persisted PV forecast (`PvForecastRecord`). See
    "Systemd Timers" below.
+7. **`voltessa-ml-forecast-refresh.timer`** — fires twice daily, 00:15 and 12:15 Europe/Sofia (5
+   minutes after the physical refresh above), calls back into Vercel to reconcile+generate the ML
+   self-learning forecast (`MlForecastRecord`). Previously undocumented here despite already
+   running in production — closed by the Continuous Retraining Loop milestone's documentation pass.
+   See "Systemd Timers" below.
+8. **`voltessa-ml-retrain.timer`** — fires weekly, Monday 03:00 Europe/Sofia. The ONLY unit on this
+   VM that runs real, CPU-bound work locally (`python3 train.py`) rather than purely relaying to
+   Vercel — the same reason the ONNX Inference Service also lives on this VM instead of Vercel. See
+   "Systemd Timers" below for the full three-hop flow.
 
-The six timers only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); none of
-them run Huawei/business logic itself — all of that lives in `apps/web`. They are deliberately
+Timers 2–7 only trigger HTTPS calls into the Vercel-hosted app (`CRON_SECRET`-guarded); none of them
+run Huawei/business logic itself — all of that lives in `apps/web`. Timer 8 additionally runs a
+local Python training step between two such HTTPS calls (see below). They are deliberately
 independent units (separate service files, separate env files) so that a failure or change to one
 can never affect the others, even though they currently share the same underlying `CRON_SECRET`
 value (per ADR-008, every `app/api/internal/**` route shares one secret).
@@ -307,6 +317,111 @@ voltessa-forecast-refresh.timer  (OnCalendar=00:10:00 and 12:10:00 Europe/Sofia 
   reports `ok: true` only if every plant succeeded; a partial failure still persists whichever
   plants did succeed.
 
+## `voltessa-ml-forecast-refresh.timer`
+
+Multi-Horizon Self-Learning Forecast milestone. Previously undocumented here despite already
+running in production since that milestone shipped — closed by the Continuous Retraining Loop
+milestone's documentation pass (also see that route's own doc comment, which used to incorrectly
+say this timer didn't exist yet). See `apps/web/app/api/internal/forecast/ml-refresh/route.ts`,
+`apps/web/lib/forecast/ml/ml-persistence.ts`.
+
+```
+voltessa-ml-forecast-refresh.timer  (OnCalendar=00:15:00 and 12:15:00 Europe/Sofia — twice daily,
+                                      5 minutes after voltessa-forecast-refresh.timer)
+  -> voltessa-ml-forecast-refresh.service  (curl, Bearer CRON_SECRET, --max-time 600)
+  -> POST https://app.voltessa.ai/api/internal/forecast/ml-refresh
+  -> route.ts: crypto.timingSafeEqual auth check
+  -> for every Plant with latitude/longitude/capacityKw configured:
+       reconcileMlForecastActuals(plantId, organizationId)
+         -> fills actualKwh/errorKwh/errorPct on previously-persisted, now-elapsed MlForecastRecord
+            rows, from reconstructAvailablePv (same source the physical pipeline's own
+            reconciliation uses)
+       persistMlForecast({ ..., issuedAt })
+         -> generateMlForecast(): loads the current CHAMPION's two ONNX artifacts
+            (ForecastModelVersion), recomputes the physical baseline + features locally, delegates
+            only the ONNX inference call itself to the ONNX Inference Service (below)
+         -> writes MlForecastRecord — entirely separate from PvForecastRecord; the Dashboard never
+            reads this table (see CLAUDE.md's "Dashboard Forecast" area and ADR context — this is
+            deliberate, not yet wired in)
+```
+
+- **EnvironmentFile**: `/etc/voltessa-ml-forecast-refresh.env` (root-only, `chmod 600`) — its own
+  `CRON_SECRET` copy, same convention as every other scheduler's env file.
+- Feeds the ONNX Inference Service (`fusionsolar-gateway.voltessa.ai/onnx-inference` ->
+  `127.0.0.1:4200`, `/opt/voltessa-onnx-inference` on this same VM) for the actual model inference
+  call — `onnxruntime-node`'s native binary does not load in Vercel's serverless runtime (confirmed
+  in production), the same reasoning behind `voltessa-ml-retrain.timer` below.
+- Read-only monitoring: `/admin/ml-forecast` in the app (current champion, model version history,
+  retraining eligibility, live trailing-window accuracy per plant/horizon-tier).
+
+## `voltessa-ml-retrain.timer`
+
+Continuous Retraining Loop milestone. See `apps/web/lib/forecast/ml/genuine-vintage.ts`,
+`apps/web/lib/forecast/ml/build-training-dataset.ts`,
+`apps/web/app/api/internal/forecast/ml-retrain-export/route.ts`,
+`apps/web/app/api/internal/forecast/ml-retrain-promote/route.ts`, `ml-forecasting/train.py`
+(unmodified), `ml-forecasting/retrain.sh`.
+
+```
+voltessa-ml-retrain.timer  (OnCalendar=Mon *-*-* 03:00:00 Europe/Sofia — weekly)
+  -> voltessa-ml-retrain.service  (oneshot, TimeoutStartSec=1800)
+  -> /opt/voltessa-ml-retrain/retrain.sh:
+       1. GET https://app.voltessa.ai/api/internal/forecast/ml-retrain-export
+            (Bearer CRON_SECRET) - route.ts checks how many NEW genuine TRUE_VINTAGE days exist
+            per plant since the current champion's own trainingDataEnd (findGenuineVintageDays,
+            shouldRetrain - conservative, default minimum 5 combined across all plants). If not
+            eligible: returns { eligible: false } and the script exits 0 immediately - no dataset
+            built, no training run, no ForecastModelVersion row created. If eligible: builds and
+            returns the FULL walk-forward training dataset (buildTrainingDataset - the same
+            function scripts/ml/export-training-dataset.ts uses for a local/manual run) in the
+            response body.
+       2. python3 train.py  (local, this VM, unmodified) - CPU-only, walk-forward validated,
+            head-to-head LightGBM/XGBoost, writes magnitude_model.onnx, shape_model.onnx,
+            model-manifest.json to ./data/. Runs off Vercel because it's CPU-bound Python, not
+            something a serverless function can do - the exact same reason the ONNX Inference
+            Service itself runs on this VM instead of Vercel.
+       3. POST https://app.voltessa.ai/api/internal/forecast/ml-retrain-promote
+            (Bearer CRON_SECRET, manifest + both ONNX files base64-encoded in the JSON body)
+            -> route.ts: registerCandidate() - a new ForecastModelVersion, status CANDIDATE,
+               NEVER CHAMPION - then evaluateAndPromote() - the existing champion/challenger gate
+               (lib/forecast/ml/promotion.ts, unmodified). Promotes only if every check passes;
+               otherwise marks the candidate REJECTED with its reason and leaves the current
+               champion untouched.
+  -> a SchedulerRun row ("ml_retrain") is recorded either way - by ml-retrain-export itself if the
+     cycle was skipped (not eligible), by ml-retrain-promote if training actually ran.
+```
+
+- **Why this VM, not Vercel, for the training step specifically**: `train.py` needs a real Python
+  runtime and sustained CPU time; Vercel's serverless functions cannot provide either. Steps 1 and 3
+  run on Vercel (which already has this app's full Prisma/Next.js dependency tree deployed) —
+  only the one step that structurally cannot run there (step 2) runs locally on this VM.
+- **Why NOT a full monorepo checkout on this VM**: this VM's disk is small (8GB total, ~2-3GB
+  typically free) and already hosts the FusionSolar gateway — a full `pnpm install` of this
+  Next.js/Prisma monorepo alongside Python's ML libraries (numpy/pandas/lightgbm/xgboost/onnx/
+  onnxmltools/skl2onnx/onnxruntime/scikit-learn, confirmed ~600MB installed) was judged too risky
+  for the available headroom. `/opt/voltessa-ml-retrain/` therefore contains only `train.py`,
+  `requirements.txt`, `retrain.sh`, and a Python venv — no Node, no pnpm, no monorepo checkout.
+- **Python setup on this VM**: `python3.12-venv` and `libgomp1` (LightGBM's OpenMP runtime
+  dependency) were installed via `apt` as prerequisites — neither existed on this VM before. The
+  venv lives at `/opt/voltessa-ml-retrain/venv`; `pip install -r requirements.txt` pulled in
+  `nvidia-nccl-cu13` (~250MB, GPU-only, irrelevant on this CPU-only box) as a transitive XGBoost
+  dependency — uninstalled immediately after install, confirmed all imports (`xgboost`, `lightgbm`,
+  `onnxmltools`, `pandas`, `numpy`) still work without it.
+- **EnvironmentFile**: `/etc/voltessa-ml-retrain.env` (root-only, `chmod 600`) — its own
+  `CRON_SECRET` copy (same value as every other scheduler's, copied directly between env files, per
+  ADR-008), same convention as every other scheduler's env file.
+- **Conservative by design**: the eligibility check (step 1) means most weekly firings are expected
+  to be a no-op for a while — retraining only actually happens once enough new genuine vintage data
+  has accumulated. This is intentional, not a bug to "fix" by lowering the threshold — see
+  `lib/forecast/ml/genuine-vintage.ts`'s own doc comments for the full reasoning.
+- **A training run can never become champion by merely completing** — `evaluateAndPromote` is the
+  only path to CHAMPION status; a candidate that fails the gate is marked REJECTED and the current
+  champion is untouched. No manual promotion step exists or is needed.
+- **Read-only monitoring**: `/admin/ml-forecast` shows retraining eligibility (the exact same check
+  this timer runs), model version history including CANDIDATE/REJECTED entries with rejection
+  reasons, and live trailing-window accuracy per plant/horizon-tier — independent of, and more
+  recent than, any single champion's own training-time holdout metrics.
+
 Commands:
 
 ```
@@ -316,11 +431,15 @@ systemctl status voltessa-market-price-scheduler.timer
 systemctl status voltessa-automation-execution.timer
 systemctl status voltessa-automation-reconciliation.timer
 systemctl status voltessa-forecast-refresh.timer
+systemctl status voltessa-ml-forecast-refresh.timer
+systemctl status voltessa-ml-retrain.timer
 journalctl -u voltessa-telemetry-ingestion.service -f
 journalctl -u voltessa-market-price-scheduler.service -f
 journalctl -u voltessa-automation-execution.service -f
 journalctl -u voltessa-forecast-refresh.service -f
 journalctl -u voltessa-automation-reconciliation.service -f
+journalctl -u voltessa-ml-forecast-refresh.service -f
+journalctl -u voltessa-ml-retrain.service -f
 systemd-analyze calendar '*-*-* 14:00:00 Europe/Sofia'   # check what a timer's OnCalendar actually resolves to
 ```
 
@@ -548,6 +667,8 @@ systemctl list-timers
 systemctl status voltessa-telemetry-ingestion.timer
 systemctl status voltessa-market-price-scheduler.timer
 systemctl status voltessa-forecast-refresh.timer
+systemctl status voltessa-ml-forecast-refresh.timer
+systemctl status voltessa-ml-retrain.timer
 systemd-analyze calendar '*-*-* 14:00:00 Europe/Sofia'
 
 # Logs
@@ -556,6 +677,8 @@ journalctl -u voltessa-fusionsolar-proxy --since "10 min ago"
 journalctl -u voltessa-telemetry-ingestion.service --since "15 min ago"
 journalctl -u voltessa-market-price-scheduler.service --since "today"
 journalctl -u voltessa-forecast-refresh.service --since "today"
+journalctl -u voltessa-ml-forecast-refresh.service --since "today"
+journalctl -u voltessa-ml-retrain.service --since "today"
 
 # Inspecting source/config
 cat /opt/voltessa-fusionsolar-proxy/server.js
@@ -563,6 +686,7 @@ cat /opt/voltessa-fusionsolar-proxy/package.json
 cat /etc/voltessa-fusionsolar-proxy.env
 cat /etc/voltessa-telemetry-scheduler.env
 cat /usr/local/bin/voltessa-market-price-poll.sh
+cat /opt/voltessa-ml-retrain/retrain.sh
 ls /etc/voltessa-*.env
 
 # Searching

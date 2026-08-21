@@ -14,12 +14,12 @@ import { persistMlForecast, reconcileMlForecastActuals } from "@/lib/forecast/ml
  * via the current CHAMPION model, never touching `PvForecastRecord` or
  * the existing physical+hand-tuned pipeline.
  *
- * NOT YET on a Scaleway systemd timer — that is the one remaining
- * deployment step this milestone explicitly flags rather than performing
- * silently (SSH access to shared production infrastructure requires its
- * own separate confirmation per `docs/infrastructure/scaleway-production.md`'s
- * own SOP). Until that timer exists, this route only runs when invoked
- * manually or by whatever the user wires up next.
+ * Runs on `voltessa-ml-forecast-refresh.timer` (Scaleway VM, twice daily,
+ * 5 minutes after the physical `voltessa-forecast-refresh.timer`) — see
+ * `docs/infrastructure/scaleway-production.md`. (Historical note: this
+ * comment previously said the timer did not exist yet; it was created on
+ * the VM without this comment being updated to match — a documentation
+ * lag now corrected, see the Continuous Retraining Loop milestone.)
  */
 
 export const runtime = "nodejs";

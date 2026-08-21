@@ -24,7 +24,7 @@ export async function getCurrentChampion(): Promise<ForecastModelVersion | null>
   });
 }
 
-export async function registerColdStartChampion(params: {
+type TrainedModelParams = {
   versionLabel: string;
   family: "LIGHTGBM" | "XGBOOST";
   magnitudeModelOnnx: Buffer;
@@ -37,30 +37,51 @@ export async function registerColdStartChampion(params: {
   trueVintageSampleCount: number;
   plantsCovered: string[];
   validationMetrics: unknown;
-}): Promise<ForecastModelVersion> {
+};
+
+/** Shared row-shaping for both registration paths below — the only difference between a cold-start champion and a challenger candidate is `status`/`promotedAt`, never the data itself. */
+function toModelVersionData(params: TrainedModelParams) {
+  return {
+    versionLabel: params.versionLabel,
+    family: params.family,
+    magnitudeModelOnnx: params.magnitudeModelOnnx,
+    shapeModelOnnx: params.shapeModelOnnx,
+    featureSchemaVersion: params.featureSchemaVersion,
+    hyperparameters: params.hyperparameters as object,
+    trainingDataStart: params.trainingDataStart,
+    trainingDataEnd: params.trainingDataEnd,
+    trainingSampleCount: params.trainingSampleCount,
+    trueVintageSampleCount: params.trueVintageSampleCount,
+    plantsCovered: params.plantsCovered,
+    validationMetrics: params.validationMetrics as object,
+  };
+}
+
+export async function registerColdStartChampion(params: TrainedModelParams): Promise<ForecastModelVersion> {
   const existingChampion = await getCurrentChampion();
   if (existingChampion) {
     throw new Error(
-      `registerColdStartChampion called but a champion (${existingChampion.versionLabel}) already exists - use evaluateAndPromote instead for any subsequent model.`,
+      `registerColdStartChampion called but a champion (${existingChampion.versionLabel}) already exists - use registerCandidate + evaluateAndPromote instead for any subsequent model.`,
     );
   }
 
   return prisma.forecastModelVersion.create({
-    data: {
-      versionLabel: params.versionLabel,
-      family: params.family,
-      status: "CHAMPION",
-      magnitudeModelOnnx: params.magnitudeModelOnnx,
-      shapeModelOnnx: params.shapeModelOnnx,
-      featureSchemaVersion: params.featureSchemaVersion,
-      hyperparameters: params.hyperparameters as object,
-      trainingDataStart: params.trainingDataStart,
-      trainingDataEnd: params.trainingDataEnd,
-      trainingSampleCount: params.trainingSampleCount,
-      trueVintageSampleCount: params.trueVintageSampleCount,
-      plantsCovered: params.plantsCovered,
-      validationMetrics: params.validationMetrics as object,
-      promotedAt: new Date(),
-    },
+    data: { ...toModelVersionData(params), status: "CHAMPION", promotedAt: new Date() },
+  });
+}
+
+/**
+ * Continuous Retraining Loop milestone. Registers a freshly-trained model
+ * as a CANDIDATE — the schema's own default status, set explicitly here
+ * for clarity — never CHAMPION. A candidate has no effect on production
+ * inference (`getCurrentChampion` only ever returns a CHAMPION-status row)
+ * until `evaluateAndPromote` (`lib/forecast/ml/promotion.ts`) independently
+ * decides it beats the current champion on every gate check. This is the
+ * ONLY way a retraining run may ever affect the champion — a successful
+ * training run alone is never sufficient.
+ */
+export async function registerCandidate(params: TrainedModelParams): Promise<ForecastModelVersion> {
+  return prisma.forecastModelVersion.create({
+    data: { ...toModelVersionData(params), status: "CANDIDATE" },
   });
 }
