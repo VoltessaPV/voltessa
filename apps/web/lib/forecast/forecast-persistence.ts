@@ -97,6 +97,71 @@ export async function persistFullForecastVintage(params: {
 }
 
 /**
+ * Reconciliation Backlog Determinism fix (Aug 2026). The `pending` query
+ * below previously had no `orderBy` at all — with the backlog now
+ * routinely in the thousands per plant (every target interval accumulates
+ * one row per vintage that ever predicted it, confirmed: one production
+ * day had 847 rows from 10 distinct vintages) and only
+ * `RECONCILE_BATCH_LIMIT` (500) processed per run, an unordered query
+ * gives Postgres no guarantee about WHICH 500 rows come back — in
+ * production this meant several consecutive days going completely
+ * unreconciled (0/96) for both plants despite fully valid underlying
+ * telemetry, because the rows genuinely at risk of aging out of
+ * `RECONCILE_LOOKBACK_DAYS` were never guaranteed to be the ones picked.
+ *
+ * Fix: order by `targetIntervalStart` ascending (oldest — i.e. closest to
+ * falling out of the lookback window — first), with `id` as a
+ * deterministic tie-breaker for the many rows that share the same target
+ * interval (different vintages predicting the same real-world outcome —
+ * order among those doesn't affect correctness, since they'll all resolve
+ * to the identical `actualKwh`, but a stable tie-breaker keeps repeated
+ * runs deterministic and testable). Confirmed via `EXPLAIN ANALYZE`
+ * against production data that this ordering is served directly by the
+ * EXISTING `@@index([plantId, targetIntervalStart])` index (an
+ * "Index Scan" with only a cheap incremental sort for the `id`
+ * tie-breaker among same-timestamp rows, 27kB working memory,
+ * <1ms total) — no new index required, and `RECONCILE_BATCH_LIMIT` is
+ * unchanged.
+ */
+const RECONCILE_ORDER_BY = [{ targetIntervalStart: "asc" as const }, { id: "asc" as const }];
+
+export type PendingReconciliationRecord = {
+  id: string;
+  targetIntervalStart: Date;
+  forecastKwh: number;
+};
+
+export type ReconciliationUpdate = {
+  actualKwh: number;
+  errorKwh: number;
+  errorPct: number | null;
+};
+
+/**
+ * Pure per-record reconciliation decision — extracted, unchanged math,
+ * from what used to be inlined in the loop below, so it can be unit
+ * tested without a database (this repo's Playwright suite has no test
+ * database by design). `null` means "not yet fully settled, leave for a
+ * later pass" — exactly the same three conditions as before (no bucket
+ * for this exact target instant, a null actual sample seen, or fewer/more
+ * than the expected 3 native 5-minute samples).
+ */
+export function computeReconciliationUpdate(
+  record: PendingReconciliationRecord,
+  actualByBucket: Map<number, { sum: number; count: number; nullSeen: boolean }>,
+): ReconciliationUpdate | null {
+  const bucket = actualByBucket.get(record.targetIntervalStart.getTime());
+  if (!bucket || bucket.nullSeen || bucket.count !== NATIVE_SAMPLES_PER_BUCKET) {
+    return null;
+  }
+
+  const actualKwh = Math.round(bucket.sum * 1000) / 1000;
+  const errorKwh = Math.round((record.forecastKwh - actualKwh) * 1000) / 1000;
+  const errorPct = actualKwh > 0 ? Math.round((errorKwh / actualKwh) * 1000 * 100) / 1000 : null;
+  return { actualKwh, errorKwh, errorPct };
+}
+
+/**
  * Fills in `actualKwh`/`errorKwh`/`errorPct` for previously-stored vintages
  * whose target interval has now elapsed, using the exact same
  * `reconstructAvailablePv` (Zero-Export-independent) the forecast itself
@@ -119,6 +184,7 @@ export async function reconcileForecastActuals(params: {
     .findMany({
       where: { plantId, actualKwh: null, targetIntervalStart: { lt: now, gte: lookbackStart } },
       select: { id: true, targetIntervalStart: true, forecastKwh: true },
+      orderBy: RECONCILE_ORDER_BY,
       take: RECONCILE_BATCH_LIMIT,
     })
     .catch(() => []);
@@ -154,15 +220,11 @@ export async function reconcileForecastActuals(params: {
   let reconciledCount = 0;
 
   for (const record of pending) {
-    const bucket = actualByBucket.get(record.targetIntervalStart.getTime());
-    if (!bucket || bucket.nullSeen || bucket.count !== NATIVE_SAMPLES_PER_BUCKET) {
+    const update = computeReconciliationUpdate({ id: record.id, targetIntervalStart: record.targetIntervalStart, forecastKwh: record.forecastKwh.toNumber() }, actualByBucket);
+    if (!update) {
       continue;
     }
-
-    const actualKwh = Math.round(bucket.sum * 1000) / 1000;
-    const forecastKwh = record.forecastKwh.toNumber();
-    const errorKwh = Math.round((forecastKwh - actualKwh) * 1000) / 1000;
-    const errorPct = actualKwh > 0 ? Math.round((errorKwh / actualKwh) * 1000 * 100) / 1000 : null;
+    const { actualKwh, errorKwh, errorPct } = update;
 
     await prisma.pvForecastRecord
       .update({

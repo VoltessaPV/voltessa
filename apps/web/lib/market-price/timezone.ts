@@ -92,6 +92,12 @@ export function formatDateInZone(instant: Date, timeZone: string): string {
   return `${year}-${pad(month)}-${pad(day)}`;
 }
 
+/** The local hour-of-day (0-23) for `instant` in `timeZone` — same `Intl.DateTimeFormat` technique this module already uses elsewhere, so it's correct across DST transitions without a date library. */
+export function localHourInZone(instant: Date, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" });
+  return Number(dtf.format(instant));
+}
+
 /**
  * Returns the `[start, end)` UTC instants for one calendar day in
  * `timeZone`, correctly handling DST (a local day can be 23, 24, or 25

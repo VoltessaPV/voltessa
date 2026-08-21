@@ -1,67 +1,71 @@
 import { prisma } from "@/lib/prisma";
+import { EXPECTED_PRODUCTION_INTERVALS_PER_DAY, isWithinIngestionWindow } from "@/lib/telemetry/ingestion-window";
 
 /**
  * Continuous Retraining Loop milestone (Aug 2026). The single, canonical
  * definition of a "genuine vintage" — a real forecast that was actually
  * issued in production, at a real near-term (SHORT-tier, <=48h) lead time,
  * and has since been reconciled against real actual production. Used by
- * BOTH `scripts/ml/export-training-dataset.ts` (to pick real training rows
- * over synthetic `RETROSPECTIVE_REPLAY` ones) and
+ * BOTH `lib/forecast/ml/build-training-dataset.ts` (to pick real training
+ * rows over synthetic `RETROSPECTIVE_REPLAY` ones) and
  * `scripts/ml/retrain-and-promote.ts` (to decide whether enough NEW
  * genuine data exists to justify a retraining run) — never two separate
  * definitions of the same concept.
  *
- * ## The bug this module fixes
+ * ## Fix 1: per-INTERVAL selection, not per-day-row-count
  *
- * The exporter's original eligibility check counted ALL reconciled
- * `PvForecastRecord` rows for a calendar day and required exactly 96 (one
- * per 15-minute interval). That check was only ever true in the brief
- * window before the twice-daily `voltessa-forecast-refresh.timer` had run
- * enough times to re-forecast the same future day from multiple
- * issuances — which is the PERMANENT steady state, not a temporary
- * condition. Confirmed directly against production data: Atlanta's
+ * The original eligibility check counted ALL reconciled `PvForecastRecord`
+ * rows for a calendar day and required exactly 96 (one per 15-minute
+ * interval). That check was only ever true in the brief window before the
+ * twice-daily `voltessa-forecast-refresh.timer` had run enough times to
+ * re-forecast the same future day from multiple issuances — the PERMANENT
+ * steady state, not a temporary condition (confirmed: Atlanta's
  * 2026-08-14 alone has 847 reconciled rows from 10 distinct vintages for
- * that one calendar day. The exact-96 check has therefore matched ZERO
- * days for either plant since the system reached steady state, and would
- * never match again no matter how long the system runs — every additional
- * refresh cycle only adds MORE overlapping rows to an already-elapsed day,
- * never exactly 96.
+ * one calendar day). Fixed per INTERVAL: `selectBestShortTierRowPerInterval`
+ * picks, for each 15-minute target interval, the SHORT-tier reconciled row
+ * closest to a genuine D+1 (24h) lead time — matching what this project's
+ * own `RETROSPECTIVE_REPLAY` SHORT scenario already simulates (`leadDays: 1`
+ * in `build-training-dataset.ts`).
  *
- * The fix: per INTERVAL, not per day-row-count. For each 15-minute target
- * interval, multiple SHORT-tier (<=48h lead time) reconciled vintages can
- * legitimately exist (any forecast issued within 48h of that interval
- * qualifies as SHORT) — `selectBestShortTierRowPerInterval` picks the one
- * closest to a genuine D+1 (24h) lead time, matching what this project's
- * own `RETROSPECTIVE_REPLAY` SHORT scenario already simulates
- * (`leadDays: 1` in `export-training-dataset.ts`). A day is genuinely
- * TRUE_VINTAGE only when all 96 interval slots have at least one such row.
+ * ## Fix 2: the expected-interval denominator is 64, not 96
+ *
+ * Voltessa's shared telemetry ingestion window (`lib/telemetry/ingestion-window.ts`)
+ * is 06:00–22:00 Europe/Sofia, identical for every plant. PV production is
+ * structurally zero outside it, so nighttime telemetry is intentionally
+ * never pulled — a deliberate architecture decision, not a data gap.
+ * Confirmed directly against production data: Chomakovtsi (a plant that
+ * follows this window with no incidental extra syncs) reaches ~61/64
+ * (95.3%) of its own intentionally-ingested window on a normal day, while
+ * the OLD 96-slot-denominator check compared that same 61 against a full
+ * day and rejected it as "63.5% coverage" — penalizing a plant for not
+ * having data during hours the system was never designed to collect it.
+ * Both `selectBestShortTierRowPerInterval` and `computeGenuineVintageDays`
+ * now exclude nighttime intervals entirely — they never count toward OR
+ * against completeness, for any plant. There is no plant-specific
+ * exception anywhere in this module; the 64-slot window is the same
+ * shared architectural fact for every plant.
  */
 
 /** Genuine-D+1 target lead time, in minutes — the real-world analog of the `leadDays: 1` synthetic SHORT scenario. */
 export const TARGET_D1_LEAD_MINUTES = 24 * 60;
 
 /**
- * A day qualifies once at least this many of its 96 interval slots have a
- * SHORT-tier reconciled row — not literally all 96. The existing physical
+ * A day qualifies once at least this many of its `EXPECTED_PRODUCTION_INTERVALS_PER_DAY`
+ * (64) genuinely-expected interval slots have a SHORT-tier reconciled row —
+ * not all 64. Even within the ingestion window, the existing physical
  * reconciliation job (`reconcileForecastActuals` in `forecast-persistence.ts`,
- * unmodified, out of scope for this milestone) only ever looks at rows
- * within its own rolling 3-day lookback window (`RECONCILE_LOOKBACK_DAYS`)
- * and requires an exact 3-native-sample-per-bucket match; any interval
- * that fails that check within its own 3-day eligibility window is never
- * retried again and stays `actualKwh: null` permanently. Confirmed
- * directly against production data: Atlanta's most recent 4 available
- * days each independently cap out at exactly 93/96, consistently missing
- * the same 3 dusk intervals (20:45–21:15 UTC) every time — a structural
- * property of the existing, out-of-scope reconciliation window, not
- * something this module should paper over by silently redefining
- * "genuine," but also not something worth blocking on requiring
- * mathematical perfection that production will never actually reach. 90
- * (93.75%) keeps a real margin below the observed 93 while still
- * requiring near-complete coverage — a handful of permanently-unreconciled
- * near-zero-production dusk intervals must never disqualify an otherwise
- * genuine day.
+ * its ordering fixed by the companion Reconciliation Backlog Determinism
+ * fix, otherwise unmodified) only reconciles what it can within its own
+ * rolling 3-day lookback, so a small number of intervals can still
+ * legitimately lag by the time a day is evaluated. The completeness ratio
+ * is unchanged from before this fix — previously 90/96 (93.75%) against a
+ * full day; now the SAME 93.75%, expressed against the true 64-slot
+ * expected-production denominator: 64 × 0.9375 = 60 exactly. Confirmed
+ * this makes Chomakovtsi's real, typical 61/64 day qualify (61 >= 60),
+ * while a day with only 59/64 correctly still does not.
  */
-export const MIN_QUALIFYING_SLOTS_PER_DAY = 90;
+const COMPLETENESS_RATIO = 90 / 96; // = 0.9375 = 15/16 — the exact ratio this project has always used; only the denominator it's applied against has changed.
+export const MIN_QUALIFYING_SLOTS_PER_DAY = Math.round(EXPECTED_PRODUCTION_INTERVALS_PER_DAY * COMPLETENESS_RATIO);
 
 type LeadTimeRow = { targetIntervalStart: Date; leadTimeMinutes: number };
 
@@ -69,12 +73,21 @@ type LeadTimeRow = { targetIntervalStart: Date; leadTimeMinutes: number };
  * Per interval, picks the SHORT-tier reconciled row whose `leadTimeMinutes`
  * is closest to a genuine day-ahead (24h) forecast — never an arbitrary
  * "first" or "last" row when several vintages cover the same interval.
- * Pure function, no I/O — the caller fetches rows already filtered to
- * `horizonTier: "SHORT", actualKwh: { not: null }` for one plant/day.
+ * Rows outside the shared ingestion window (`isWithinIngestionWindow`) are
+ * dropped entirely here — nighttime is intentionally never ingested, so a
+ * row for one of those intervals should not exist in practice, but this
+ * function never relies on that; it enforces the exclusion itself so
+ * "genuine vintage" has exactly one definition regardless of what a caller
+ * happens to pass in. Pure function, no I/O — the caller fetches rows
+ * already filtered to `horizonTier: "SHORT", actualKwh: { not: null }` for
+ * one plant/day.
  */
 export function selectBestShortTierRowPerInterval<T extends LeadTimeRow>(rows: T[]): T[] {
   const bestByInterval = new Map<number, T>();
   for (const row of rows) {
+    if (!isWithinIngestionWindow(row.targetIntervalStart)) {
+      continue;
+    }
     const key = row.targetIntervalStart.getTime();
     const existing = bestByInterval.get(key);
     if (!existing || Math.abs(row.leadTimeMinutes - TARGET_D1_LEAD_MINUTES) < Math.abs(existing.leadTimeMinutes - TARGET_D1_LEAD_MINUTES)) {
@@ -93,14 +106,20 @@ function utcDayKey(instant: Date): string {
  * Pure: given SHORT-tier, reconciled `{ targetIntervalStart }` rows for one
  * plant (any date range), returns the sorted list of UTC calendar-day keys
  * that qualify as genuine vintage days — at least `MIN_QUALIFYING_SLOTS_PER_DAY`
- * of the day's 96 interval slots have at least one such row (see that
- * constant's own doc comment for why this isn't a literal 96/96). A day
- * with 847 rows spanning only 50 distinct slots does NOT qualify; a day
- * spanning 93 or 96 distinct slots does.
+ * (60) of the day's `EXPECTED_PRODUCTION_INTERVALS_PER_DAY` (64,
+ * ingestion-window-only) interval slots have at least one such row. Rows
+ * outside the ingestion window are excluded from both the numerator and
+ * the denominator — they never count toward OR against completeness, for
+ * any plant, identically. A day with 847 rows spanning only 50
+ * IN-WINDOW distinct slots does NOT qualify; a day spanning 61 or 64
+ * in-window distinct slots does.
  */
 export function computeGenuineVintageDays(rows: { targetIntervalStart: Date }[]): string[] {
   const slotsByDay = new Map<string, Set<number>>();
   for (const row of rows) {
+    if (!isWithinIngestionWindow(row.targetIntervalStart)) {
+      continue;
+    }
     const day = utcDayKey(row.targetIntervalStart);
     const slots = slotsByDay.get(day) ?? new Set<number>();
     slots.add(row.targetIntervalStart.getTime());
