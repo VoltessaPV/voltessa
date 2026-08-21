@@ -51,6 +51,36 @@
  * what has already happened — a NON-today day remains exactly as before:
  * a fixed function of the persisted vintage and the selected date alone,
  * completely unaffected by `now` or `todayActualIntervals`.
+ *
+ * Full-period (Week/Month) semantics fix (Aug 2026): a second, distinct
+ * defect from the one above. `latestVintage.intervals` only ever contains
+ * rows from the vintage's own `issuedAt` forward — so any day of the
+ * selected week/month that is BEFORE today (already elapsed) has no
+ * persisted forecast row at all, and (before this fix) no actual-data
+ * substitution either, since only today's own contribution was ever
+ * corrected. `weeklyForecastKwh`/`monthlyForecastKwh` therefore silently
+ * degraded to "remaining forecast from generation time to period end,"
+ * not a genuine full-period total — confirmed directly against production
+ * data: Chomakovtsi's live `weeklyForecastKwh` read 1,657 kWh while
+ * 3,013 kWh had already been produced that same week (the "already
+ * elapsed" days simply never appeared in the sum at all), and
+ * `monthlyForecastKwh` read 5,831 kWh against 13,562 kWh already
+ * produced that month.
+ *
+ * The fix mirrors the daily fix's own shape rather than inventing a new
+ * mechanism: `sumIntervalsInRange` now also accepts `priorDaysActual` —
+ * real per-day production totals (reused from the same canonical
+ * `PlantDailyKpi`-backed daily totals the KPI cards and the Week/Month
+ * actual chart line already fetch, never a second/independent
+ * calculation) for every already-elapsed calendar day strictly before
+ * today that could fall inside the selected week/month. Any such day's
+ * forecast rows (if any happen to exist) are excluded from the
+ * forecast-sum exactly the way today's already-elapsed rows already are,
+ * so actual and forecast can never double-count for the same day. A
+ * period that does not contain today (a genuinely past or future
+ * week/month) is completely unaffected — `priorDaysActual` only ever
+ * contributes when `includesToday` is true, preserving the "Known scope
+ * boundary" behavior for historical date browsing exactly as before.
  */
 import {
   formatDateInZone,
@@ -102,6 +132,48 @@ function peakActualKw(intervals: TodayActualInterval[]): number | null {
 }
 
 /**
+ * Full-period (Week/Month) semantics fix. Real, already-known production
+ * for one full calendar day strictly before today — a minimal, decoupled
+ * shape (matching `TodayActualInterval`'s own precedent) so this file
+ * keeps its Prisma-free, unit-testable design. The caller
+ * (`dashboard-data.ts`) maps this down from the exact same canonical
+ * `PlantDailyKpi`-backed daily totals (`getDailyTotals`) the KPI cards and
+ * the Week/Month actual chart line already fetch — never a second,
+ * independent production query. `producedKwh: null` (a genuine sync gap)
+ * contributes 0, same convention `sumActualKwh` already uses.
+ */
+export type ElapsedDayActual = {
+  /** Any instant within the elapsed local calendar day this total represents — only the local calendar day is read from it. */
+  localDate: Date;
+  producedKwh: number | null;
+};
+
+function sumElapsedDaysKwh(days: ElapsedDayActual[]): number {
+  return days.reduce((sum, day) => sum + (day.producedKwh ?? 0), 0);
+}
+
+/**
+ * The one "actual(midnight..now) + remaining-forecast(now..end-of-day)"
+ * combination, shared by `computeForecastSummary`'s `dailyForecastKwh` and
+ * `buildDailyForecastBucketMap`'s own today bucket — so the Forecast card
+ * and the Week/Month chart's today bar always agree, never two
+ * independent calculations of the same full-day figure. `null` only when
+ * there is neither a persisted forecast row nor any real actual sample
+ * for today at all.
+ */
+function combineActualAndRemainingKwh(
+  todayIntervals: PersistedForecastInterval[],
+  now: Date,
+  todayActualIntervals: TodayActualInterval[],
+): number | null {
+  const remainingIntervals = todayIntervals.filter((interval) => interval.targetIntervalStart.getTime() >= now.getTime());
+  const actualKwh = sumActualKwh(todayActualIntervals);
+  const remainingKwh = remainingIntervals.reduce((sum, interval) => sum + interval.forecastKwh, 0);
+  const hasAnyData = todayActualIntervals.length > 0 || todayIntervals.length > 0;
+  return hasAnyData ? round2(actualKwh + remainingKwh) : null;
+}
+
+/**
  * The compact forecast summary rendered inside the Forecast card. Every
  * figure is a deterministic sum/max over the persisted vintage's own rows
  * for the SELECTED local calendar day/week/month, PLUS — only when the
@@ -148,13 +220,15 @@ export type ForecastSummary = {
 /**
  * Sums a persisted vintage's `forecastKwh` over intervals whose
  * `targetIntervalStart` falls in `[start, end)`, applying the same
- * today-correction `computeForecastSummary`'s own `dailyForecastKwh` uses
- * whenever today's own calendar day falls within that range: today's rows
- * before `now` are excluded (their real production is represented by
- * `todayActualIntervals` instead — summed in exactly once, never
- * double-counted against the remaining-forecast rows that are still
- * genuinely in the future relative to `now`). `null` only when there is
- * neither persisted forecast data nor actual data anywhere in the range.
+ * actual-production correction `computeForecastSummary`'s own
+ * `dailyForecastKwh` uses, extended to the whole selected period: today's
+ * rows before `now` are excluded (represented by `todayActualIntervals`
+ * instead), and every already-elapsed day strictly before today that
+ * falls in range is likewise excluded from the forecast-sum and
+ * represented by its own entry in `priorDaysActual` instead — each day
+ * contributes exactly once, either as forecast or as actual, never both,
+ * never neither. `null` only when there is neither persisted forecast
+ * data nor any actual data anywhere in the range.
  */
 function sumIntervalsInRange(
   intervals: PersistedForecastInterval[],
@@ -162,18 +236,37 @@ function sumIntervalsInRange(
   end: Date,
   now: Date,
   todayActualIntervals: TodayActualInterval[],
+  priorDaysActual: ElapsedDayActual[],
 ): number | null {
   const matching = intervals.filter(
     (interval) => interval.targetIntervalStart.getTime() >= start.getTime() && interval.targetIntervalStart.getTime() < end.getTime(),
   );
 
-  const todayKey = dayBucketKey(now);
-  const adjusted = matching.filter(
-    (interval) => dayBucketKey(interval.targetIntervalStart) !== todayKey || interval.targetIntervalStart.getTime() >= now.getTime(),
-  );
-
+  // `priorDaysActual` only ever applies to a period that genuinely contains
+  // "now" — a fully past or future selected week/month gets none of this,
+  // preserving the pre-existing "Known scope boundary" behavior exactly
+  // (see this file's own top doc comment) regardless of what a caller
+  // happens to pass for `priorDaysActual`.
   const includesToday = now.getTime() >= start.getTime() && now.getTime() < end.getTime();
-  const actualContribution = includesToday ? sumActualKwh(todayActualIntervals) : 0;
+  const relevantPriorDays = includesToday
+    ? priorDaysActual.filter(
+        (day) => day.localDate.getTime() >= start.getTime() && day.localDate.getTime() < end.getTime(),
+      )
+    : [];
+  const elapsedPriorDayKeys = new Set(relevantPriorDays.map((day) => dayBucketKey(day.localDate)));
+  const todayKey = dayBucketKey(now);
+
+  const adjusted = matching.filter((interval) => {
+    const key = dayBucketKey(interval.targetIntervalStart);
+    if (key === todayKey) {
+      return interval.targetIntervalStart.getTime() >= now.getTime();
+    }
+    return !elapsedPriorDayKeys.has(key);
+  });
+
+  const actualContribution = round2(
+    (includesToday ? sumActualKwh(todayActualIntervals) : 0) + sumElapsedDaysKwh(relevantPriorDays),
+  );
 
   if (adjusted.length === 0 && actualContribution === 0) {
     return null;
@@ -186,29 +279,39 @@ function sumIntervalsInRange(
  * Sofia-local calendar-day buckets `buildPeriodChartSeries` uses
  * (`bucketKey`), summing each day's `forecastKwh` (never `forecastKw` — a
  * day total is a sum of energy, not power) into one per-day total, for
- * every persisted interval within `[periodStart, periodEnd)` — including
- * today's own bucket, computed the exact same way as every other day now
- * (no more special-casing "today" against real "now" — see this module's
- * own top doc comment). A day with no persisted forecast rows at all
- * (e.g. a past day the current vintage's forward-looking horizon never
- * covered) simply has no entry in the returned map.
+ * every persisted interval within `[periodStart, periodEnd)`. A day with
+ * no persisted forecast rows at all (e.g. a past day the current vintage's
+ * forward-looking horizon never covered) simply has no entry in the
+ * returned map — UNLESS it's today (see below).
  *
- * Deliberately NOT given the same today-correction `computeForecastSummary`
- * has: this function feeds the Week/Month period chart's per-day bars
- * (`dashboard-data.ts`'s `buildDailyForecastBucketMap` call), a visually
- * distinct consumer from the Forecast card this milestone's fix targets —
- * today's bar in that chart can still under-represent today's true total
- * for the same reason `dailyForecastKwh` used to. Known, tracked as a
- * separate follow-up, not fixed here (scope boundary: this milestone
- * targets `ForecastSummary`/the Forecast card specifically).
+ * Week/Month chart continuity fix (Aug 2026): today's bucket now gets the
+ * exact same `actual(midnight..now) + remaining-forecast(now..end-of-day)`
+ * correction `computeForecastSummary`'s own `dailyForecastKwh` already
+ * uses (via the shared `combineActualAndRemainingKwh` helper — one
+ * calculation, two consumers, never a second independent one). Before
+ * this fix, today's bucket was a raw sum of whatever forecast rows
+ * happened to be persisted for today — which, since a vintage only ever
+ * contains rows from its own generation time forward, is a partial-day
+ * total that lands close to the actual line's own partial "so far" value
+ * for unrelated reasons, then jumps sharply to tomorrow's genuine full-day
+ * forecast. That visual "drop then jump" was never tomorrow's forecast
+ * being derived from today's incomplete actual — `latestVintage`'s rows
+ * for tomorrow and beyond are, and remain, entirely independent of
+ * today's actual production — it was today's OWN bucket being
+ * artificially low. Fixing today's bucket removes the discontinuity;
+ * tomorrow's bucket (and every day after it) is untouched by this fix.
  */
 export function buildDailyForecastBucketMap(
   intervals: PersistedForecastInterval[],
   periodStart: Date,
   periodEnd: Date,
+  now: Date,
+  todayActualIntervals: TodayActualInterval[],
 ): Map<number, number> {
   const kwhByDayKey = new Map<string, number>();
   const instantByDayKey = new Map<string, number>();
+  const todayIntervals: PersistedForecastInterval[] = [];
+  const todayKey = dayBucketKey(now);
 
   for (const interval of intervals) {
     if (
@@ -218,16 +321,33 @@ export function buildDailyForecastBucketMap(
       continue;
     }
     const key = dayBucketKey(interval.targetIntervalStart);
-    kwhByDayKey.set(key, (kwhByDayKey.get(key) ?? 0) + interval.forecastKwh);
     if (!instantByDayKey.has(key)) {
       instantByDayKey.set(key, localDayBoundsUtc(interval.targetIntervalStart, BULGARIA_TIMEZONE).start.getTime());
     }
+    if (key === todayKey) {
+      // Held aside, not summed directly — today's bucket is computed below
+      // via the same actual+remaining combination every other "today"
+      // figure on this page uses, never a raw sum of persisted rows.
+      todayIntervals.push(interval);
+      continue;
+    }
+    kwhByDayKey.set(key, (kwhByDayKey.get(key) ?? 0) + interval.forecastKwh);
   }
 
   const result = new Map<number, number>();
   for (const [key, kwh] of kwhByDayKey) {
     result.set(instantByDayKey.get(key) as number, round2(kwh));
   }
+
+  const todayFallsInRange = now.getTime() >= periodStart.getTime() && now.getTime() < periodEnd.getTime();
+  if (todayFallsInRange) {
+    const todayFullDayKwh = combineActualAndRemainingKwh(todayIntervals, now, todayActualIntervals);
+    if (todayFullDayKwh !== null) {
+      const todayInstant = instantByDayKey.get(todayKey) ?? localDayBoundsUtc(now, BULGARIA_TIMEZONE).start.getTime();
+      result.set(todayInstant, todayFullDayKwh);
+    }
+  }
+
   return result;
 }
 
@@ -246,8 +366,10 @@ export function computeForecastSummary(params: {
   now: Date;
   /** Real reconstructed Available PV from local midnight to `now`, for TODAY only. Always safe to pass `[]` (e.g. on a fetch failure) — degrades gracefully to the remaining-forecast-only figure rather than throwing or fabricating a number; ignored entirely when `selectedDate` isn't today. */
   todayActualIntervals: TodayActualInterval[];
+  /** Full-period semantics fix: real per-day production for every already-elapsed calendar day strictly before today that could fall inside the selected week/month (see `sumIntervalsInRange`'s own doc comment). Always safe to pass `[]` — degrades to the pre-fix remaining-only figure for those days rather than throwing; only ever consulted for a week/month that genuinely contains today. */
+  priorDaysActual: ElapsedDayActual[];
 }): ForecastSummary {
-  const { selectedDate, latestVintage, now, todayActualIntervals } = params;
+  const { selectedDate, latestVintage, now, todayActualIntervals, priorDaysActual } = params;
 
   const dayBounds = localDayBoundsUtc(selectedDate, BULGARIA_TIMEZONE);
   const weekBounds = localWeekBoundsUtc(selectedDate, BULGARIA_TIMEZONE);
@@ -267,10 +389,7 @@ export function computeForecastSummary(params: {
 
   if (isSelectedDateToday) {
     const remainingIntervals = dayIntervals.filter((interval) => interval.targetIntervalStart.getTime() >= now.getTime());
-    const actualKwh = sumActualKwh(todayActualIntervals);
-    const remainingKwh = remainingIntervals.reduce((sum, interval) => sum + interval.forecastKwh, 0);
-    const hasAnyData = todayActualIntervals.length > 0 || dayIntervals.length > 0;
-    dailyForecastKwh = hasAnyData ? round2(actualKwh + remainingKwh) : null;
+    dailyForecastKwh = combineActualAndRemainingKwh(dayIntervals, now, todayActualIntervals);
 
     const actualPeak = peakActualKw(todayActualIntervals);
     const remainingPeakKw = remainingIntervals.length > 0 ? Math.max(...remainingIntervals.map((interval) => interval.forecastKw)) : null;
@@ -283,8 +402,8 @@ export function computeForecastSummary(params: {
     confidence = dayIntervals[0]?.confidence ?? null;
   }
 
-  const weeklyForecastKwh = sumIntervalsInRange(latestVintage.intervals, weekBounds.start, weekBounds.end, now, todayActualIntervals);
-  const monthlyForecastKwh = sumIntervalsInRange(latestVintage.intervals, monthBounds.start, monthBounds.end, now, todayActualIntervals);
+  const weeklyForecastKwh = sumIntervalsInRange(latestVintage.intervals, weekBounds.start, weekBounds.end, now, todayActualIntervals, priorDaysActual);
+  const monthlyForecastKwh = sumIntervalsInRange(latestVintage.intervals, monthBounds.start, monthBounds.end, now, todayActualIntervals, priorDaysActual);
 
   return {
     dailyForecastKwh,
