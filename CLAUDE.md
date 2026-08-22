@@ -165,7 +165,12 @@ Continuous ENTSO-E Daily Price Refresh milestone — it was declared here and in
 before that, but was never actually set as a Vercel value, so the price importer had silently never
 worked in production until then), and `AUTOMATION_SERVICE_URL` / `AUTOMATION_SERVICE_SECRET`
 (the standalone Automation Service base URL and shared secret — see "Automation Service" below;
-`apps/web` never holds FusionSolar portal credentials itself).
+`apps/web` never holds FusionSolar portal credentials itself), and `HEADSCALE_API_KEY` (a Headscale
+API key, `headscale apikeys create` on the Scaleway VM — see
+`docs/infrastructure/gateway-provisioning.md` — used only by
+`lib/admin/headscale-live-status.ts` to fetch live gateway online/offline state for
+`/admin/gateways`; **must be set manually in Vercel Production/Preview**, same
+never-actually-set-yet risk `ENTSOE_API_TOKEN` had before its own milestone caught it).
 
 Additional env var used in `apps/web` but **not currently declared** in `turbo.json` `globalEnv`
 (known gap — add it if you touch this area): `NEXTAUTH_URL`.

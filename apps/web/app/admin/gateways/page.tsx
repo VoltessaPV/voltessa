@@ -7,11 +7,16 @@ export { pageHeading } from "./heading";
  * Voltessa Gateway milestone (Aug 2026). Read-only visibility into
  * provisioned/enrolled/associated physical gateways - not a provisioning
  * UI (that stays the three-script CLI workflow documented in
- * docs/infrastructure/gateway-provisioning.md) and not a live fleet
- * monitor (no polling/reconciliation - see that doc's own "deliberately
- * does not do yet" section). A gateway with no plant association still
- * appears here, by design - this is exactly the visibility a gateway
- * awaiting assignment to a not-yet-onboarded plant needs.
+ * docs/infrastructure/gateway-provisioning.md). A gateway with no plant
+ * association still appears here, by design - this is exactly the
+ * visibility a gateway awaiting assignment to a not-yet-onboarded plant
+ * needs.
+ *
+ * Two deliberately separate columns: "Status" is the Postgres lifecycle
+ * field (unaffected by whether the unit happens to be reachable right
+ * now); "Live" is fetched fresh from Headscale on every page load (see
+ * `lib/admin/headscale-live-status.ts`) - no polling, no caching, and
+ * never written back to the database.
  */
 
 const STATUS_STYLE: Record<string, string> = {
@@ -19,6 +24,12 @@ const STATUS_STYLE: Record<string, string> = {
   ENROLLED: "bg-sky-400/10 text-sky-400",
   PROVISIONED: "bg-amber-400/10 text-amber-400",
   REVOKED: "bg-red-400/10 text-red-400",
+};
+
+const LIVE_STYLE: Record<string, string> = {
+  ONLINE: "text-emerald-400",
+  OFFLINE: "text-red-400",
+  UNKNOWN: "text-white/40",
 };
 
 function formatTimestamp(value: Date | null): string {
@@ -33,9 +44,10 @@ export default async function GatewaysPage() {
   return (
     <div className="space-y-8">
       <p className="text-white/60">
-        Read-only listing of every provisioned Voltessa Gateway. Association state comes from Voltessa&apos;s own
-        database, not a live probe — see docs/infrastructure/gateway-provisioning.md for the enrollment workflow and
-        what &quot;live&quot; status would require.
+        Read-only listing of every provisioned Voltessa Gateway. &quot;Status&quot; is the gateway&apos;s lifecycle
+        state in Voltessa&apos;s own database; &quot;Live&quot; is fetched fresh from Headscale on every page load
+        and reflects whether the physical unit is currently reachable — see
+        docs/infrastructure/gateway-provisioning.md for the enrollment workflow.
       </p>
 
       <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
@@ -48,6 +60,7 @@ export default async function GatewaysPage() {
               <tr className="text-left text-[11px] uppercase tracking-wider text-white/40">
                 <th className="pb-2 pr-4">Hostname</th>
                 <th className="pb-2 pr-4">Status</th>
+                <th className="pb-2 pr-4">Live</th>
                 <th className="pb-2 pr-4">Headscale node</th>
                 <th className="pb-2 pr-4">Organization</th>
                 <th className="pb-2 pr-4">Plant</th>
@@ -58,7 +71,7 @@ export default async function GatewaysPage() {
             <tbody>
               {gateways.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-2 text-sm text-white/50">
+                  <td colSpan={8} className="py-2 text-sm text-white/50">
                     No gateways provisioned yet.
                   </td>
                 </tr>
@@ -68,6 +81,12 @@ export default async function GatewaysPage() {
                     <td className="py-2 pr-4 text-sm text-white/80">{g.hostname}</td>
                     <td className="py-2 pr-4 text-sm">
                       <span className={`rounded-full px-2 py-0.5 ${STATUS_STYLE[g.status] ?? "bg-white/10 text-white/60"}`}>{g.status}</span>
+                    </td>
+                    <td className="py-2 pr-4 text-sm">
+                      <span className={`inline-flex items-center gap-1.5 ${LIVE_STYLE[g.liveConnectivity]}`} title={g.liveConnectivity === "UNKNOWN" ? "Live connectivity could not currently be determined (Headscale unreachable)" : undefined}>
+                        <span aria-hidden>●</span>
+                        {g.liveConnectivity}
+                      </span>
                     </td>
                     <td className="py-2 pr-4 text-sm text-white/70">
                       {g.headscaleNodeId !== null ? `#${g.headscaleNodeId}` : "—"}

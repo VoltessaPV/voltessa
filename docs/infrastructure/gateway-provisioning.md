@@ -91,12 +91,34 @@ effect on any other node). Until a dedicated script exists, revoke a gateway by:
    update) — there is no script for this step yet; add one if revocation becomes routine enough to
    justify it.
 
+## Live connectivity on `/admin/gateways`
+
+`/admin/gateways` shows two deliberately separate things per gateway: `status` (the lifecycle field
+above, stored in Postgres, unaffected by whether the unit happens to be reachable right now) and a
+live `ONLINE`/`OFFLINE`/`UNKNOWN` indicator, fetched fresh from Headscale on every page load —
+never cached, never written back to the database.
+
+This runs inside a Next.js Server Component on Vercel, which has no SSH access to the Scaleway VM
+(unlike the three provisioning scripts above, which run from an operator's own machine). It instead
+calls Headscale's own HTTP API directly (`GET https://headscale.voltessa.ai/api/v1/node`, Bearer
+`HEADSCALE_API_KEY`) — see `lib/admin/headscale-live-status.ts`. Correlation uses each `Gateway`
+row's stored `headscaleNodeKey` (the stable cryptographic node identity), never hostname matching.
+
+- **`HEADSCALE_API_KEY`**: created once via `ssh root@51.15.103.175 "headscale apikeys create -e 90d"`
+  (the key is only ever shown at creation time — if lost, create a new one and expire the old one:
+  `headscale apikeys expire`). **Must be set manually in Vercel Production and Preview** — declared
+  in `turbo.json` `globalEnv` and documented in `CLAUDE.md`, but (same risk `ENTSOE_API_TOKEN` had
+  before its own milestone caught it) declaring it is not the same as it actually being set as a
+  real Vercel value. Verify it's set before assuming the live indicator works in production.
+- If Headscale can't be reached (network issue, expired/missing API key, Headscale itself down),
+  the page still loads and shows every `Gateway` row — the live column shows `UNKNOWN`, never a
+  false `OFFLINE`.
+
 ## What this workflow deliberately does not do (yet)
 
-No UI, no internal API route, no `Permissions.can*` bucket, no automated reconciliation/polling of
-Headscale state into Postgres, no hardware-serial tracking, no revocation script. All reasonable
-next steps once there's an actual fleet size that makes manual/scripted operation painful — not
-needed at today's scale (see this milestone's own design record for the reasoning). Live
-status/`last_seen` is intentionally not cached in Postgres — query Headscale directly
-(`headscale nodes list`) when current status is needed, rather than trusting a second, potentially
-stale copy.
+No provisioning UI, no internal API route for enrollment, no `Permissions.can*` bucket beyond the
+existing platform-admin gate, no automated reconciliation/polling of Headscale state into Postgres
+(the live indicator above is a page-load lookup, not a background job), no hardware-serial
+tracking, no revocation script. All reasonable next steps once there's an actual fleet size that
+makes manual/scripted operation painful — not needed at today's scale (see this milestone's own
+design record for the reasoning).
