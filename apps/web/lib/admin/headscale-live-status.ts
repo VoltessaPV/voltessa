@@ -19,7 +19,7 @@
  */
 
 const HEADSCALE_NODE_LIST_URL = "https://headscale.voltessa.ai/api/v1/node";
-const REQUEST_TIMEOUT_MS = 5000;
+const REQUEST_TIMEOUT_MS = 5000; // HEADSCALE_API_KEY set in Vercel Production/Preview (Aug 2026)
 
 type HeadscaleApiNode = {
   nodeKey: string;
