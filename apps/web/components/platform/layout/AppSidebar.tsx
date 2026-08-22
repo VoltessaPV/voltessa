@@ -16,6 +16,7 @@ import {
   LineChart,
   LogOut,
   Menu,
+  Router,
   Settings,
   ShieldCheck,
   Users,
@@ -144,6 +145,11 @@ const adminNavigation = [
     label: "ML Forecast",
     href: "/admin/ml-forecast",
     icon: Brain,
+  },
+  {
+    label: "Gateways",
+    href: "/admin/gateways",
+    icon: Router,
   },
 ];
 

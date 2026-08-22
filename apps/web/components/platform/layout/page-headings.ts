@@ -3,6 +3,7 @@ import { pageHeading as adminAssignments } from "@/app/admin/assignments/heading
 import { pageHeading as adminAuditLog } from "@/app/admin/audit-log/heading";
 import { pageHeading as adminAutomationLab } from "@/app/admin/automation-lab/heading";
 import { pageHeading as adminDigitalTwin } from "@/app/admin/digital-twin/heading";
+import { pageHeading as adminGateways } from "@/app/admin/gateways/heading";
 import { pageHeading as adminMlForecast } from "@/app/admin/ml-forecast/heading";
 import { pageHeading as adminOperations } from "@/app/admin/operations/heading";
 import { pageHeading as adminHistoricalImports } from "@/app/admin/historical-imports/heading";
@@ -39,6 +40,7 @@ const ADMIN_STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/admin/automation-lab": adminAutomationLab,
   "/admin/digital-twin": adminDigitalTwin,
   "/admin/ml-forecast": adminMlForecast,
+  "/admin/gateways": adminGateways,
 };
 
 export function resolveAdminPageHeading(pathname: string): PageHeadingContent | null {

@@ -328,6 +328,7 @@ model Organization {
 
   users                  User[]
   plants                 Plant[]
+  gateways               Gateway[]
   fusionSolarConnections FusionSolarConnection[]
   traderAssignment       TraderAssignment?
 
@@ -373,7 +374,8 @@ model Plant {
 
   organization Organization @relation(fields: [organizationId], references: [id])
 
-  devices Device[]
+  devices  Device[]
+  gateways Gateway[]
 
   /// Deprecated (Telemetry Architecture Finalization milestone, ADR-010):
   /// no longer read or written by any code path — `syncFusionSolarPlantTelemetry`
@@ -474,6 +476,58 @@ model Device {
   @@unique([plantId, devDn])
   @@index([plantId])
   @@index([esnCode])
+}
+
+/// Voltessa Gateway milestone (Aug 2026) - lifecycle of a physical edge
+/// device from enrollment through customer assignment. Mirrors the actual
+/// operational sequence: PROVISIONED (an enrollment credential exists) ->
+/// ENROLLED (the physical unit has confirmed into Headscale) -> ACTIVE
+/// (assigned to an organization/plant) -> REVOKED (Headscale identity
+/// deleted/expired, no longer trusted). See
+/// docs/infrastructure/gateway-provisioning.md for the full workflow.
+enum GatewayStatus {
+  PROVISIONED
+  ENROLLED
+  ACTIVE
+  REVOKED
+}
+
+/// A physical Voltessa Gateway unit. The gateway's real per-unit identity is
+/// its Headscale/Tailscale node's own on-device-generated keypair - this
+/// table never holds or generates that key itself, only records the public
+/// identifiers Headscale assigns once the physical unit has enrolled.
+/// organizationId/plantId are nullable, same precedent as
+/// `User.organizationId`: a gateway can be provisioned and even enrolled
+/// before it's assigned anywhere (see the provisioning runbook).
+model Gateway {
+  id String @id @default(cuid())
+
+  hostname String @unique
+
+  /// Headscale's node public key (`nodekey:...`) - the actual cryptographic
+  /// per-unit identity. Null until `confirm-enrollment.ts` has observed the
+  /// real node in Headscale.
+  headscaleNodeKey String? @unique
+  /// Headscale's own numeric node ID - an operational convenience for
+  /// CLI/API calls, not itself the identity.
+  headscaleNodeId  Int?    @unique
+
+  status GatewayStatus @default(PROVISIONED)
+
+  organizationId String?
+  plantId        String?
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  plant        Plant?        @relation(fields: [plantId], references: [id])
+
+  enrolledAt   DateTime?
+  associatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([plantId])
 }
 
 /// Per-organization automation configuration. Foundation for the Voltessa
