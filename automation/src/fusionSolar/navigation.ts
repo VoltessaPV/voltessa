@@ -97,13 +97,23 @@ export async function selectPlant(page: Page, name: string): Promise<void> {
 /**
  * Expands a plant (or any tree node) by name in the plant/device tree,
  * revealing its children. Idempotent - does nothing if already expanded.
+ *
+ * Both waits below use an explicit 60s timeout, not Playwright's 30s
+ * default: a real production failure (22 Aug 2026, Atlanta) hit exactly
+ * the unmodified 30000ms default here, and the captured failure
+ * screenshot showed a fully-rendered, otherwise-normal page - no error,
+ * no broken layout, no evidence of a blocked click - just the tree still
+ * short of its expanded state when the wait gave up. 60s gives that
+ * legitimately-slower case real headroom without conflating it with
+ * waitForSaveConfirmation's much slower, hardware-relay-bound 120s case
+ * below.
  */
 export async function expandPlant(page: Page, name: string): Promise<void> {
   const rowSelector = Selectors.tree.rowByName(name);
 
   await runFusionSolarStep(page, "expandPlant", rowSelector, async () => {
     const row = page.locator(rowSelector);
-    await row.waitFor({ state: "visible" });
+    await row.waitFor({ state: "visible", timeout: 60000 });
 
     const expandedIcon = row.locator(
       `${Selectors.tree.expandIcon}[aria-label="${Selectors.tree.expandedIconLabel}"]`,
@@ -114,7 +124,7 @@ export async function expandPlant(page: Page, name: string): Promise<void> {
     }
 
     await row.locator(Selectors.tree.expandControl).click();
-    await expandedIcon.waitFor({ state: "visible" });
+    await expandedIcon.waitFor({ state: "visible", timeout: 60000 });
   });
 }
 
