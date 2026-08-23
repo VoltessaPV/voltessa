@@ -17,6 +17,48 @@ const AUTOMATION_SERVICE_PATH_BY_MODE: Record<ExportMode, string> = {
   "No Limit": "/automation/fusionsolar/atlanta/no-limit",
 };
 
+/**
+ * A failed Automation Service command is retried exactly once, after this
+ * short delay, before the cycle gives up and waits for the next 15-minute
+ * tick (see the Atlanta automation-failure investigation this responds to).
+ * Both attempts happen inside the same executeForOrganization call, under
+ * the same per-organization lock (acquired by the caller,
+ * runMarketPriceOptimizationScheduler) — never deferred to a later tick or
+ * a background job.
+ */
+const MODE_CHANGE_RETRY_DELAY_MS = 3000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type ModeChangeAttemptResult =
+  | { success: true; result: ChangeModeResult }
+  | { success: false; error: string };
+
+/**
+ * One attempt at calling the Automation Service for a given mode - no event
+ * creation, no state mutation, just the same success/failure normalization
+ * executeForOrganization always needed (callAutomationService can both
+ * throw and resolve with `success: false`; both collapse to the same
+ * failure shape here so the retry can reuse this unchanged).
+ */
+async function attemptModeChange(newMode: ExportMode): Promise<ModeChangeAttemptResult> {
+  try {
+    const result = await callAutomationService<ChangeModeResult>(
+      AUTOMATION_SERVICE_PATH_BY_MODE[newMode],
+    );
+
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
+
+    return { success: true, result };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export type OrganizationExecutionOutcome =
   | { organizationId: string; outcome: "skipped_locked" }
   | { organizationId: string; outcome: "skipped_no_price_data" }
@@ -116,25 +158,42 @@ async function executeForOrganization(organization: {
 
   // callAutomationService can both throw (transport-level failure - timeout,
   // network error, missing config) and resolve with `success: false` (the
-  // Automation Service's own failure response) - both must be treated as
-  // "the Automation Service failed" here: an event created, the previous
-  // stored state kept, and execution finished for this organization without
-  // aborting the loop for the remaining ones.
-  let result: ChangeModeResult;
+  // Automation Service's own failure response) - attemptModeChange collapses
+  // both into one failure shape. A failed attempt is retried exactly once,
+  // after MODE_CHANGE_RETRY_DELAY_MS, still under this organization's lock
+  // (held by the caller for the whole executeForOrganization call) and
+  // still the same decided newMode - nothing is re-evaluated between
+  // attempts. Only once both attempts have failed is this treated as "the
+  // Automation Service failed": an event created, the previous stored state
+  // kept, and execution finished for this organization without aborting the
+  // loop for the remaining ones.
+  let attempt = await attemptModeChange(newMode);
 
-  try {
-    result = await callAutomationService<ChangeModeResult>(
-      AUTOMATION_SERVICE_PATH_BY_MODE[newMode],
-    );
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+  if (!attempt.success) {
+    console.warn("[Market Price Optimization] Mode change attempt 1 failed, retrying once", {
+      organizationId,
+      newMode,
+      error: attempt.error,
+    });
+
+    await delay(MODE_CHANGE_RETRY_DELAY_MS);
+
+    attempt = await attemptModeChange(newMode);
+  }
+
+  if (!attempt.success) {
+    console.error("[Market Price Optimization] Mode change failed after retry, giving up until next cycle", {
+      organizationId,
+      newMode,
+      error: attempt.error,
+    });
 
     await createAutomationEvent({
       organizationId,
       type: "automation_service_failed",
       summary: "Export mode change failed",
       reason: decision.reason,
-      errorMessage,
+      errorMessage: attempt.error,
       previousMode: storedMode,
       // The attempted (not achieved) mode - the failure notification shows
       // this as "Attempted: <previous> → <newMode>".
@@ -144,24 +203,7 @@ async function executeForOrganization(organization: {
       threshold: minimumExportPrice,
     });
 
-    return { organizationId, outcome: "automation_service_failed", error: errorMessage };
-  }
-
-  if (!result.success) {
-    await createAutomationEvent({
-      organizationId,
-      type: "automation_service_failed",
-      summary: "Export mode change failed",
-      reason: decision.reason,
-      errorMessage: result.error,
-      previousMode: storedMode,
-      newMode,
-      currentPrice: currentPriceResult.price.price,
-      nextIntervalPrice,
-      threshold: minimumExportPrice,
-    });
-
-    return { organizationId, outcome: "automation_service_failed", error: result.error };
+    return { organizationId, outcome: "automation_service_failed", error: attempt.error };
   }
 
   await setStoredExportMode(organizationId, newMode);
