@@ -101,6 +101,33 @@
     "noPlantsYet": "No plants yet.",
     "editLink": "Edit"
   },
+  "connectPlantPage": {
+    "title": "Select connection type",
+    "intro": "Choose how this plant connects to Voltessa.",
+    "huawei": {
+      "title": "Huawei",
+      "description": "Connect via Huawei API / FusionSolar.",
+      "button": "Continue with Huawei"
+    },
+    "gateway": {
+      "title": "Voltessa Gateway",
+      "description": "Connect through a Voltessa Gateway.",
+      "button": "Continue with Voltessa Gateway"
+    }
+  },
+  "connectGatewayPage": {
+    "backLink": "Back",
+    "title": "Connect via Voltessa Gateway",
+    "intro": "Connect a plant through a Voltessa Gateway already provisioned for your organization.",
+    "comingSoonTitle": "Gateway-based plant connection is coming soon",
+    "comingSoonDescription": "This step will let you finish connecting a plant through one of your organization's Voltessa Gateways. For now, this page only shows the gateways already available to your organization.",
+    "gatewaysListTitle": "Your Voltessa Gateways",
+    "noGatewaysYet": "No Voltessa Gateways are provisioned for your organization yet. Contact Voltessa to provision one.",
+    "hostnameLabel": "Hostname",
+    "statusLabel": "Status",
+    "plantLabel": "Assigned plant",
+    "unassigned": "Not yet assigned to a plant"
+  },
   "newPlantPage": {
     "intro": "Add a photovoltaic plant to your organization.",
     "generalSection": "General",

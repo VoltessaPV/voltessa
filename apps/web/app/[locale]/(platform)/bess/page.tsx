@@ -1,6 +1,6 @@
 import { getTranslations } from "next-intl/server";
 
-import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { ConnectPlantButton } from "@/components/platform/ConnectPlantButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
@@ -50,7 +50,7 @@ export default async function BessPage() {
     return (
       <PageContainer className="space-y-3">
         <EmptyState title={t("emptyStateTitle")} description={t("emptyStateDescription")}>
-          {!readOnly && <ConnectFusionSolarButton />}
+          {!readOnly && <ConnectPlantButton />}
         </EmptyState>
       </PageContainer>
     );

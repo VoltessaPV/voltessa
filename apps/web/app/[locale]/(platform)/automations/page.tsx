@@ -3,7 +3,7 @@ import { getTranslations } from "next-intl/server";
 import { BatteryOptimizationCard } from "@/components/automations/BatteryOptimizationCard";
 import { MarketPriceOptimizationCard } from "@/components/automations/MarketPriceOptimizationCard";
 import { MarketPriceOptimizationSummaryCard } from "@/components/automations/MarketPriceOptimizationSummaryCard";
-import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { ConnectPlantButton } from "@/components/platform/ConnectPlantButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
@@ -63,7 +63,7 @@ async function renderAutomations(organizationId: string | null, readOnly: boolea
     return (
       <PageContainer className="space-y-3">
         <EmptyState title={t("emptyStateTitle")} description={t("emptyStateDescription")}>
-          {!readOnly && <ConnectFusionSolarButton />}
+          {!readOnly && <ConnectPlantButton />}
         </EmptyState>
       </PageContainer>
     );

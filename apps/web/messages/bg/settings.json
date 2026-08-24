@@ -101,6 +101,33 @@
     "noPlantsYet": "Все още няма централи.",
     "editLink": "Редактирай"
   },
+  "connectPlantPage": {
+    "title": "Изберете тип връзка",
+    "intro": "Изберете как тази централа да се свърже с Voltessa.",
+    "huawei": {
+      "title": "Huawei",
+      "description": "Свързване през Huawei API / FusionSolar.",
+      "button": "Продължи с Huawei"
+    },
+    "gateway": {
+      "title": "Voltessa Gateway",
+      "description": "Свързване през Voltessa Gateway.",
+      "button": "Продължи с Voltessa Gateway"
+    }
+  },
+  "connectGatewayPage": {
+    "backLink": "Назад",
+    "title": "Свързване през Voltessa Gateway",
+    "intro": "Свържете централа през Voltessa Gateway, вече осигурен за вашата организация.",
+    "comingSoonTitle": "Свързването на централа през Gateway предстои",
+    "comingSoonDescription": "Тази стъпка ще ви позволи да завършите свързването на централа през един от Voltessa Gateway устройствата на вашата организация. Засега тази страница показва само наличните за вашата организация Gateway устройства.",
+    "gatewaysListTitle": "Вашите Voltessa Gateway устройства",
+    "noGatewaysYet": "За вашата организация все още няма осигурени Voltessa Gateway устройства. Свържете се с Voltessa, за да осигурите такова.",
+    "hostnameLabel": "Име на устройството",
+    "statusLabel": "Статус",
+    "plantLabel": "Присвоена централа",
+    "unassigned": "Все още не е присвоена централа"
+  },
   "newPlantPage": {
     "intro": "Добавете фотоволтаична централа към вашата организация.",
     "generalSection": "Общи",

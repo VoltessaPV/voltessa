@@ -17,7 +17,7 @@ import { WeatherCard } from "@/components/dashboard/WeatherCard";
 import { MarketEventLog } from "@/components/market/MarketEventLog";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
-import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { ConnectPlantButton } from "@/components/platform/ConnectPlantButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { NoClientAssignedState } from "@/components/platform/NoClientAssignedState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
@@ -332,7 +332,7 @@ export default async function DashboardPage({
 
       {!data.plantAvailable ? (
         <EmptyState title={t("emptyState.title")} description={t("emptyState.description")}>
-          {!readOnly && <ConnectFusionSolarButton />}
+          {!readOnly && <ConnectPlantButton />}
         </EmptyState>
       ) : (
         <>

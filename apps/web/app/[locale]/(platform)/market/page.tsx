@@ -22,7 +22,7 @@ import { MarketInsights } from "@/components/market/MarketInsights";
 import { DynamicMarketPriceChart } from "@/components/market/MarketPriceChart.dynamic";
 import { MarketSummaryCard } from "@/components/market/MarketSummaryCard";
 import { MarketToolbar } from "@/components/market/MarketToolbar";
-import { ConnectFusionSolarButton } from "@/components/platform/ConnectFusionSolarButton";
+import { ConnectPlantButton } from "@/components/platform/ConnectPlantButton";
 import { EmptyState } from "@/components/platform/EmptyState";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 
@@ -370,7 +370,7 @@ export default async function MarketPage({ searchParams }: MarketPageProps) {
     return (
       <PageContainer className="space-y-3">
         <EmptyState title={tEmpty("title")} description={tEmpty("description")}>
-          {!readOnly && <ConnectFusionSolarButton />}
+          {!readOnly && <ConnectPlantButton />}
         </EmptyState>
       </PageContainer>
     );
