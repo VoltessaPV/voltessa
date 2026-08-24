@@ -2,15 +2,17 @@ import { getTranslations } from "next-intl/server";
 import { Link } from "@/lib/i18n/navigation";
 
 /**
- * The "Connect Plant" CTA shown wherever a page needs to guide a
- * plant-less organization toward connecting one (Dashboard, Market,
- * Automations, Bess empty states - see EmptyState.tsx). Settings' own
- * Power Plants card has its own, separate Connect/Reconnect button that
- * goes straight to the FusionSolar OAuth flow - that card is already
- * explicitly scoped to the FusionSolar integration (title, instructions,
- * and OAuth-callback success/error messaging all specific to it), so it
- * deliberately keeps its existing direct link rather than routing through
- * this generic entry point.
+ * The "Connect Plant" CTA shown wherever a page needs to guide an
+ * organization toward connecting a plant - Dashboard, Market, Automations,
+ * Bess empty states (see EmptyState.tsx), and Settings' own Power Plants
+ * card (Settings Connect-Plant Consistency milestone: Settings used to
+ * have its own separate Connect/Reconnect button going straight to the
+ * FusionSolar OAuth flow; it now reuses this exact component instead of
+ * a second implementation, so every "Connect Plant" entry point in the
+ * app is this one component). Settings still renders its own
+ * OAuth-callback success/error messaging (params.fusionsolar/reason) next
+ * to this button - that's tied to the FusionSolar callback redirect
+ * itself, unrelated to which button started the flow.
  *
  * Connection-Type Selection milestone: this used to link straight into
  * the FusionSolar OAuth flow (/api/auth/fusionsolar/connect). It now

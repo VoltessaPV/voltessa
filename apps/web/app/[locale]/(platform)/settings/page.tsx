@@ -8,6 +8,7 @@ import { PrivacyCookiesCard } from "@/components/settings/PrivacyCookiesCard";
 import { ProfileCard } from "@/components/settings/ProfileCard";
 import { SecurityCard } from "@/components/settings/SecurityCard";
 import { SettingsCard } from "@/components/settings/SettingsCard";
+import { ConnectPlantButton } from "@/components/platform/ConnectPlantButton";
 import { PageContainer } from "@/components/platform/layout/PageContainer";
 import { Permissions } from "@/lib/auth/permissions";
 import { requireCurrentUser, requireOnboardedUser } from "@/lib/auth/session";
@@ -122,7 +123,6 @@ export default async function SettingsPage({
     energyMarketSettings,
     notificationPreferences,
     plants,
-    connection,
   ] = await Promise.all([
     prisma.account.findFirst({
       where: { userId: user.id, provider: "google" },
@@ -152,14 +152,6 @@ export default async function SettingsPage({
           orderBy: { createdAt: "desc" },
         })
       : Promise.resolve([]),
-    prisma.fusionSolarConnection.findUnique({
-      where: {
-        organizationId_provider: {
-          organizationId: user.organizationId,
-          provider: "HuaweiFusionSolar",
-        },
-      },
-    }),
   ]);
 
   const params = await searchParams;
@@ -222,32 +214,17 @@ export default async function SettingsPage({
             <div className="flex items-center justify-between gap-6">
               <div>
                 <h3 className="text-sm font-medium text-white">
-                  {t("fusionSolarTitle")}
+                  {t("connectPlantTitle")}
                 </h3>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  {t("fusionSolarSubtitle")}
+                  {t("connectPlantDescription")}
                 </p>
               </div>
 
               <div className="flex shrink-0">
-                {/*
-                  Plain <a>, not next/link, is intentional: this starts the
-                  FusionSolar OAuth flow, and Link's prefetching previously
-                  triggered that flow before the user actually clicked.
-                */}
-                {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-                <a
-                  href="/api/auth/fusionsolar/connect"
-                  className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
-                >
-                  {connection ? t("fusionSolarReconnectButton") : t("fusionSolarConnectButton")}
-                </a>
+                <ConnectPlantButton />
               </div>
-            </div>
-
-            <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
-              <p className="text-xs text-slate-400">{t("fusionSolarInstructions")}</p>
             </div>
 
             {fusionSolarSuccess && (
