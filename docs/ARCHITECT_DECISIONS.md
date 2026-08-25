@@ -1192,3 +1192,91 @@ recover independently* when it doesn't run often enough.
   driftable copy — see that document's "Systemd Timers" section instead.
 - The four other `mode: "background"` callers (Settings/Automations/Alerts/Plants) are unaffected —
   same shared function, same freshness/lease semantics, no special-casing added for Dashboard/Market.
+
+## ADR-019: Sungrow iSolarCloud — second `ManufacturerControlAdapter`, dedicated connection model, direct API client, and a safety gate for unverified Grid Control
+
+### Status
+
+Accepted
+
+### Context
+
+Voltessa's connection-type selector (`/plants/connect`, Connection-Type Selection milestone) was
+built with a second provider explicitly in mind — its own doc comment names Sungrow as the expected
+next entry. This milestone adds it: Sungrow iSolarCloud as a first-class, OAuth2-authorized cloud
+plant-connection provider, following ADR-018's premise that a second manufacturer must be addable
+without redesigning the platform.
+
+Two constraints shaped the scope more than anything else:
+
+1. **Official Sungrow documentation was not reachable.** `developer-api.isolarcloud.com` is
+   login-gated; no public spec was found. Every endpoint path, field name, and parameter code in
+   `lib/isolarcloud/*` is derived from a third-party client (`pysolarcloud`) whose own source
+   comments claim real portal access, not from Sungrow's own documentation — every module says so
+   explicitly in its top doc comment. The one thing independently confirmed is what the user's own
+   logged-in Developer Portal reported: the application ("Voltessa") is approved with Authorization,
+   Refresh Token, Monitoring, Grid Control, and Live Data all listed as configured API types, and the
+   real EU authorization URL (`web3.isolarcloud.eu/#/authorized-app?...`).
+2. **`PlantDailyKpi.consumptionKwh` is a required, non-null column**, and no Sungrow data point for
+   site consumption was found anywhere in the available (third-party) reference. Huawei's own
+   importer explicitly refuses to fabricate a placeholder value for a metered plant
+   (`import-plant-daily-kpi.ts`'s `resolveConsumptionKwh`) — writing an unconditional `0` for
+   Sungrow to force this constraint would repeat exactly the dishonest-data pattern that code
+   deliberately avoids. Historical/daily-KPI and 5-minute `DeviceTelemetry` ingestion for Sungrow are
+   therefore explicitly out of scope for this milestone, not an oversight — see "Consequences"
+   below for what this means for Dashboard/Market.
+
+### Decision
+
+1. **`SungrowConnection`** is a new, dedicated Prisma model — not a reuse of `FusionSolarConnection`.
+   That model's `provider` field is generic in name only (every existing call site hardcodes
+   `"HuaweiFusionSolar"`); a second, dedicated table keeps the two vendors' token lifecycles
+   uncoupled and leaves the Huawei table completely untouched (zero columns/rows/migrations touched
+   there). One connection per organization (`organizationId` unique).
+2. **`lib/isolarcloud/*` calls Sungrow's regional gateway directly** (`gateway.isolarcloud.eu`), not
+   through a proxy like `FUSIONSOLAR_GATEWAY_URL`. That gateway exists specifically to work around
+   Huawei's own IP allow-listing (ADR-004); nothing in the confirmed application capabilities or the
+   third-party reference indicates Sungrow has an equivalent constraint.
+3. **`sungrowControlAdapter`** is the second `ManufacturerControlAdapter` (ADR-018), registered
+   alongside `huaweiControlAdapter` in `lib/automation/automation-service.ts`'s `ADAPTERS` — the
+   exact extension point ADR-018 designed for this. This is the one Huawei-adjacent shared file this
+   milestone touches, and only additively (one import, one registry entry).
+4. **Grid Control ships safety-gated, not fully enabled.** The account-level "Grid Control" capability
+   being approved does not resolve two separate, per-device questions no available documentation
+   answers: which device type (inverter / grid-connection-point / energy-storage-system) the
+   feed-in-limitation parameters actually target for a battery-less grid-tied plant, and whether the
+   specific inverter models Voltessa will connect (e.g. SG-50KT) support it at all.
+   `lib/isolarcloud/grid-control.ts` exports `SUNGROW_EXPORT_LIMIT_VERIFIED_DEVICE_TYPES`, an
+   **empty** allowlist; every write path (`setSungrowExportLimit`/`restoreSungrowExport`) throws a
+   typed `SungrowGridControlUnverifiedError` for any device type not explicitly added to it. Read
+   operations (capability check, read current limitation) are not gated — they cannot change plant
+   behavior. This mirrors the precedent Huawei's own write path already set: `export-control.ts`'s
+   `setExportLimit`/`restoreExport` are implemented but "not called from anywhere yet," pending their
+   own confirmation.
+5. **Sungrow requires a plant-picker step Huawei's flow doesn't need.** Huawei's callback safely
+   auto-creates a `Plant` per discovered station because that's this codebase's existing Huawei usage
+   pattern; Sungrow's brief explicitly asks for "customer authorizes → discover plants → user selects
+   a plant → create the Voltessa Plant." `app/api/auth/isolarcloud/callback/route.ts` only persists
+   the token and redirects to `/plants/connect/isolarcloud`, a new picker page whose server action
+   (`./actions.ts`) does the discovery, selection, and `Plant`/`Device` creation.
+6. **Historical/daily-KPI and 5-minute telemetry ingestion are out of scope** for this milestone (see
+   Context above) — `lib/isolarcloud/get-plant-power-status.ts` provides an on-demand, non-persisted
+   real-time read (used by the control adapter's `read-inverter-status` automation type) instead.
+
+### Consequences
+
+- A Sungrow-connected plant gets: OAuth connect, station/device discovery, a `Plant`/`Device` record,
+  on-demand real-time power reads, and Automation Lab recognition (read operations fully working;
+  write/control operations refusing safely until verified) — but does **not** yet appear in
+  Dashboard/Market's historical charts or daily totals, since those read from `PlantDailyKpi`/
+  `DeviceTelemetry`, which this milestone does not write for Sungrow. Wiring that in is a deliberate,
+  separate follow-up decision, not an accidental gap — and depends on first confirming a Sungrow
+  consumption data point (or accepting Producer-only, no-consumption-figure plants as the initial
+  scope, the same distinction `resolveConsumptionKwh` already makes for Huawei).
+- Lifting the Grid Control gate for a specific device type is a one-line addition to
+  `SUNGROW_EXPORT_LIMIT_VERIFIED_DEVICE_TYPES` — but must only happen after real verification (the
+  official "API Document" inside the logged-in Developer Portal, or a confirmed successful test
+  against a real device), never as a convenience fix to make a feature "work."
+- Every endpoint/field/parameter-code assumption in `lib/isolarcloud/*` is flagged in-file as
+  third-party-derived. Any of it may need correcting once the real Sungrow documentation is
+  available — this ADR and those doc comments are the record of what to revisit.

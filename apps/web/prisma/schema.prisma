@@ -330,6 +330,7 @@ model Organization {
   plants                 Plant[]
   gateways               Gateway[]
   fusionSolarConnections FusionSolarConnection[]
+  sungrowConnection      SungrowConnection?
   traderAssignment       TraderAssignment?
 
   automationSettings AutomationSettings?
@@ -437,6 +438,46 @@ model FusionSolarConnection {
 enum SyncStatus {
   IDLE
   RUNNING
+}
+
+/// Sungrow iSolarCloud OAuth2 provider milestone. A dedicated model, not a
+/// reuse of `FusionSolarConnection` — that model's `provider` field is
+/// generic in name only (every existing call site hardcodes
+/// `"HuaweiFusionSolar"`); giving Sungrow its own table avoids coupling two
+/// vendors' token lifecycles to one shared row shape and keeps this
+/// addition fully backwards-compatible with the existing Huawei table (zero
+/// columns/rows touched there). One connection per organization (unlike
+/// Huawei's `[organizationId, provider]` composite key, `provider` isn't
+/// needed here since this table only ever means Sungrow).
+///
+/// Carries the same telemetry-sync lease/claim fields
+/// (`telemetrySyncStatus`/`telemetrySyncStartedAt`/
+/// `telemetrySyncLeaseExpiresAt`/`telemetryLastSyncedAt`) as
+/// `FusionSolarConnection`, unused by this milestone's code (see ADR-019 —
+/// historical/daily-KPI and 5-minute telemetry ingestion for Sungrow are
+/// explicitly out of scope here) but reserved so a future Sungrow telemetry
+/// importer can reuse `lib/fusionsolar/telemetry-sync-service.ts`'s exact
+/// claim algorithm instead of inventing a second coordination mechanism,
+/// without a second schema migration first.
+model SungrowConnection {
+  id String @id @default(cuid())
+
+  organizationId String @unique
+
+  accessToken  String  @db.Text
+  refreshToken String? @db.Text
+
+  expiresAt DateTime?
+
+  telemetrySyncStatus         SyncStatus @default(IDLE)
+  telemetrySyncStartedAt      DateTime?
+  telemetrySyncLeaseExpiresAt DateTime?
+  telemetryLastSyncedAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }
 
 model Device {

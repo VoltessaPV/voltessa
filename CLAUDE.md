@@ -83,7 +83,10 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
   logic lives there just because the directory exists, and don't start filling them in on your own
   initiative — see `docs/AI_PLAYBOOK.md`.
 - The real, working logic currently lives in `lib/fusionsolar/*` (OAuth flow, token refresh via a
-  FusionSolar gateway proxy, station/device sync, telemetry ingestion), `lib/auth/*` (NextAuth
+  FusionSolar gateway proxy, station/device sync, telemetry ingestion), `lib/isolarcloud/*` (the
+  Sungrow iSolarCloud provider — OAuth flow, direct API client with no gateway proxy, station/device
+  discovery, the Grid Control module with its explicit unverified-device-type safety gate; see
+  ADR-019 in `docs/ARCHITECT_DECISIONS.md`), `lib/auth/*` (NextAuth
   config, roles, permissions, and — since Sprint 1A — the shared current-user/authorization layer
   in `lib/auth/session.ts`, see ADR-006 in `docs/ARCHITECT_DECISIONS.md`), `lib/prisma/*` (Prisma
   client singleton), `app/onboarding/actions.ts` (a real Server Action), and `components/dashboard/*`
@@ -157,7 +160,12 @@ Env vars declared in root `turbo.json` `globalEnv`: `DATABASE_URL`, `AUTH_GOOGLE
 `AUTH_GOOGLE_SECRET`, `AUTH_SECRET`, `AUTH_URL`, `FUSIONSOLAR_CLIENT_ID`,
 `FUSIONSOLAR_CLIENT_SECRET`, `FUSIONSOLAR_REDIRECT_URI`, `FUSIONSOLAR_GATEWAY_URL` /
 `FUSIONSOLAR_GATEWAY_SECRET` (a proxy/gateway service in front of the FusionSolar API — see
-`lib/fusionsolar/api-client.ts` and `get-valid-access-token.ts`), `CRON_SECRET` (bearer-token guard
+`lib/fusionsolar/api-client.ts` and `get-valid-access-token.ts`), `SUNGROW_APP_KEY` /
+`SUNGROW_APP_SECRET` / `SUNGROW_APPLICATION_ID` / `SUNGROW_REDIRECT_URI` (Sungrow iSolarCloud
+Developer Portal application credentials — AppKey, Secret Key, the application's portal-assigned
+numeric id, and the registered OAuth redirect URL respectively; see `lib/isolarcloud/api-client.ts`.
+Called directly, not through a gateway proxy like Huawei's — see that file's doc comment for why),
+`CRON_SECRET` (bearer-token guard
 shared by every `app/api/internal/**` route — FusionSolar telemetry ingestion and the ENTSO-E price
 refresh alike), and `ENTSOE_API_TOKEN` (ENTSO-E Transparency Platform `securityToken` — see
 `lib/market-price/providers/entsoe.ts`; provisioned in Vercel Production/Preview only as of the

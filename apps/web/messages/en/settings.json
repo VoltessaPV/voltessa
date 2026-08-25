@@ -106,11 +106,24 @@
       "description": "Connect via Huawei API / FusionSolar.",
       "button": "Continue with Huawei"
     },
+    "sungrow": {
+      "title": "Sungrow",
+      "description": "Connect via Sungrow API / iSolarCloud.",
+      "button": "Continue with Sungrow"
+    },
     "gateway": {
       "title": "Voltessa Gateway",
       "description": "Connect through a Voltessa Gateway.",
       "button": "Continue with Voltessa Gateway"
     }
+  },
+  "connectIsolarcloudPage": {
+    "backLink": "Back",
+    "title": "Select a Sungrow plant",
+    "intro": "Choose which iSolarCloud plant to connect to Voltessa.",
+    "notConnected": "No Sungrow account is connected yet. Go back and connect via Sungrow first.",
+    "noStationsAvailable": "No additional Sungrow plants are available to connect — every plant on this account is already connected.",
+    "connectButton": "Connect this plant"
   },
   "connectGatewayPage": {
     "backLink": "Back",

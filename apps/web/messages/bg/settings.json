@@ -106,11 +106,24 @@
       "description": "Свързване през Huawei API / FusionSolar.",
       "button": "Продължи с Huawei"
     },
+    "sungrow": {
+      "title": "Sungrow",
+      "description": "Свързване през Sungrow API / iSolarCloud.",
+      "button": "Продължи със Sungrow"
+    },
     "gateway": {
       "title": "Voltessa Gateway",
       "description": "Свързване през Voltessa Gateway.",
       "button": "Продължи с Voltessa Gateway"
     }
+  },
+  "connectIsolarcloudPage": {
+    "backLink": "Назад",
+    "title": "Изберете централа от Sungrow",
+    "intro": "Изберете коя централа от iSolarCloud да свържете с Voltessa.",
+    "notConnected": "Все още няма свързан акаунт в Sungrow. Върнете се назад и се свържете през Sungrow.",
+    "noStationsAvailable": "Няма допълнителни централи от Sungrow за свързване — всички централи от този акаунт вече са свързани.",
+    "connectButton": "Свържи тази централа"
   },
   "connectGatewayPage": {
     "backLink": "Назад",

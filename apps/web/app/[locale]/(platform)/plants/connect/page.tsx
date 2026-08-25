@@ -13,22 +13,26 @@ import { requirePermission } from "@/lib/auth/session";
  * need one yet (only two connection types exist), and CLAUDE.md's
  * "simplicity beats cleverness" applies here. Adding a future connection
  * type (Sungrow, Geya, ...) is one new entry in CONNECTION_TYPES plus its
- * own destination page - no change to this page's structure.
+ * own destination page - no change to this page's structure. Sungrow
+ * iSolarCloud (Sungrow OAuth2 provider milestone) is the first of these:
+ * one more entry, one new OAuth-init route
+ * (/api/auth/isolarcloud/connect), same as Huawei's own entry.
  *
  * `external: true` marks a destination that isn't a page in this app (the
- * Huawei option goes straight to /api/auth/fusionsolar/connect, an OAuth
- * redirect) - those use a plain <a> the same way the old
+ * Huawei and Sungrow options go straight to their own OAuth-init route,
+ * which redirects onward) - those use a plain <a> the same way the old
  * ConnectFusionSolarButton did, so Link's prefetching can never start an
  * OAuth flow early. Internal destinations (Voltessa Gateway) use Link.
  */
 type ConnectionType = {
-  id: "huawei" | "gateway";
+  id: "huawei" | "sungrow" | "gateway";
   href: string;
   external?: boolean;
 };
 
 const CONNECTION_TYPES: ConnectionType[] = [
   { id: "huawei", href: "/api/auth/fusionsolar/connect", external: true },
+  { id: "sungrow", href: "/api/auth/isolarcloud/connect", external: true },
   { id: "gateway", href: "/plants/connect/gateway" },
 ];
 

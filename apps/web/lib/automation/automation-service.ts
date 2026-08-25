@@ -1,4 +1,5 @@
 import { huaweiControlAdapter } from "@/lib/fusionsolar/huawei-control-adapter";
+import { sungrowControlAdapter } from "@/lib/isolarcloud/sungrow-control-adapter";
 import { prisma } from "@/lib/prisma";
 
 import type {
@@ -21,6 +22,7 @@ import type {
  */
 const ADAPTERS: Record<string, ManufacturerControlAdapter> = {
   Huawei: huaweiControlAdapter,
+  Sungrow: sungrowControlAdapter,
 };
 
 export type AutomationExecutionResult = CanonicalAutomationResult & {
