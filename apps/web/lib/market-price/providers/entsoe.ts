@@ -39,10 +39,17 @@
  * reality warrants, so:
  *
  * - Invalid XML, wrong bidding zone, wrong currency, wrong price unit,
- *   inconsistent resolution, duplicate timestamps, or timestamps outside
- *   the requested period are always hard rejections (`EntsoeApiError`) —
- *   these indicate a response that doesn't match what was asked for, not
- *   an expected data-quality wrinkle.
+ *   inconsistent resolution, or timestamps outside the requested period
+ *   are always hard rejections (`EntsoeApiError`) — these indicate a
+ *   response that doesn't match what was asked for, not an expected
+ *   data-quality wrinkle.
+ * - Duplicate timestamps (more than one TimeSeries publishing a price for
+ *   the same interval — observed for Bulgaria's bidding zone since it
+ *   joined SDAC coupling) are never a hard rejection: identical duplicate
+ *   prices collapse to that one price; conflicting duplicate prices
+ *   resolve to the lowest of the conflicting prices for that timestamp.
+ *   A day's import must never fail solely because ENTSO-E published more
+ *   than one record for the same delivery interval.
  * - Genuinely missing intervals (after A03 decoding) are tolerated up to
  *   `MAX_MISSING_RATIO` (5%): the available intervals are returned, the
  *   missing ones are listed explicitly (never fabricated or
@@ -273,21 +280,43 @@ export function parseEntsoeDayAheadPricesXml(
     throw new EntsoeApiError("ENTSO-E response contained no price points");
   }
 
-  const byTimestamp = new Map<number, EntsoeDayAheadPricePoint>();
+  const candidatesByTimestamp = new Map<number, EntsoeDayAheadPricePoint[]>();
 
   for (const point of points) {
     const key = point.timestamp.getTime();
+    const existing = candidatesByTimestamp.get(key);
 
-    if (byTimestamp.has(key)) {
-      throw new EntsoeApiError(
-        `Duplicate ENTSO-E price point for timestamp ${point.timestamp.toISOString()}`,
-      );
+    if (existing) {
+      existing.push(point);
+    } else {
+      candidatesByTimestamp.set(key, [point]);
     }
-
-    byTimestamp.set(key, point);
   }
 
-  for (const point of points) {
+  const resolvedPoints: EntsoeDayAheadPricePoint[] = [];
+
+  for (const candidates of candidatesByTimestamp.values()) {
+    const [firstCandidate] = candidates;
+
+    if (candidates.length === 1 && firstCandidate) {
+      resolvedPoints.push(firstCandidate);
+      continue;
+    }
+
+    // More than one ENTSO-E record for the same delivery timestamp - see
+    // module doc comment. Resolve deterministically instead of rejecting
+    // the whole day: identical prices collapse to one, conflicting prices
+    // use the lowest.
+    const prices = candidates.map((candidate) => candidate.price);
+    const firstPrice = prices[0] as number;
+    const resolvedPrice = prices.every((price) => price === firstPrice)
+      ? firstPrice
+      : Math.min(...prices);
+
+    resolvedPoints.push({ ...(firstCandidate as EntsoeDayAheadPricePoint), price: resolvedPrice });
+  }
+
+  for (const point of resolvedPoints) {
     if (
       point.timestamp < params.periodStart ||
       point.timestamp >= params.periodEnd
@@ -309,7 +338,7 @@ export function parseEntsoeDayAheadPricesXml(
   }
 
   const missingTimestamps = expectedTimestamps
-    .filter((t) => !byTimestamp.has(t))
+    .filter((t) => !candidatesByTimestamp.has(t))
     .map((t) => new Date(t));
 
   const missingRatio = missingTimestamps.length / expectedTimestamps.length;
@@ -322,7 +351,7 @@ export function parseEntsoeDayAheadPricesXml(
   }
 
   return {
-    points: [...points].sort(
+    points: [...resolvedPoints].sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
     ),
     resolutionMinutes,
