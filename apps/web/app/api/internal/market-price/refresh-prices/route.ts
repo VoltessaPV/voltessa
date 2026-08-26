@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import {
   backfillMarketPrices,
+  recoverRecentIncompleteDays,
   refreshMarketPrices,
 } from "@/lib/market-price/refresh-market-prices";
 import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
@@ -108,6 +109,34 @@ async function handleRefresh(request: Request) {
         ? await backfillMarketPrices(daysBack)
         : await refreshMarketPrices();
 
+    // Scheduled Market Price Refresh Resilience milestone: on the same
+    // daily scheduled trigger that already asks about tomorrow, also
+    // reconsider the last 2 Bulgaria-local delivery days (see
+    // `recoverRecentIncompleteDays`'s own doc comment) - never for a
+    // manual/backfill call (`?days=N` or a bare call), only for the real
+    // `target=tomorrow` scheduled path. Deliberately isolated in its own
+    // try/catch so a recovery-side problem can never turn today's
+    // otherwise-successful `target=tomorrow` result into a failure - the
+    // existing scheduled behavior this milestone must not change stays
+    // exactly as it was.
+    let recovery: { imported: boolean; errors: string[] } | null = null;
+
+    if (targetsTomorrow) {
+      try {
+        recovery = await recoverRecentIncompleteDays();
+
+        console.log("[Market Price Refresh] Trailing-day recovery sweep", {
+          startedAt: startedAt.toISOString(),
+          ...recovery,
+        });
+      } catch (error) {
+        console.error("[Market Price Refresh] Trailing-day recovery sweep failed unexpectedly", {
+          startedAt: startedAt.toISOString(),
+          error,
+        });
+      }
+    }
+
     console.log("[Market Price Refresh] Completed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
@@ -118,12 +147,13 @@ async function handleRefresh(request: Request) {
       schedulerName: SCHEDULER_NAME,
       startedAt,
       status: "SUCCESS",
-      summary: result,
+      summary: recovery ? { ...result, recovery } : result,
     });
 
     return NextResponse.json({
       ok: true,
       ...result,
+      ...(recovery ? { recovery } : {}),
     });
   } catch (error) {
     console.error("[Market Price Refresh] Failed", {

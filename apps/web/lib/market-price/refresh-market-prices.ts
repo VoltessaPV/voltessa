@@ -290,6 +290,40 @@ export async function backfillMarketPrices(
 }
 
 /**
+ * Scheduled Market Price Refresh Resilience milestone. Whether a CET
+ * calendar day (identified by its `periodStart`, the same value
+ * `refreshMarketPrices` always writes to `MarketPriceImport.periodStart`
+ * for that day) already has a complete, successful import — checked
+ * against `MarketPriceImport` evidence only, never `MarketPrice` row
+ * presence. This distinction is load-bearing: the real 2026-08-26 incident
+ * left exactly 4 real `MarketPrice` rows for that delivery day (residual
+ * coverage from the *adjacent* CET day's own successful import), which
+ * would make a naive "does any row exist" check wrongly report the day as
+ * already done. `isPartial` is set directly from
+ * `EntsoeDayAheadPriceSeries.isPartial` (`missingTimestamps.length > 0`) at
+ * import time, so `isPartial: false` already means "every expected
+ * interval for this CET day was actually imported" — no separate
+ * `importedIntervals`/`expectedIntervals` comparison is needed on top of
+ * it. A CET day with no `MarketPriceImport` row at all (never successfully
+ * imported, or only ever hit `EntsoeNoDataAvailableError`/a thrown
+ * `EntsoeApiError` — neither of which ever creates a row) is correctly
+ * treated as incomplete. Read-only — makes no ENTSO-E request.
+ */
+async function isCetDayImportComplete(periodStart: Date): Promise<boolean> {
+  const completeImport = await prisma.marketPriceImport.findFirst({
+    where: {
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      source: MARKET_PRICE_SOURCE_ENTSOE,
+      periodStart,
+      isPartial: false,
+    },
+    select: { id: true },
+  });
+
+  return completeImport !== null;
+}
+
+/**
  * Historical Data Coverage milestone. Ensures ENTSO-E prices are imported
  * for an arbitrary set of past Bulgaria-local days (each a `dayStart` from
  * `localDayBoundsUtc(date, "Europe/Sofia")`) — the on-demand counterpart to
@@ -316,6 +350,13 @@ export async function backfillMarketPrices(
  * call, in chronological order, so a request that runs out of time simply
  * stops and leaves the remaining days to the next call (idempotent, so
  * nothing is lost or duplicated by stopping early).
+ *
+ * Scheduled Market Price Refresh Resilience milestone: each CET day is now
+ * also checked via `isCetDayImportComplete` before dispatching a real
+ * ENTSO-E call — a day already confirmed complete is skipped entirely (no
+ * ENTSO-E request, no wasted call), which is what makes it safe for
+ * `recoverRecentIncompleteDays` below to call this on every scheduled run
+ * without turning the daily scheduler into a repeated full re-import.
  */
 export async function ensureMarketPricesForBulgariaDays(
   dayStarts: Date[],
@@ -336,9 +377,13 @@ export async function ensureMarketPricesForBulgariaDays(
   const errors: string[] = [];
   let imported = true;
 
-  for (const referenceInstant of cetReferenceInstants.values()) {
+  for (const [cetDayStartMs, referenceInstant] of cetReferenceInstants) {
     if (deadline !== undefined && Date.now() >= deadline) {
       break;
+    }
+
+    if (await isCetDayImportComplete(new Date(cetDayStartMs))) {
+      continue;
     }
 
     try {
@@ -353,4 +398,49 @@ export async function ensureMarketPricesForBulgariaDays(
   }
 
   return { imported, errors };
+}
+
+const BULGARIA_TIMEZONE = "Europe/Sofia";
+
+/**
+ * Deliberately bounded to 2 trailing days, not open-ended — see the
+ * Scheduled Market Price Refresh Resilience design discussion this
+ * milestone is based on. A day that remains invalid past this window is
+ * left to the existing, separate historical backfill mechanisms
+ * (`backfillMarketPrices` above, or the admin historical-imports tool) —
+ * this keeps the daily scheduler's own job small and cheap (typically zero
+ * extra ENTSO-E calls once recent days are already complete, thanks to
+ * `isCetDayImportComplete` above), rather than turning it into a
+ * general-purpose backfill job.
+ */
+const TRAILING_RECOVERY_WINDOW_DAYS = 2;
+
+/**
+ * Scheduled Market Price Refresh Resilience milestone. Reconsiders the
+ * last `TRAILING_RECOVERY_WINDOW_DAYS` Bulgaria-local delivery days on
+ * every scheduled run, in addition to (never instead of) the existing
+ * `target=tomorrow` single-day refresh (see
+ * `app/api/internal/market-price/refresh-prices/route.ts`) — recovers a
+ * day whose import failed (invalid/ambiguous ENTSO-E data, a network
+ * failure, etc.) once ENTSO-E's data for that day becomes valid on a later
+ * day, without weakening the parser's strict validation and without a new
+ * cron unit or a new retry/state-machine table. Reuses
+ * `ensureMarketPricesForBulgariaDays` verbatim — the only new behavior is
+ * that function's own completeness pre-check (`isCetDayImportComplete`)
+ * plus this function's trailing-window computation. Never touches
+ * `parseEntsoeDayAheadPricesXml` or any validation rule — a day that's
+ * still genuinely invalid is rejected exactly as before and simply
+ * remains eligible for the next scheduled run to try again.
+ */
+export async function recoverRecentIncompleteDays(
+  referenceDate = new Date(),
+): Promise<{ imported: boolean; errors: string[] }> {
+  const dayStarts: Date[] = [];
+
+  for (let daysAgo = 1; daysAgo <= TRAILING_RECOVERY_WINDOW_DAYS; daysAgo += 1) {
+    const instant = new Date(referenceDate.getTime() - daysAgo * ONE_DAY_MS);
+    dayStarts.push(localDayBoundsUtc(instant, BULGARIA_TIMEZONE).start);
+  }
+
+  return ensureMarketPricesForBulgariaDays(dayStarts);
 }
