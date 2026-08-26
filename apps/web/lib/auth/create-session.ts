@@ -28,7 +28,22 @@ const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60;
  * because this app's `AUTH_URL` is https in every real deployment; only
  * local dev is http, and `NODE_ENV` distinguishes that just as reliably here.
  */
-export async function createDatabaseSession(userId: string): Promise<void> {
+export type DatabaseSessionResult = {
+  sessionToken: string;
+  expires: Date;
+};
+
+/**
+ * Mobile Client Architecture milestone (ADR-020): now returns the minted
+ * `sessionToken`/`expires` instead of `void`, so an approved caller can use
+ * the same value as the Mobile Bearer presentation channel's credential.
+ * Cookie-setting behavior is unchanged and unconditional — every existing
+ * caller (`login/actions.ts`, `verify-email/confirm/route.ts`) already
+ * discards this function's return value, so this is a purely additive,
+ * behavior-preserving change for both of them; the credential is never
+ * otherwise exposed (no existing Web page reads or displays it).
+ */
+export async function createDatabaseSession(userId: string): Promise<DatabaseSessionResult> {
   const adapter = PrismaAdapter(prisma);
   const sessionToken = crypto.randomUUID();
   const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
@@ -43,6 +58,8 @@ export async function createDatabaseSession(userId: string): Promise<void> {
     secure: process.env.NODE_ENV === "production",
     expires,
   });
+
+  return { sessionToken, expires };
 }
 
 /**

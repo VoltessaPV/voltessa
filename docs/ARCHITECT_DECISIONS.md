@@ -1280,3 +1280,216 @@ Two constraints shaped the scope more than anything else:
 - Every endpoint/field/parameter-code assumption in `lib/isolarcloud/*` is flagged in-file as
   third-party-derived. Any of it may need correcting once the real Sungrow documentation is
   available — this ADR and those doc comments are the record of what to revisit.
+
+## ADR-020: Mobile Client Architecture — Session model extended via a Bearer presentation channel, small Route Handler boundary, no second backend
+
+### Status
+
+Proposed
+
+### Context
+
+Voltessa needs a first-class iOS/Android client with the same meaningful capabilities as Web,
+without duplicating business logic or weakening the existing vendor-neutral provider abstraction
+(ADR-001, ADR-004, ADR-018) or the existing session/authorization model (ADR-006). No document in
+this repository previously defined a mobile client, an API boundary, or a non-browser
+authentication mechanism.
+
+ADR-006 already names a related, tracked gap without building it: "Extending
+`lib/auth/session.ts`... to cover Route Handlers is tracked as a Sprint 1B follow-up... not solved
+by this ADR." More directly relevant, a focused verification pass found that
+**`apps/web/lib/auth/create-session.ts` already implements the exact principle this ADR needs** —
+for email/password login, which (like a future mobile client) cannot go through NextAuth's own
+Google OAuth flow. Its own doc comment states: "every login method - Google via NextAuth, password
+via this - ends up as an identical row in the same `Session` table, revocable the same way (delete
+the row)." This ADR does not introduce a new idea; it extends an already-shipped one to a third
+login method.
+
+### Decision
+
+Add a small, non-versioned set of Route Handlers inside the existing `apps/web` Next.js app, each a
+thin wrapper calling an already-existing plain service function. Add a Route-Handler-compatible
+companion to `lib/auth/session.ts`'s existing helpers (new functions, not a replacement).
+
+**Mobile authentication is not a new authentication mechanism.** It is an additional *presentation
+channel* for the existing Voltessa Session model, built by extending
+`lib/auth/create-session.ts` — the same mechanism already used for password login — rather than by
+introducing a token type, a signing scheme, or a second identity system. Concretely, it is the same
+in every respect that matters:
+
+- same `Session` table
+- same session lifecycle (creation via `PrismaAdapter(prisma).createSession`, exactly as
+  `create-session.ts` already does for password login)
+- same expiry semantics (`SESSION_MAX_AGE_SECONDS`, unchanged)
+- same revocation semantics (delete the row — the exact operation `reset-password/actions.ts`
+  already performs today)
+- same permission/role resolution (`Permissions.can*`/`Roles`, read via the same `CurrentUser`
+  shape regardless of channel)
+- same user identity (`User.id`, unchanged — no parallel user record of any kind)
+
+The only difference is how the session credential is transported to the server on each request:
+
+- **Web**: unchanged — the existing secure browser cookie mechanism (`httpOnly`, `SameSite=lax`,
+  `Secure` in production), set by NextAuth for Google sign-in or by `create-session.ts` for
+  password sign-in.
+- **Mobile**: the same underlying `sessionToken` value is explicitly returned to the native
+  application at sign-in time (instead of only being set as a cookie), stored by the app in
+  platform-appropriate secure storage (Keychain/Keystore), and presented on each subsequent request
+  as `Authorization: Bearer <sessionToken>`.
+
+### Alternatives considered
+
+- **Extend existing Server Actions architecture directly**: rejected on technical grounds. Server
+  Actions are invoked via a build-specific action-reference ID and React's Flight protocol — no
+  stable, hand-callable contract, and IDs change on every web deployment while a released mobile
+  binary cannot redeploy in lockstep. Not viable for an independently-released client, not a matter
+  of preference.
+- **Dedicated mobile backend/BFF**: rejected. This repository already has a documented cautionary
+  precedent for exactly this shape of mistake — `apps/api`, per `CLAUDE.md`'s "Known Gaps," is a
+  second, independent implementation of automation/plant logic that drifted and is now explicitly
+  unused. A BFF would repeat that pattern at a new layer, for a product with one current platform
+  user.
+- **Small HTTP/API boundary (selected)**: matches the direction ADR-006 already anticipated (its
+  own tracked Route-Handler auth gap) and requires no new framework, dependency, or service.
+- **Independent opaque access/refresh token pair, or JWT**: rejected as unnecessary complexity
+  relative to actual need — both would introduce new schema, new rotation/revocation logic, and
+  (for JWT specifically) weaker revocation than what the existing `Session` table already provides,
+  since this app already hits Postgres on every request regardless.
+
+### Authentication
+
+The existing `Session` model already supports this with **zero schema change** — confirmed
+directly: `create-session.ts` mints a fully valid row using only the model's existing columns
+(`sessionToken`, `userId`, `expires`), and that row is indistinguishable from, and just as
+revocable as, a Google-created one.
+
+What's new, precisely:
+
+- Extend (not replace) `create-session.ts`'s creation path so a mobile-originating call can receive
+  the raw `sessionToken` value as a response body, in addition to — or instead of — setting it as a
+  cookie.
+- Add a small resolver alongside `lib/auth/session.ts`'s existing functions that accepts
+  `Authorization: Bearer <sessionToken>` as an alternative to the cookie when resolving the current
+  session, for use only inside the new Route Handlers — every existing Server Component/Action
+  keeps using the cookie-only path, untouched.
+
+**Known, non-blocking limitation, explicitly accepted rather than solved now**: the `Session` model
+has no column recording *which channel* created a row (Google web login, password login, and a
+future mobile login are already indistinguishable from each other today, by the existing design
+`create-session.ts` itself describes). This means a future "manage your signed-in devices" screen
+could not yet label rows as "iPhone" vs. "Chrome" — a real gap for that *specific future feature*,
+but not a gap in session isolation, expiry, or revocation, all of which already work correctly
+per-row regardless of labeling. **This ADR deliberately does not add a device/channel column now**
+— that is a separate, future architectural/feature decision, to be made if and when device-
+management UX is actually needed.
+
+**Bulk revocation, unchanged**: `prisma.session.deleteMany({ where: { userId } })` already exists
+(`reset-password/actions.ts`) and already invalidates every session for that user — Web and any
+future Mobile session alike, with no distinction. This ADR does not change that behavior; it is
+the correct, pre-existing "something is compromised, kill everything" mechanism, and remains the
+source of truth for revocation regardless of which channel a given row came from. Revoking a
+single device (one row, via its own unique `sessionToken`) already works today independently of any
+other session, exactly as it already does for two different browser logins.
+
+**Google authentication remains entirely unchanged.** NextAuth's own Google OAuth flow continues
+to create sessions through `PrismaAdapter`'s `createSession` exactly as it does today; this ADR
+touches none of that code path.
+
+### Client boundary
+
+```
+Mobile (React Native, TBD — not decided by this ADR)
+        ↓  Authorization: Bearer <sessionToken>
+New Route Handlers (apps/web/app/api/*, unversioned, small in number)
+        ↓
+Existing plain service functions (getDashboardPageData, AutomationService.execute,
+getOrganizationProviderConnection, updateMarketPriceAutomation, ...) — UNCHANGED
+        ↓
+Existing vendor-neutral layer (lib/telemetry/canonical.ts, ManufacturerControlAdapter) — UNCHANGED
+        ↓
+lib/fusionsolar/*  |  lib/isolarcloud/*  |  Gateway — UNCHANGED, unreachable by any client directly
+```
+
+Web's existing Server Components/Actions continue exactly as today, calling the same functions
+directly — the Route Handler is simply a second caller of logic that already exists, not a
+replacement for the first.
+
+### Feature parity
+
+Rule for all future user-facing capabilities: business logic is written once, as a plain function
+taking explicit inputs (organization/plant id, validated payload) — never reading cookies/session/
+`redirect()` internally, mirroring the shape `getDashboardPageData` and
+`updateMarketPriceAutomation` already mostly have today. Web calls it from a Server
+Component/Action after resolving auth via the existing `requireOnboardedUser`/`requirePermission`.
+If Mobile needs the same capability, one thin Route Handler is added that resolves auth via the new
+Bearer-credential resolver and calls the identical function. Nothing is ever implemented twice.
+
+### Provider boundary
+
+Unchanged and unaffected. Mobile never sees a Route Handler, service function, or response field
+that mentions Huawei, Sungrow, or Gateway specifics — exactly the same guarantee Web already has
+today via ADR-018.
+
+### Web compatibility
+
+Zero required changes. Every existing page, Server Action, and data function is untouched. Web
+could, later and optionally, call the new Route Handlers too — not required by this ADR, and not
+something to do preemptively.
+
+### Mobile compatibility
+
+Establishes the minimum a future `apps/mobile` needs: a sign-in exchange path (extending
+`create-session.ts`) and a small number of data/status endpoints, all using ordinary HTTP/JSON — no
+Next.js-specific protocol knowledge required of the client.
+
+### Security considerations
+
+- **Mobile's Bearer-presented `sessionToken` receives none of a cookie's automatic protections**
+  (`httpOnly`, `SameSite`, browser-enforced `Secure`) — it is a plain string the native app can read
+  directly. It must therefore **never be logged, included in any diagnostic/error output, or echoed
+  back in a response body** anywhere in the new Route Handlers or the extended `create-session.ts`
+  path — an explicit extension of this codebase's existing "never log a secret" discipline to this
+  new value.
+- **Existing session revocation remains the sole source of truth**, unchanged: deleting a `Session`
+  row (individually or via the existing bulk `deleteMany({ where: { userId } })` path) immediately
+  invalidates that credential regardless of which channel presented it.
+- Bulk revocation, unchanged, still means "kill every session for this user" indiscriminately
+  across Web and Mobile — correct and expected for a compromised-account response, and not
+  something this ADR alters.
+- No rate-limiting exists today around session creation for any login method — a pre-existing gap,
+  not introduced by this proposal, noted but not addressed here.
+
+### Deployment/release considerations
+
+Backend/API and Web remain one deployment (unchanged Vercel Git-integration flow). Mobile releases
+independently via App Store/Play Store, calling whatever Route Handlers exist at the time —
+compatibility is maintained by only ever adding fields/endpoints, never removing or repurposing one
+a released mobile build depends on.
+
+### Consequences
+
+- A small, real amount of new code is required (extending `create-session.ts` to return the token,
+  a Bearer resolver, a handful of Route Handlers) — this ADR does not claim zero implementation
+  cost, only that it reuses an already-proven internal mechanism rather than inventing one.
+- `resolvePlantContext`'s Huawei-hardcoding (already flagged as inconsistent with ADR-018,
+  independent of mobile) remains a separate, pre-existing item — not fixed by this ADR, not newly
+  created by it either.
+- No second backend, no new authentication paradigm, no vendor-abstraction change.
+- The absence of a device/channel label on `Session` is an accepted, documented limitation, not a
+  defect — revisit only if/when device-management UX becomes an actual product requirement.
+
+### Implementation implications
+
+Likely eventual work (not authorized by this ADR alone, subject to further approval): extending
+`lib/auth/create-session.ts` to optionally return the raw `sessionToken` instead of only setting a
+cookie; a small `lib/auth/*` addition for Bearer-based resolution (new functions, existing ones
+untouched); 1–3 initial data/status Route Handlers; and — separately, on its own merits — the
+`resolvePlantContext` fix already identified as inconsistent with ADR-018.
+
+### Open questions
+
+- Exact native sign-in UX (Google native SDK vs. in-app browser) that ultimately calls the extended
+  `create-session.ts` path — a mobile-engineering decision, not an architecture one.
+- Whether/when a device/channel label is added to `Session` for device-management UX — explicitly
+  deferred, not part of this decision.
+- Whether Web ever adopts the same Route Handlers — not needed now, explicitly deferred.

@@ -105,8 +105,13 @@ async function findCurrentUserByEmail(email: string): Promise<CurrentUser | null
  * not an email. If the target has since been deactivated/deleted this
  * returns null, and `getCurrentUser()` below simply falls back to the real
  * admin's own identity rather than failing the request entirely.
+ *
+ * Exported (Mobile Client Architecture milestone, ADR-020) so
+ * `lib/auth/api-session.ts`'s Bearer-credential resolver can reuse the exact
+ * same active-account filter and `CurrentUser` shape once it has resolved a
+ * `userId` from a `Session` row - never a second, parallel lookup.
  */
-async function findCurrentUserById(id: string): Promise<CurrentUser | null> {
+export async function findCurrentUserById(id: string): Promise<CurrentUser | null> {
   const user = await prisma.user.findUnique({
     where: { id, deletedAt: null, deactivatedAt: null },
     select: CURRENT_USER_SELECT,
