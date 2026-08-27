@@ -3,10 +3,9 @@
 import { redirect } from "next/navigation";
 
 import { signIn } from "@/auth";
+import { authenticateWithPassword } from "@/lib/auth/authenticate-with-password";
 import { createDatabaseSession } from "@/lib/auth/create-session";
-import { verifyPassword } from "@/lib/auth/password";
 import { syncUserLocale } from "@/lib/i18n/locale-sync";
-import { prisma } from "@/lib/prisma";
 
 export type SignInErrorCode = "emailPasswordRequired" | "invalidCredentials" | "accountInactive";
 export type SignInResult = { success: false; code: SignInErrorCode } | null;
@@ -43,49 +42,32 @@ export async function signInWithPassword(
     return { success: false, code: "emailPasswordRequired" };
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email },
-    select: {
-      id: true,
-      email: true,
-      passwordHash: true,
-      emailVerified: true,
-      deletedAt: true,
-      deactivatedAt: true,
-      accountType: true,
-    },
-  });
+  const result = await authenticateWithPassword(email, password);
 
-  const passwordValid = user?.passwordHash
-    ? await verifyPassword(password, user.passwordHash)
-    : false;
+  if (!result.ok) {
+    if (result.code === "emailNotVerified") {
+      redirect(`/verify-email?email=${encodeURIComponent(result.email)}`);
+    }
 
-  if (!user || !passwordValid) {
-    return { success: false, code: "invalidCredentials" };
+    // Platform Administration milestone - same rule as Google's
+    // callbacks.signIn in lib/auth/config.ts, checked after password/
+    // verification (never reveal account status before proving the
+    // password is even correct). Both remaining codes
+    // (invalidCredentials/accountInactive) map directly to their
+    // identically-named SignInErrorCode.
+    return { success: false, code: result.code };
   }
 
-  if (!user.emailVerified) {
-    redirect(`/verify-email?email=${encodeURIComponent(user.email!)}`);
-  }
-
-  // Platform Administration milestone - same rule as Google's
-  // callbacks.signIn in lib/auth/config.ts, checked after password/
-  // verification (never reveal account status before proving the
-  // password is even correct).
-  if (user.deletedAt || user.deactivatedAt) {
-    return { success: false, code: "accountInactive" };
-  }
-
-  await createDatabaseSession(user.id);
+  await createDatabaseSession(result.userId);
 
   // Password login never fires NextAuth's events.signIn (see
   // createDatabaseSession's own doc comment) - synced explicitly here for
   // the same reason lib/auth/config.ts does it for Google.
-  await syncUserLocale(user.id);
+  await syncUserLocale(result.userId);
 
   // Trader Workflow Simplification milestone: Clients (the portfolio
   // overview) is the Trader's home now, not Dashboard - matches the same
   // branch already applied to the other post-auth/onboarding redirects
   // (see onboarding/page.tsx, onboarding/trader-profile/page.tsx).
-  redirect(user.accountType === "ENERGY_TRADER" ? "/clients" : "/dashboard");
+  redirect(result.accountType === "ENERGY_TRADER" ? "/clients" : "/dashboard");
 }

@@ -37,27 +37,37 @@ export type DatabaseSessionResult = {
  * Mobile Client Architecture milestone (ADR-020): now returns the minted
  * `sessionToken`/`expires` instead of `void`, so an approved caller can use
  * the same value as the Mobile Bearer presentation channel's credential.
- * Cookie-setting behavior is unchanged and unconditional — every existing
- * caller (`login/actions.ts`, `verify-email/confirm/route.ts`) already
- * discards this function's return value, so this is a purely additive,
- * behavior-preserving change for both of them; the credential is never
- * otherwise exposed (no existing Web page reads or displays it).
+ *
+ * `options.setCookie` (M1 follow-up): defaults to `true`, so every existing
+ * caller (`login/actions.ts`, `verify-email/confirm/route.ts`) — neither of
+ * which passes `options` at all — keeps setting the Web cookie exactly as
+ * before this parameter existed; this is still the one and only place a
+ * database-backed `Session` row is minted outside NextAuth's own Google
+ * flow, not a second implementation. Only the Mobile sign-in Route Handler
+ * passes `{ setCookie: false }`, since a `Set-Cookie` header on a JSON API
+ * response to a non-browser client is an unintended side effect, not part
+ * of the Bearer presentation channel ADR-020 describes.
  */
-export async function createDatabaseSession(userId: string): Promise<DatabaseSessionResult> {
+export async function createDatabaseSession(
+  userId: string,
+  options?: { setCookie?: boolean },
+): Promise<DatabaseSessionResult> {
   const adapter = PrismaAdapter(prisma);
   const sessionToken = crypto.randomUUID();
   const expires = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
 
   await adapter.createSession!({ sessionToken, userId, expires });
 
-  const cookieStore = await cookies();
-  cookieStore.set(getAuthSessionCookieName(), sessionToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    secure: process.env.NODE_ENV === "production",
-    expires,
-  });
+  if (options?.setCookie ?? true) {
+    const cookieStore = await cookies();
+    cookieStore.set(getAuthSessionCookieName(), sessionToken, {
+      httpOnly: true,
+      sameSite: "lax",
+      path: "/",
+      secure: process.env.NODE_ENV === "production",
+      expires,
+    });
+  }
 
   return { sessionToken, expires };
 }

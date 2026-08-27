@@ -1,6 +1,7 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 
 import { findCurrentUserById, type CurrentUser, type CurrentUserWithOrganization } from "@/lib/auth/session";
 import type { Role } from "@/lib/auth/roles";
@@ -143,4 +144,45 @@ export async function requireApiPermission(
   }
 
   return result;
+}
+
+/**
+ * M1 (ADR-020). Revokes exactly the one `Session` row the caller's own
+ * Bearer credential names — the mobile sign-out counterpart to
+ * `resolveApiUser`'s expiry-driven `deleteSession` call above, same
+ * adapter method, same table. Idempotent and deliberately tolerant: a
+ * missing/already-invalid token still means "no valid session for this
+ * token" either way, so this never distinguishes that from "revoked
+ * successfully" to the caller — there is nothing sensitive to protect by
+ * failing loudly here, and doing so would require re-deriving whether the
+ * token was well-formed just to decide how to respond.
+ */
+export async function revokeApiSession(request: NextRequest): Promise<void> {
+  const token = extractBearerToken(request);
+
+  if (!token) {
+    return;
+  }
+
+  const adapter = PrismaAdapter(prisma);
+
+  try {
+    await adapter.deleteSession!(token);
+  } catch (error) {
+    // The adapter's deleteSession is a bare Prisma `delete` - it throws
+    // P2025 ("record not found") if the row is already gone
+    // (expired-and-cleaned-up, already signed out elsewhere, or simply
+    // garbage). That specific end state ("no valid session for this
+    // token") is identical to a successful revocation from the caller's
+    // point of view, so only P2025 is swallowed here. Any other error
+    // (a genuine database failure, connectivity issue, etc.) is a real
+    // problem the caller must not be told succeeded - rethrown rather
+    // than silently reported as `{ ok: true }`.
+    const isSessionAlreadyGone =
+      error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025";
+
+    if (!isSessionAlreadyGone) {
+      throw error;
+    }
+  }
 }
