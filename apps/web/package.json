@@ -48,7 +48,7 @@
     "i18n:check-missing": "node scripts/i18n/check-missing.mjs",
     "i18n:check-terminology": "node scripts/i18n/check-terminology.mjs",
     "i18n:check-unused": "node scripts/i18n/check-unused.mjs",
-    "test": "tsx --test lib/market-price/providers/entsoe.test.ts",
+    "test": "tsx --test lib/market-price/providers/entsoe.test.ts lib/auth/verify-google-id-token.test.ts",
     "test:e2e": "playwright test"
   },
   "type": "module",

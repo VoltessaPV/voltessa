@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { authenticateWithPassword } from "@/lib/auth/authenticate-with-password";
-import { createDatabaseSession } from "@/lib/auth/create-session";
-import { findCurrentUserById } from "@/lib/auth/session";
+import { mintMobileSessionForUser } from "@/lib/auth/mint-mobile-session";
 
 export const runtime = "nodejs";
 
@@ -15,10 +14,12 @@ export const runtime = "nodejs";
  * every M0 endpoint is unreachable by a real client.
  *
  * Reuses `authenticateWithPassword` (the exact credential-check logic
- * `login/actions.ts`'s `signInWithPassword` uses) and `createDatabaseSession`
- * (unchanged, already mints the same `Session` row Web's password login
- * creates) - no parallel authentication mechanism, per ADR-020's explicit
- * requirement.
+ * `login/actions.ts`'s `signInWithPassword` uses) and
+ * `mintMobileSessionForUser` (M5: extracted so this route and the new
+ * Google sign-in route - see `google-sign-in/route.ts` - share the exact
+ * same "resolve user, check onboarding, mint session" tail instead of
+ * duplicating it) - no parallel authentication mechanism, per ADR-020's
+ * explicit requirement.
  *
  * Unlike the Web Server Action, this can't `redirect()` on an unverified
  * email - it returns a machine-readable `email_not_verified` code instead,
@@ -58,34 +59,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invalid_credentials" }, { status: 401 });
   }
 
-  // Resolved before minting a session: matches every other Bearer-gated
-  // endpoint's `requireApiUser` organization/onboarding gate (api-session.ts)
-  // - a user who wouldn't be allowed to call any other Mobile endpoint
-  // shouldn't be handed a token for one either, and checking first avoids
-  // minting an orphaned Session row that would never actually be used.
-  const user = await findCurrentUserById(result.userId);
+  const session = await mintMobileSessionForUser(result.userId);
 
-  if (!user || !user.organizationId || !user.organization?.onboardingCompletedAt) {
-    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  if (!session.ok) {
+    return NextResponse.json({ error: "forbidden" }, { status: session.status });
   }
 
-  // `setCookie: false` - this is a JSON API response to a non-browser
-  // client, not a page navigation; the token is returned in the body only
-  // (see ADR-020's Bearer presentation channel), never also as a cookie.
-  const { sessionToken, expires } = await createDatabaseSession(result.userId, {
-    setCookie: false,
-  });
-
   return NextResponse.json({
-    sessionToken,
-    expires: expires.toISOString(),
-    user: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      organizationId: user.organizationId,
-      organization: { id: user.organization.id, name: user.organization.name },
-    },
+    sessionToken: session.sessionToken,
+    expires: session.expires,
+    user: session.user,
   });
 }
