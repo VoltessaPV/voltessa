@@ -4,8 +4,8 @@ import { NextResponse } from "next/server";
 
 import {
   backfillMarketPrices,
-  recoverRecentIncompleteDays,
   refreshMarketPrices,
+  refreshTomorrowWithTrailingRecovery,
 } from "@/lib/market-price/refresh-market-prices";
 import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
 
@@ -13,8 +13,6 @@ const SCHEDULER_NAME = "market_price_refresh";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 function secretsMatch(
   providedSecret: string,
@@ -103,39 +101,39 @@ async function handleRefresh(request: Request) {
     // for the Historical Backfill + Timeline Alignment milestone). Omitted
     // entirely: unchanged single-day "today" refresh, the original
     // behavior every existing scheduled caller relies on.
+    //
+    // `target=tomorrow` uses `refreshTomorrowWithTrailingRecovery`, which
+    // always attempts the trailing 2-day recovery sweep (see
+    // `recoverRecentIncompleteDays`'s own doc comment) even when the
+    // primary "tomorrow" import itself fails (e.g. a sustained ENTSO-E
+    // outage) - never for a manual/backfill call (`?days=N` or a bare
+    // call), only for this scheduled path. A primary-import failure is
+    // still rethrown after recovery has been attempted, so it's handled by
+    // the existing catch block below exactly as before.
+    let recovery: { imported: boolean; errors: string[] } | null = null;
+
     const result = targetsTomorrow
-      ? await refreshMarketPrices(new Date(Date.now() + ONE_DAY_MS))
+      ? await (async () => {
+          const outcome = await refreshTomorrowWithTrailingRecovery();
+          recovery = outcome.recovery;
+
+          if (outcome.recoveryError) {
+            console.error("[Market Price Refresh] Trailing-day recovery sweep failed unexpectedly", {
+              startedAt: startedAt.toISOString(),
+              error: outcome.recoveryError,
+            });
+          } else if (recovery) {
+            console.log("[Market Price Refresh] Trailing-day recovery sweep", {
+              startedAt: startedAt.toISOString(),
+              ...recovery,
+            });
+          }
+
+          return outcome.result;
+        })()
       : daysBack !== undefined
         ? await backfillMarketPrices(daysBack)
         : await refreshMarketPrices();
-
-    // Scheduled Market Price Refresh Resilience milestone: on the same
-    // daily scheduled trigger that already asks about tomorrow, also
-    // reconsider the last 2 Bulgaria-local delivery days (see
-    // `recoverRecentIncompleteDays`'s own doc comment) - never for a
-    // manual/backfill call (`?days=N` or a bare call), only for the real
-    // `target=tomorrow` scheduled path. Deliberately isolated in its own
-    // try/catch so a recovery-side problem can never turn today's
-    // otherwise-successful `target=tomorrow` result into a failure - the
-    // existing scheduled behavior this milestone must not change stays
-    // exactly as it was.
-    let recovery: { imported: boolean; errors: string[] } | null = null;
-
-    if (targetsTomorrow) {
-      try {
-        recovery = await recoverRecentIncompleteDays();
-
-        console.log("[Market Price Refresh] Trailing-day recovery sweep", {
-          startedAt: startedAt.toISOString(),
-          ...recovery,
-        });
-      } catch (error) {
-        console.error("[Market Price Refresh] Trailing-day recovery sweep failed unexpectedly", {
-          startedAt: startedAt.toISOString(),
-          error,
-        });
-      }
-    }
 
     console.log("[Market Price Refresh] Completed", {
       startedAt: startedAt.toISOString(),

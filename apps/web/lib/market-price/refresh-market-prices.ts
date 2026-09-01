@@ -444,3 +444,59 @@ export async function recoverRecentIncompleteDays(
 
   return ensureMarketPricesForBulgariaDays(dayStarts);
 }
+
+export type ScheduledTomorrowRefreshResult = {
+  result: MarketPriceRefreshResult;
+  recovery: { imported: boolean; errors: string[] } | null;
+  recoveryError: unknown;
+};
+
+/**
+ * Scheduled Market Price Refresh Resilience milestone, resilience follow-up
+ * (2026-09-01 sustained ENTSO-E outage). Runs the primary "tomorrow" import
+ * and the trailing recovery sweep as two independent steps.
+ * `app/api/internal/market-price/refresh-prices/route.ts` previously only
+ * ever called `recoverRecentIncompleteDays` after a successful primary
+ * import, so an ENTSO-E outage that failed every "tomorrow" attempt also
+ * silently prevented the trailing 2-day recovery sweep from ever running.
+ * Recovery is now always attempted, even when the primary import throws.
+ * The primary error is still rethrown afterward (never swallowed), so the
+ * route's existing FAILED `SchedulerRun` / error-response handling for the
+ * primary import is unchanged. `refresh`/`recover` overrides exist only for
+ * tests — production callers always get the real
+ * `refreshMarketPrices`/`recoverRecentIncompleteDays`.
+ */
+export async function refreshTomorrowWithTrailingRecovery(
+  referenceDate: Date = new Date(Date.now() + ONE_DAY_MS),
+  overrides: {
+    refresh?: () => Promise<MarketPriceRefreshResult>;
+    recover?: () => Promise<{ imported: boolean; errors: string[] }>;
+  } = {},
+): Promise<ScheduledTomorrowRefreshResult> {
+  const refresh = overrides.refresh ?? (() => refreshMarketPrices(referenceDate));
+  const recover = overrides.recover ?? (() => recoverRecentIncompleteDays());
+
+  let result: MarketPriceRefreshResult | undefined;
+  let primaryError: unknown;
+
+  try {
+    result = await refresh();
+  } catch (error) {
+    primaryError = error;
+  }
+
+  let recovery: { imported: boolean; errors: string[] } | null = null;
+  let recoveryError: unknown;
+
+  try {
+    recovery = await recover();
+  } catch (error) {
+    recoveryError = error;
+  }
+
+  if (primaryError) {
+    throw primaryError;
+  }
+
+  return { result: result!, recovery, recoveryError };
+}
