@@ -324,6 +324,28 @@ async function isCetDayImportComplete(periodStart: Date): Promise<boolean> {
 }
 
 /**
+ * The (up to 2) CET/CEST calendar-day components a single Bulgaria-local
+ * day overlaps - see `BULGARIA_CET_OVERLAP_DAYS`'s own doc comment for why
+ * a Bulgaria day is never exactly one CET day. Shared by
+ * `ensureMarketPricesForBulgariaDays` below (needs the reference instant to
+ * actually fetch a CET day that isn't complete yet) and
+ * `isBulgariaLocalDayComplete` further below (only needs the CET day start
+ * to check completeness) - factored out once both needed the identical
+ * computation, not a new calculation.
+ */
+function bulgariaDayCetComponents(
+  dayStart: Date,
+): Array<{ cetDayStart: Date; referenceInstant: Date }> {
+  const leadingHourInstant = new Date(dayStart.getTime() + 30 * 60 * 1000);
+  const restOfDayInstant = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
+
+  return [leadingHourInstant, restOfDayInstant].map((referenceInstant) => ({
+    referenceInstant,
+    cetDayStart: localDayBoundsUtc(referenceInstant, ENTSOE_MARKET_TIMEZONE).start,
+  }));
+}
+
+/**
  * Historical Data Coverage milestone. Ensures ENTSO-E prices are imported
  * for an arbitrary set of past Bulgaria-local days (each a `dayStart` from
  * `localDayBoundsUtc(date, "Europe/Sofia")`) — the on-demand counterpart to
@@ -365,12 +387,8 @@ export async function ensureMarketPricesForBulgariaDays(
   const cetReferenceInstants = new Map<number, Date>();
 
   for (const dayStart of dayStarts) {
-    const leadingHourInstant = new Date(dayStart.getTime() + 30 * 60 * 1000);
-    const restOfDayInstant = new Date(dayStart.getTime() + 12 * 60 * 60 * 1000);
-
-    for (const instant of [leadingHourInstant, restOfDayInstant]) {
-      const cetDayStart = localDayBoundsUtc(instant, ENTSOE_MARKET_TIMEZONE).start.getTime();
-      cetReferenceInstants.set(cetDayStart, instant);
+    for (const { cetDayStart, referenceInstant } of bulgariaDayCetComponents(dayStart)) {
+      cetReferenceInstants.set(cetDayStart.getTime(), referenceInstant);
     }
   }
 
@@ -401,6 +419,27 @@ export async function ensureMarketPricesForBulgariaDays(
 }
 
 const BULGARIA_TIMEZONE = "Europe/Sofia";
+
+/**
+ * On-Demand Delivery Day Recovery milestone. Is EVERY CET-day component of
+ * this Bulgaria-local day already a complete, successful import? Mirrors
+ * `isCetDayImportComplete`'s own "isPartial: false is the only complete
+ * signal" rule, generalized across both CET days a Bulgaria day spans (via
+ * the same `bulgariaDayCetComponents` helper `ensureMarketPricesForBulgariaDays`
+ * uses). Read-only - makes no ENTSO-E request. Exported for
+ * `ensure-delivery-day-available.ts`'s on-demand safeguard, which needs to
+ * know "is recovery even necessary" both before and after acquiring its
+ * advisory lock.
+ */
+export async function isBulgariaLocalDayComplete(dayStart: Date): Promise<boolean> {
+  for (const { cetDayStart } of bulgariaDayCetComponents(dayStart)) {
+    if (!(await isCetDayImportComplete(cetDayStart))) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 /**
  * Deliberately bounded to 2 trailing days, not open-ended — see the
@@ -499,4 +538,31 @@ export async function refreshTomorrowWithTrailingRecovery(
   }
 
   return { result: result!, recovery, recoveryError };
+}
+
+/**
+ * Hard escalation deadline hour (Market Price Reliability milestone,
+ * follow-up correcting the earlier "morning check" design): 05:00
+ * Europe/Sofia. This is deliberately an ESCALATION point for an incident
+ * that has already been open and retrying since the 14:00 primary import
+ * first failed - never the moment recovery "starts." It sits comfortably
+ * before the 06:00 operational window and far beyond ENTSO-E's normal
+ * ~14:00-14:30 publication lag, so reaching it while still incomplete
+ * always means something is genuinely wrong, never routine latency.
+ */
+const RECOVERY_DEADLINE_HOUR_SOFIA = 5;
+
+/**
+ * The hard recovery-escalation deadline for the delivery day `tomorrow`
+ * refers to (the same reference date the primary "tomorrow" import itself
+ * uses) - 05:00 Europe/Sofia on that delivery day's own Bulgaria-local
+ * calendar date. Computed independently of whether the primary import ever
+ * succeeded (needed in the failure path too, where there is no
+ * `MarketPriceRefreshResult.periodStart` to read).
+ */
+export function computeRecoveryDeadline(tomorrow: Date): Date {
+  const cetPeriodStart = localDayBoundsUtc(tomorrow, ENTSOE_MARKET_TIMEZONE).start;
+  const bulgariaDayStart = localDayBoundsUtc(cetPeriodStart, BULGARIA_TIMEZONE).start;
+
+  return new Date(bulgariaDayStart.getTime() + RECOVERY_DEADLINE_HOUR_SOFIA * 60 * 60 * 1000);
 }

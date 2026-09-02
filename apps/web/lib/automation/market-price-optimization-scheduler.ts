@@ -1,5 +1,10 @@
 import { callAutomationService } from "@/lib/automation-client";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
+import {
+  AUTOMATION_RECOVERY_DEADLINE_MS,
+  ensureBulgariaDeliveryDayAvailable,
+} from "@/lib/market-price/ensure-delivery-day-available";
+import { localDayBoundsUtc } from "@/lib/market-price/timezone";
 
 import type { ChangeModeResult } from "@/app/dev/fusionsolar_atlanta/actions";
 import {
@@ -11,6 +16,8 @@ import {
 import { createAutomationEvent } from "./automation-events";
 import { decideExportAction, type ExportMode } from "./export-decision";
 import { findEligibleOrganizations } from "./eligible-organizations";
+
+const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 const AUTOMATION_SERVICE_PATH_BY_MODE: Record<ExportMode, string> = {
   "Zero Export": "/automation/fusionsolar/atlanta/zero-export",
@@ -70,9 +77,21 @@ export type OrganizationExecutionOutcome =
 /**
  * The Market Price Optimization Execution Engine's 15-minute cycle (see
  * app/api/internal/automation/execute-market-price-optimization/route.ts,
- * the systemd timer that calls it every 15 minutes). For each eligible
- * organization (see findEligibleOrganizations): acquires this
- * organization's execution lock (skips silently, no event, if already
+ * the systemd timer that calls it every 15 minutes). Before touching any
+ * organization, ensures today's Bulgaria delivery day is available exactly
+ * ONCE for the whole cycle (On-Demand Delivery Day Recovery milestone) -
+ * never inside the per-organization loop below, since the price data is a
+ * shared resource, not a per-organization one; recovering it once up front
+ * means every organization's own `getCurrentPrice`/`getNextPrice` lookup
+ * below sees the same, already-healed (or still genuinely unavailable) data.
+ * Bounded by `AUTOMATION_RECOVERY_DEADLINE_MS` so a slow/unavailable
+ * ENTSO-E can never risk overlapping the next 15-minute cycle. If recovery
+ * fails or the day stays incomplete, nothing here changes: each
+ * organization's own existing "no valid price -> skipped_no_price_data"
+ * handling below is untouched and still applies.
+ *
+ * For each eligible organization (see findEligibleOrganizations): acquires
+ * this organization's execution lock (skips silently, no event, if already
  * running - "never run two executions concurrently"), reads the current
  * and next market interval price plus the stored export mode, runs the
  * pure decision function, and — only if a mode switch is actually required
@@ -82,11 +101,28 @@ export type OrganizationExecutionOutcome =
  * Voltessa's own stored state, never the plant itself (see
  * lib/automation/daily-reconciliation.ts for the one place that does read
  * FusionSolar, once a day).
+ *
+ * `overrides` exist only for tests - production callers always get the
+ * real recovery safeguard and the real `findEligibleOrganizations`.
  */
-export async function runMarketPriceOptimizationScheduler(): Promise<
-  OrganizationExecutionOutcome[]
-> {
-  const organizations = await findEligibleOrganizations();
+export async function runMarketPriceOptimizationScheduler(
+  overrides: {
+    ensureRecovery?: () => Promise<void>;
+    findOrganizations?: () => Promise<Awaited<ReturnType<typeof findEligibleOrganizations>>>;
+  } = {},
+): Promise<OrganizationExecutionOutcome[]> {
+  const ensureRecovery =
+    overrides.ensureRecovery ??
+    (() =>
+      ensureBulgariaDeliveryDayAvailable(
+        localDayBoundsUtc(new Date(), BULGARIA_TIMEZONE).start,
+        AUTOMATION_RECOVERY_DEADLINE_MS,
+      ));
+  const findOrganizations = overrides.findOrganizations ?? findEligibleOrganizations;
+
+  await ensureRecovery();
+
+  const organizations = await findOrganizations();
   const outcomes: OrganizationExecutionOutcome[] = [];
 
   for (const organization of organizations) {

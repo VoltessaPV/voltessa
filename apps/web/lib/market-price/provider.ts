@@ -28,7 +28,7 @@
 
 import { Prisma } from "@prisma/client";
 
-import { DEFAULT_BIDDING_ZONE } from "@/lib/market-price/constants";
+import { DEFAULT_BIDDING_ZONE, DEFAULT_RESOLUTION_MINUTES } from "@/lib/market-price/constants";
 import {
   ENTSOE_MARKET_TIMEZONE,
   localDayBoundsUtc,
@@ -129,6 +129,21 @@ type PersistedMarketPriceRow = {
   source: string;
 };
 
+/**
+ * Floors `date` to the start of its `intervalMinutes`-wide bucket - e.g.
+ * 14:07 -> 14:00 for a 15-minute grid. Used to look up "the price for the
+ * exact current/next settlement interval," never "the most recent price at
+ * or before some instant": Voltessa's automation semantics require an exact
+ * per-interval price-or-nothing, not a fallback to whatever older price
+ * happens to still be in the table (which would silently reuse yesterday's
+ * price for a missing today's interval - explicitly not how this system is
+ * supposed to behave).
+ */
+export function floorToInterval(date: Date, intervalMinutes: number): Date {
+  const intervalMs = intervalMinutes * 60 * 1000;
+  return new Date(Math.floor(date.getTime() / intervalMs) * intervalMs);
+}
+
 function toMarketPrice(row: PersistedMarketPriceRow): MarketPrice {
   return {
     price: Number(row.price.toString()),
@@ -152,17 +167,17 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
   async getCurrentPrice(options = {}): Promise<MarketPriceResult> {
     const biddingZone = options.biddingZone ?? DEFAULT_BIDDING_ZONE;
     const referenceDate = options.referenceDate ?? new Date();
+    const currentIntervalStart = floorToInterval(referenceDate, DEFAULT_RESOLUTION_MINUTES);
 
     const row = await prisma.marketPrice.findFirst({
       where: {
         biddingZone,
-        timestamp: { lte: referenceDate },
+        timestamp: currentIntervalStart,
       },
-      orderBy: { timestamp: "desc" },
     });
 
     if (!row) {
-      return { available: false, reason: "no_persisted_price_data" };
+      return { available: false, reason: "no_price_for_current_interval" };
     }
 
     return { available: true, price: toMarketPrice(row) };
@@ -171,17 +186,20 @@ export const dbMarketPriceProvider: MarketPriceProvider = {
   async getNextPrice(options = {}): Promise<MarketPriceResult> {
     const biddingZone = options.biddingZone ?? DEFAULT_BIDDING_ZONE;
     const referenceDate = options.referenceDate ?? new Date();
+    const currentIntervalStart = floorToInterval(referenceDate, DEFAULT_RESOLUTION_MINUTES);
+    const nextIntervalStart = new Date(
+      currentIntervalStart.getTime() + DEFAULT_RESOLUTION_MINUTES * 60 * 1000,
+    );
 
     const row = await prisma.marketPrice.findFirst({
       where: {
         biddingZone,
-        timestamp: { gt: referenceDate },
+        timestamp: nextIntervalStart,
       },
-      orderBy: { timestamp: "asc" },
     });
 
     if (!row) {
-      return { available: false, reason: "no_persisted_price_data" };
+      return { available: false, reason: "no_price_for_next_interval" };
     }
 
     return { available: true, price: toMarketPrice(row) };

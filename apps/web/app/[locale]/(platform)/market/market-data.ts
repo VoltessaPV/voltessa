@@ -35,6 +35,10 @@ import {
   type ExportThresholdConfig,
 } from "@/lib/automation/export-threshold-config";
 import { DEFAULT_RESOLUTION_MINUTES } from "@/lib/market-price/constants";
+import {
+  DASHBOARD_RECOVERY_DEADLINE_MS,
+  ensureBulgariaDeliveryDayAvailable,
+} from "@/lib/market-price/ensure-delivery-day-available";
 import { dbMarketPriceProvider } from "@/lib/market-price/provider";
 import {
   formatDateInZone,
@@ -538,6 +542,15 @@ export async function getMarketPageData(params: {
       ...toolbarState,
     };
   }
+
+  // On-Demand Delivery Day Recovery milestone: a no-op whenever
+  // `periodStart`'s Bulgaria-local day is already complete, out of the
+  // allowed recovery range, or in the future - only ever does real work
+  // (behind its own advisory lock) when this specific browsed/dashboard day
+  // is genuinely missing or incomplete. Awaited BEFORE the reads below so a
+  // freshly-recovered day is what this request actually sees, not stale
+  // "unavailable" data from before recovery ran.
+  await ensureBulgariaDeliveryDayAvailable(periodStart, DASHBOARD_RECOVERY_DEADLINE_MS);
 
   // These reads don't depend on each other's results (only the subsequent
   // processing below does) — fetched in parallel instead of four
