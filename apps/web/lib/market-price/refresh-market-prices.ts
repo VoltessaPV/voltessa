@@ -18,11 +18,16 @@
 import {
   DEFAULT_BIDDING_ZONE,
   MARKET_PRICE_SOURCE_ENTSOE,
+  MARKET_PRICE_SOURCE_IBEX,
 } from "@/lib/market-price/constants";
 import {
   EntsoeNoDataAvailableError,
   fetchEntsoeDayAheadPrices,
 } from "@/lib/market-price/providers/entsoe";
+import {
+  IbexNoDataAvailableError,
+  fetchIbexDayAheadPrices,
+} from "@/lib/market-price/providers/ibex";
 import {
   ENTSOE_MARKET_TIMEZONE,
   formatDateInZone,
@@ -32,6 +37,7 @@ import { prisma } from "@/lib/prisma";
 import { recordImporterRun } from "@/lib/admin/importer-run";
 
 const IMPORTER_TYPE = "entsoe_market_price";
+const IBEX_IMPORTER_TYPE = "ibex_market_price";
 
 export type MarketPriceRefreshResult = {
   biddingZone: string;
@@ -47,13 +53,141 @@ export type MarketPriceRefreshResult = {
   unavailable: boolean;
 };
 
+type PersistableDayAheadSeries = {
+  points: Array<{ timestamp: Date; price: number; currency: string }>;
+  resolutionMinutes: number;
+  expectedIntervals: number;
+  missingTimestamps: Date[];
+  isPartial: boolean;
+};
+
 /**
- * Fetches and persists one (CET/CEST market day) day-ahead prices for the
- * configured bidding zone. Defaults to today; pass `referenceDate` to
- * refresh/backfill a past day instead (see `backfillMarketPrices` below).
- * Idempotent: re-running for the same day upserts existing `MarketPrice`
- * rows rather than duplicating them, and always records a fresh
- * `MarketPriceImport` row describing the outcome.
+ * Shared persistence tail for both providers: upserts every point (never
+ * duplicated - `@@unique([biddingZone, timestamp, source])`, self-healing
+ * if a provider ever revises an already-published value), writes one
+ * `MarketPriceImport` row, and records the `ImporterRun`. `source`/
+ * `importerType` are the only things that differ between an ENTSO-E and an
+ * IBEX import - everything else (validation already happened in the
+ * respective provider) is identical, so this is the one place that writes
+ * to `MarketPrice`/`MarketPriceImport`, regardless of which provider
+ * produced the series.
+ */
+async function persistDayAheadSeries(params: {
+  series: PersistableDayAheadSeries;
+  periodStart: Date;
+  periodEnd: Date;
+  source: string;
+  importerType: string;
+  targetDeliveryDay: string;
+  startedAt: Date;
+  logLabel: string;
+}): Promise<MarketPriceRefreshResult> {
+  const { series, periodStart, periodEnd, source, importerType, targetDeliveryDay, startedAt, logLabel } = params;
+
+  // Determined before writing, purely for accurate "inserted vs
+  // duplicate" logging - does not change write behavior below, which
+  // still upserts every point exactly as before.
+  const existing = await prisma.marketPrice.findMany({
+    where: {
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      source,
+      timestamp: { gte: periodStart, lt: periodEnd },
+    },
+    select: { timestamp: true },
+  });
+  const existingTimestamps = new Set(existing.map((row) => row.timestamp.getTime()));
+
+  let recordsInserted = 0;
+  let duplicatesSkipped = 0;
+
+  for (const point of series.points) {
+    const alreadyExists = existingTimestamps.has(point.timestamp.getTime());
+
+    await prisma.marketPrice.upsert({
+      where: {
+        biddingZone_timestamp_source: {
+          biddingZone: DEFAULT_BIDDING_ZONE,
+          timestamp: point.timestamp,
+          source,
+        },
+      },
+      create: {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        timestamp: point.timestamp,
+        price: point.price,
+        currency: point.currency,
+        source,
+      },
+      update: {
+        price: point.price,
+        currency: point.currency,
+      },
+    });
+
+    if (alreadyExists) {
+      duplicatesSkipped += 1;
+    } else {
+      recordsInserted += 1;
+    }
+  }
+
+  await prisma.marketPriceImport.create({
+    data: {
+      biddingZone: DEFAULT_BIDDING_ZONE,
+      periodStart,
+      periodEnd,
+      resolutionMinutes: series.resolutionMinutes,
+      expectedIntervals: series.expectedIntervals,
+      importedIntervals: series.points.length,
+      isPartial: series.isPartial,
+      missingTimestamps: series.missingTimestamps.map((timestamp) => timestamp.toISOString()),
+      source,
+    },
+  });
+
+  console.log(`[${logLabel}] Delivery day processed`, {
+    biddingZone: DEFAULT_BIDDING_ZONE,
+    targetDeliveryDay,
+    source,
+    recordsDownloaded: series.points.length,
+    recordsInserted,
+    duplicatesSkipped,
+    missingIntervals: series.missingTimestamps.length,
+    isPartial: series.isPartial,
+  });
+
+  await recordImporterRun({
+    importerType,
+    organizationId: null,
+    startedAt,
+    status: "SUCCESS",
+    rowsImported: recordsInserted,
+    rowsSkipped: duplicatesSkipped,
+    rowsFailed: series.missingTimestamps.length,
+    details: { targetDeliveryDay, isPartial: series.isPartial, source },
+  });
+
+  return {
+    biddingZone: DEFAULT_BIDDING_ZONE,
+    periodStart,
+    periodEnd,
+    expectedIntervals: series.expectedIntervals,
+    importedIntervals: series.points.length,
+    missingIntervals: series.missingTimestamps.length,
+    isPartial: series.isPartial,
+    recordsInserted,
+    duplicatesSkipped,
+    unavailable: false,
+  };
+}
+
+/**
+ * Fetches and persists one (CET/CEST market day) day-ahead prices from
+ * ENTSO-E (PRIMARY source) for the configured bidding zone. Defaults to
+ * today; pass `referenceDate` to refresh/backfill a past day instead (see
+ * `backfillMarketPrices` below). Idempotent: re-running for the same day
+ * upserts existing `MarketPrice` rows rather than duplicating them, and
+ * always records a fresh `MarketPriceImport` row describing the outcome.
  *
  * Never fabricates or interpolates missing intervals — see
  * `lib/market-price/providers/entsoe.ts` for the validation/partial-import
@@ -121,106 +255,93 @@ export async function refreshMarketPrices(
     throw error;
   }
 
-  // Determined before writing, purely for accurate "inserted vs
-  // duplicate" logging (see step 4/6 of the Continuous ENTSO-E Daily
-  // Price Refresh milestone) - does not change write behavior below,
-  // which still upserts every point exactly as before (self-healing if
-  // ENTSO-E ever revises an already-published value).
-  const existing = await prisma.marketPrice.findMany({
-    where: {
-      biddingZone: DEFAULT_BIDDING_ZONE,
-      source: MARKET_PRICE_SOURCE_ENTSOE,
-      timestamp: { gte: periodStart, lt: periodEnd },
-    },
-    select: { timestamp: true },
-  });
-  const existingTimestamps = new Set(
-    existing.map((row) => row.timestamp.getTime()),
-  );
-
-  let recordsInserted = 0;
-  let duplicatesSkipped = 0;
-
-  for (const point of series.points) {
-    const alreadyExists = existingTimestamps.has(point.timestamp.getTime());
-
-    await prisma.marketPrice.upsert({
-      where: {
-        biddingZone_timestamp_source: {
-          biddingZone: DEFAULT_BIDDING_ZONE,
-          timestamp: point.timestamp,
-          source: MARKET_PRICE_SOURCE_ENTSOE,
-        },
-      },
-      create: {
-        biddingZone: DEFAULT_BIDDING_ZONE,
-        timestamp: point.timestamp,
-        price: point.price,
-        currency: point.currency,
-        source: MARKET_PRICE_SOURCE_ENTSOE,
-      },
-      update: {
-        price: point.price,
-        currency: point.currency,
-      },
-    });
-
-    if (alreadyExists) {
-      duplicatesSkipped += 1;
-    } else {
-      recordsInserted += 1;
-    }
-  }
-
-  await prisma.marketPriceImport.create({
-    data: {
-      biddingZone: DEFAULT_BIDDING_ZONE,
-      periodStart,
-      periodEnd,
-      resolutionMinutes: series.resolutionMinutes,
-      expectedIntervals: series.expectedIntervals,
-      importedIntervals: series.points.length,
-      isPartial: series.isPartial,
-      missingTimestamps: series.missingTimestamps.map((timestamp) =>
-        timestamp.toISOString(),
-      ),
-      source: MARKET_PRICE_SOURCE_ENTSOE,
-    },
-  });
-
-  console.log("[Market Price Refresh] Delivery day processed", {
-    biddingZone: DEFAULT_BIDDING_ZONE,
-    targetDeliveryDay,
-    recordsDownloaded: series.points.length,
-    recordsInserted,
-    duplicatesSkipped,
-    missingIntervals: series.missingTimestamps.length,
-    isPartial: series.isPartial,
-  });
-
-  await recordImporterRun({
-    importerType: IMPORTER_TYPE,
-    organizationId: null,
-    startedAt,
-    status: "SUCCESS",
-    rowsImported: recordsInserted,
-    rowsSkipped: duplicatesSkipped,
-    rowsFailed: series.missingTimestamps.length,
-    details: { targetDeliveryDay, isPartial: series.isPartial },
-  });
-
-  return {
-    biddingZone: DEFAULT_BIDDING_ZONE,
+  return persistDayAheadSeries({
+    series,
     periodStart,
     periodEnd,
-    expectedIntervals: series.expectedIntervals,
-    importedIntervals: series.points.length,
-    missingIntervals: series.missingTimestamps.length,
-    isPartial: series.isPartial,
-    recordsInserted,
-    duplicatesSkipped,
-    unavailable: false,
-  };
+    source: MARKET_PRICE_SOURCE_ENTSOE,
+    importerType: IMPORTER_TYPE,
+    targetDeliveryDay,
+    startedAt,
+    logLabel: "Market Price Refresh",
+  });
+}
+
+/**
+ * The IBEX counterpart of `refreshMarketPrices` — SECONDARY/FALLBACK only,
+ * never called on its own by any scheduled trigger; only
+ * `ensureMarketPricesForBulgariaDays` calls this, and only after an
+ * ENTSO-E attempt for the same CET day has already failed, been
+ * unavailable, or left the day incomplete. Same CET-day framing, same
+ * persistence path (`persistDayAheadSeries`), same idempotency guarantee -
+ * the only difference is the provider and the `source` column value.
+ */
+export async function refreshMarketPricesFromIbex(
+  referenceDate = new Date(),
+): Promise<MarketPriceRefreshResult> {
+  const startedAt = new Date();
+  const { start: periodStart, end: periodEnd } = localDayBoundsUtc(
+    referenceDate,
+    ENTSOE_MARKET_TIMEZONE,
+  );
+  const targetDeliveryDay = formatDateInZone(periodStart, ENTSOE_MARKET_TIMEZONE);
+
+  let series;
+
+  try {
+    series = await fetchIbexDayAheadPrices({ periodStart, periodEnd });
+  } catch (error) {
+    if (error instanceof IbexNoDataAvailableError) {
+      console.log("[Market Price Refresh] No IBEX data available yet", {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        targetDeliveryDay,
+        reason: error.message,
+      });
+
+      await recordImporterRun({
+        importerType: IBEX_IMPORTER_TYPE,
+        organizationId: null,
+        startedAt,
+        status: "SKIPPED",
+        details: { targetDeliveryDay, reason: error.message },
+      });
+
+      return {
+        biddingZone: DEFAULT_BIDDING_ZONE,
+        periodStart,
+        periodEnd,
+        expectedIntervals: 0,
+        importedIntervals: 0,
+        missingIntervals: 0,
+        isPartial: true,
+        recordsInserted: 0,
+        duplicatesSkipped: 0,
+        unavailable: true,
+      };
+    }
+
+    await recordImporterRun({
+      importerType: IBEX_IMPORTER_TYPE,
+      organizationId: null,
+      startedAt,
+      status: "FAILED",
+      errorMessage: error instanceof Error ? error.message : "unknown_error",
+      details: { targetDeliveryDay },
+    });
+
+    throw error;
+  }
+
+  return persistDayAheadSeries({
+    series,
+    periodStart,
+    periodEnd,
+    source: MARKET_PRICE_SOURCE_IBEX,
+    importerType: IBEX_IMPORTER_TYPE,
+    targetDeliveryDay,
+    startedAt,
+    logLabel: "Market Price Refresh (IBEX fallback)",
+  });
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
@@ -307,13 +428,20 @@ export async function backfillMarketPrices(
  * it. A CET day with no `MarketPriceImport` row at all (never successfully
  * imported, or only ever hit `EntsoeNoDataAvailableError`/a thrown
  * `EntsoeApiError` — neither of which ever creates a row) is correctly
- * treated as incomplete. Read-only — makes no ENTSO-E request.
+ * treated as incomplete. Read-only — makes no ENTSO-E/IBEX request.
+ *
+ * IBEX Fallback milestone: deliberately NOT filtered by `source`. A CET
+ * day completed via the IBEX fallback is exactly as "done" as one
+ * completed via ENTSO-E - checking either source here is what makes every
+ * caller of this function (the trailing recovery sweep, the on-demand
+ * safeguard) correctly stop retrying ENTSO-E once IBEX has already filled
+ * the gap, instead of endlessly re-attempting a source that keeps failing
+ * while a complete dataset already exists under the other one.
  */
 async function isCetDayImportComplete(periodStart: Date): Promise<boolean> {
   const completeImport = await prisma.marketPriceImport.findFirst({
     where: {
       biddingZone: DEFAULT_BIDDING_ZONE,
-      source: MARKET_PRICE_SOURCE_ENTSOE,
       periodStart,
       isPartial: false,
     },
@@ -379,11 +507,33 @@ function bulgariaDayCetComponents(
  * ENTSO-E request, no wasted call), which is what makes it safe for
  * `recoverRecentIncompleteDays` below to call this on every scheduled run
  * without turning the daily scheduler into a repeated full re-import.
+ *
+ * IBEX Fallback milestone: ENTSO-E remains PRIMARY - it is always tried
+ * first for a CET day that isn't already complete. Only if that attempt
+ * fails, times out, reports no data, or leaves the day partial does this
+ * function fall back to IBEX for that SAME CET day (never per-interval -
+ * `refreshMarketPricesFromIbex` always fetches the entire day, exactly
+ * like `refreshMarketPrices`). If IBEX also fails, the day is left
+ * incomplete and this function reports it via `imported: false`/`errors`,
+ * same as before - nothing here ever fabricates or partially substitutes
+ * a price.
+ *
+ * `overrides` exist only for tests - production callers always get the
+ * real completeness check and the real ENTSO-E/IBEX refresh functions.
  */
 export async function ensureMarketPricesForBulgariaDays(
   dayStarts: Date[],
   deadline?: number,
-): Promise<{ imported: boolean; errors: string[] }> {
+  overrides: {
+    isComplete?: (periodStart: Date) => Promise<boolean>;
+    refreshEntsoe?: (referenceInstant: Date) => Promise<MarketPriceRefreshResult>;
+    refreshIbex?: (referenceInstant: Date) => Promise<MarketPriceRefreshResult>;
+  } = {},
+): Promise<{ imported: boolean; errors: string[]; fallbackUsed: boolean }> {
+  const isComplete = overrides.isComplete ?? isCetDayImportComplete;
+  const refreshEntsoe = overrides.refreshEntsoe ?? refreshMarketPrices;
+  const refreshIbex = overrides.refreshIbex ?? refreshMarketPricesFromIbex;
+
   const cetReferenceInstants = new Map<number, Date>();
 
   for (const dayStart of dayStarts) {
@@ -394,28 +544,48 @@ export async function ensureMarketPricesForBulgariaDays(
 
   const errors: string[] = [];
   let imported = true;
+  let fallbackUsed = false;
 
   for (const [cetDayStartMs, referenceInstant] of cetReferenceInstants) {
     if (deadline !== undefined && Date.now() >= deadline) {
       break;
     }
 
-    if (await isCetDayImportComplete(new Date(cetDayStartMs))) {
+    if (await isComplete(new Date(cetDayStartMs))) {
       continue;
     }
 
+    let dayComplete = false;
+
     try {
-      const result = await refreshMarketPrices(referenceInstant);
-      if (result.unavailable) {
-        imported = false;
+      const result = await refreshEntsoe(referenceInstant);
+
+      if (!result.unavailable && !result.isPartial) {
+        dayComplete = true;
       }
     } catch (error) {
+      errors.push(`ENTSO-E: ${error instanceof Error ? error.message : "unknown_error"}`);
+    }
+
+    if (!dayComplete) {
+      try {
+        const ibexResult = await refreshIbex(referenceInstant);
+
+        if (!ibexResult.unavailable && !ibexResult.isPartial) {
+          dayComplete = true;
+          fallbackUsed = true;
+        }
+      } catch (error) {
+        errors.push(`IBEX: ${error instanceof Error ? error.message : "unknown_error"}`);
+      }
+    }
+
+    if (!dayComplete) {
       imported = false;
-      errors.push(error instanceof Error ? error.message : "unknown_error");
     }
   }
 
-  return { imported, errors };
+  return { imported, errors, fallbackUsed };
 }
 
 const BULGARIA_TIMEZONE = "Europe/Sofia";
@@ -471,9 +641,11 @@ const TRAILING_RECOVERY_WINDOW_DAYS = 2;
  * still genuinely invalid is rejected exactly as before and simply
  * remains eligible for the next scheduled run to try again.
  */
+export type RecoverySweepResult = { imported: boolean; errors: string[]; fallbackUsed: boolean };
+
 export async function recoverRecentIncompleteDays(
   referenceDate = new Date(),
-): Promise<{ imported: boolean; errors: string[] }> {
+): Promise<RecoverySweepResult> {
   const dayStarts: Date[] = [];
 
   for (let daysAgo = 1; daysAgo <= TRAILING_RECOVERY_WINDOW_DAYS; daysAgo += 1) {
@@ -486,7 +658,7 @@ export async function recoverRecentIncompleteDays(
 
 export type ScheduledTomorrowRefreshResult = {
   result: MarketPriceRefreshResult;
-  recovery: { imported: boolean; errors: string[] } | null;
+  recovery: RecoverySweepResult | null;
   recoveryError: unknown;
 };
 
@@ -509,7 +681,7 @@ export async function refreshTomorrowWithTrailingRecovery(
   referenceDate: Date = new Date(Date.now() + ONE_DAY_MS),
   overrides: {
     refresh?: () => Promise<MarketPriceRefreshResult>;
-    recover?: () => Promise<{ imported: boolean; errors: string[] }>;
+    recover?: () => Promise<RecoverySweepResult>;
   } = {},
 ): Promise<ScheduledTomorrowRefreshResult> {
   const refresh = overrides.refresh ?? (() => refreshMarketPrices(referenceDate));
@@ -524,7 +696,7 @@ export async function refreshTomorrowWithTrailingRecovery(
     primaryError = error;
   }
 
-  let recovery: { imported: boolean; errors: string[] } | null = null;
+  let recovery: RecoverySweepResult | null = null;
   let recoveryError: unknown;
 
   try {

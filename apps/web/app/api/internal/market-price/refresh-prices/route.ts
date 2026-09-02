@@ -8,6 +8,7 @@ import {
   refreshMarketPrices,
   refreshTomorrowWithTrailingRecovery,
   type MarketPriceRefreshResult,
+  type RecoverySweepResult,
 } from "@/lib/market-price/refresh-market-prices";
 import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
 import { reportSchedulerOutcome, type MarketPriceRunStatus } from "@/lib/market-price/market-price-notifications";
@@ -124,12 +125,14 @@ async function handleRefresh(request: Request) {
     // call), only for this scheduled path. A primary-import failure is
     // still rethrown after recovery has been attempted, so it's handled by
     // the existing catch block below exactly as before.
-    let recovery: { imported: boolean; errors: string[] } | null = null;
+    let recovery: RecoverySweepResult | null = null;
+    let recoveryFallbackUsed = false;
 
     const result = targetsTomorrow
       ? await (async () => {
           const outcome = await refreshTomorrowWithTrailingRecovery();
           recovery = outcome.recovery;
+          recoveryFallbackUsed = outcome.recovery?.fallbackUsed ?? false;
 
           if (outcome.recoveryError) {
             console.error("[Market Price Refresh] Trailing-day recovery sweep failed unexpectedly", {
@@ -185,6 +188,14 @@ async function handleRefresh(request: Request) {
           ? `Incomplete dataset: ${tomorrowResult.importedIntervals}/${tomorrowResult.expectedIntervals} intervals received`
           : null;
 
+      // IBEX Fallback milestone: the trailing recovery sweep (a different
+      // delivery day than this "tomorrow" primary fetch) may have used the
+      // IBEX fallback this same cycle - surfaced here for observability
+      // rather than a separate alert, per "primary source failed / fallback
+      // source succeeded / market data available" not being its own
+      // incident.
+      const recoveryUsedFallback = recoveryFallbackUsed;
+
       await reportSchedulerOutcome(
         SCHEDULER_NAME,
         {
@@ -195,6 +206,10 @@ async function handleRefresh(request: Request) {
           expectedIntervals: tomorrowResult.expectedIntervals,
           importedIntervals: tomorrowResult.importedIntervals,
           reason,
+          primarySource: "ENTSOE",
+          fallbackAttempted: recoveryUsedFallback,
+          fallbackSource: recoveryUsedFallback ? "IBEX" : null,
+          finalStatus: runStatus === "SUCCESS" ? "primary" : "failed",
         },
         deadline,
       );
@@ -238,6 +253,8 @@ async function handleRefresh(request: Request) {
           expectedIntervals: null,
           importedIntervals: null,
           reason: error instanceof Error ? error.message : "unknown_error",
+          primarySource: "ENTSOE",
+          finalStatus: "failed",
         },
         deadline,
       );

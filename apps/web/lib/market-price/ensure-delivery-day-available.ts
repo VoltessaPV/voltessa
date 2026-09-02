@@ -42,25 +42,32 @@ const MIN_RECOVERY_DATE = "2026-07-01";
 
 /**
  * Dashboard/Market page budget: this runs inline in a page request, so it
- * must not risk a platform function timeout. Chosen well under the
- * shortest realistic Vercel function timeout, while still giving one full
- * ENTSO-E attempt (`ENTSOE_REQUEST_TIMEOUT_MS` = 15s in
- * `providers/entsoe.ts`) a real chance to complete for at least one of the
- * (up to 2) CET-day components before giving up - a request that times out
- * here simply falls through to the existing "unavailable" rendering, it
- * never hangs the page.
+ * must not risk a platform function timeout. IBEX Fallback milestone:
+ * raised from 8s to 20s (and `vercel.json` now gives the Market page an
+ * explicit `maxDuration: 30`, mirroring the existing
+ * `admin/historical-imports` entry for the same reason) because a
+ * worst-case attempt is no longer a single ENTSO-E call - it can be an
+ * ENTSO-E attempt (`ENTSOE_REQUEST_TIMEOUT_MS` = 15s) FOLLOWED BY the IBEX
+ * fallback's own 3-step handshake (`IBEX_REQUEST_TIMEOUT_MS` = 10s per
+ * step in `providers/ibex.ts`) for the same CET day. A request that still
+ * times out here simply falls through to the existing "unavailable"
+ * rendering - it never hangs the page, and the wrapping advisory-lock
+ * transaction (`withBulgariaDeliveryDayLock`) is bounded to
+ * `deadlineMs + LOCK_TRANSACTION_OVERHEAD_MS` regardless, so this can never
+ * run away indefinitely even if a step above ever forgot its own timeout.
  */
-export const DASHBOARD_RECOVERY_DEADLINE_MS = 8_000;
+export const DASHBOARD_RECOVERY_DEADLINE_MS = 20_000;
 
 /**
  * Automation budget: this runs once at the start of a 15-minute scheduler
  * cycle (`market-price-optimization-scheduler.ts`), so it must leave a wide
- * margin before the next cycle fires - 60s is <7% of that 15-minute window
- * even in the worst case (both CET-day components needing a full retry),
- * comfortably bounded, while still large enough to actually succeed most of
- * the time a same-day gap is discovered.
+ * margin before the next cycle fires. IBEX Fallback milestone: raised from
+ * 60s to 90s for the same reason as the dashboard budget above (ENTSO-E
+ * attempt + IBEX's multi-step fallback, per CET day) - still only 10% of
+ * the 15-minute window even in the worst case (both CET-day components
+ * needing both providers), comfortably bounded.
  */
-export const AUTOMATION_RECOVERY_DEADLINE_MS = 60_000;
+export const AUTOMATION_RECOVERY_DEADLINE_MS = 90_000;
 
 /** Extra time given to the wrapping transaction beyond the recovery deadline itself, for lock-wait and query overhead. */
 const LOCK_TRANSACTION_OVERHEAD_MS = 5_000;

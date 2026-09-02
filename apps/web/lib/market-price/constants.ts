@@ -22,6 +22,15 @@ export const DEFAULT_BIDDING_ZONE = "10YCA-BULGARIA-R";
 export const MARKET_PRICE_SOURCE_ENTSOE = "ENTSOE";
 
 /**
+ * IBEX (Independent Bulgarian Energy Exchange) - the secondary/fallback
+ * source, only ever used when ENTSO-E fails or leaves a delivery day
+ * incomplete (see `lib/market-price/providers/ibex.ts`). Same
+ * `MarketPrice.source`/`MarketPriceImport.source` column ENTSO-E already
+ * uses - no schema change, this is exactly what that field is for.
+ */
+export const MARKET_PRICE_SOURCE_IBEX = "IBEX";
+
+/**
  * Bidding zones the Market page's country selector can offer. Only one
  * entry today (the MVP scope is Bulgaria only) - adding a second country
  * later is adding an entry here plus wiring its own importer schedule,

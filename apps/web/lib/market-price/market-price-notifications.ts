@@ -45,8 +45,12 @@ export type MarketPriceIncidentContext = {
   expectedIntervals: number | null;
   importedIntervals: number | null;
   reason: string | null;
+  /** IBEX Fallback milestone: which source was tried first - always "ENTSOE" today, kept explicit rather than assumed. */
+  primarySource?: string;
   fallbackAttempted?: boolean;
   fallbackSource?: string | null;
+  /** IBEX Fallback milestone: how the delivery day was ultimately (or not yet) resolved. */
+  finalStatus?: "primary" | "fallback" | "failed";
   consecutiveFailures?: number;
   /** Wall-clock time since the incident first opened, for the "recovered" and "escalated" alerts. */
   incidentDurationMs?: number;
@@ -169,7 +173,15 @@ function formatContextLines(ctx: MarketPriceIncidentContext): string[] {
     lines.push(`Incident duration: ${formatDurationMs(ctx.incidentDurationMs)}`);
   }
 
+  if (ctx.primarySource) {
+    lines.push(`Primary source: ${ctx.primarySource}`);
+  }
+
   lines.push(`Fallback attempted: ${ctx.fallbackAttempted ? (ctx.fallbackSource ?? "yes") : "no"}`);
+
+  if (ctx.finalStatus) {
+    lines.push(`Final status: ${ctx.finalStatus}`);
+  }
 
   if (ctx.reason) {
     lines.push(`Reason: ${ctx.reason}`);
