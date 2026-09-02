@@ -115,6 +115,11 @@
       "title": "Voltessa Gateway",
       "description": "Connect through a Voltessa Gateway.",
       "button": "Continue with Voltessa Gateway"
+    },
+    "other": {
+      "title": "Another vendor",
+      "description": "Using a different inverter or monitoring platform? Get in touch and we'll help you connect it.",
+      "button": "Call us"
     }
   },
   "connectIsolarcloudPage": {

@@ -115,6 +115,11 @@
       "title": "Voltessa Gateway",
       "description": "Свързване през Voltessa Gateway.",
       "button": "Продължи с Voltessa Gateway"
+    },
+    "other": {
+      "title": "Друг производител",
+      "description": "Използвате друг инвертор или платформа за мониторинг? Свържете се с нас и ще ви помогнем да го свържете.",
+      "button": "Обадете ни се"
     }
   },
   "connectIsolarcloudPage": {

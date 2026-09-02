@@ -3,6 +3,7 @@ import { Link } from "@/lib/i18n/navigation";
 
 import { Permissions } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/session";
+import { SUPPORT_EMAIL } from "@/lib/constants";
 
 /**
  * Connection-Type Selection milestone. The entry point every "Connect
@@ -23,9 +24,18 @@ import { requirePermission } from "@/lib/auth/session";
  * which redirects onward) - those use a plain <a> the same way the old
  * ConnectFusionSolarButton did, so Link's prefetching can never start an
  * OAuth flow early. Internal destinations (Voltessa Gateway) use Link.
+ *
+ * "other" (Unsupported Vendor Contact Path milestone) is not a connection
+ * type at all - it creates no integration, calls no vendor API, and never
+ * touches plant configuration. It's a plain `mailto:` to the same
+ * `SUPPORT_EMAIL` the site Footer already links to (no second contact
+ * mechanism introduced), rendered through the exact same `external: true`
+ * card/button markup every other entry already uses - deliberately not a
+ * dialog: this page is a Server Component with no client-side state today,
+ * and a plain mailto link needs none either.
  */
 type ConnectionType = {
-  id: "huawei" | "sungrow" | "gateway";
+  id: "huawei" | "sungrow" | "gateway" | "other";
   href: string;
   external?: boolean;
 };
@@ -34,6 +44,7 @@ const CONNECTION_TYPES: ConnectionType[] = [
   { id: "huawei", href: "/api/auth/fusionsolar/connect", external: true },
   { id: "sungrow", href: "/api/auth/isolarcloud/connect", external: true },
   { id: "gateway", href: "/plants/connect/gateway" },
+  { id: "other", href: `mailto:${SUPPORT_EMAIL}`, external: true },
 ];
 
 export default async function ConnectPlantPage() {
