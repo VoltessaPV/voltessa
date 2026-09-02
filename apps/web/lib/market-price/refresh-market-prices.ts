@@ -656,8 +656,79 @@ export async function recoverRecentIncompleteDays(
   return ensureMarketPricesForBulgariaDays(dayStarts);
 }
 
+export type PrimaryCetDayResult = { result: MarketPriceRefreshResult; fallbackUsed: boolean };
+
+/**
+ * Scheduler Operational Resilience milestone. Refreshes the PRIMARY
+ * scheduled CET day (the "tomorrow" target the 14:00 Europe/Sofia timer,
+ * and its now-hourly retries via the VM poll script, are trying to
+ * complete) - ENTSO-E first, falling back to IBEX only if ENTSO-E fails,
+ * is unavailable, or leaves the day partial. Never per-interval - always
+ * the full CET day, exactly like `refreshMarketPrices`/
+ * `refreshMarketPricesFromIbex` themselves.
+ *
+ * This exists as a small, separate function - not shared code with
+ * `ensureMarketPricesForBulgariaDays`'s own per-CET-day fallback loop
+ * below, to avoid touching that already-tested logic - so that EVERY
+ * scheduled attempt for the delivery day currently being completed tries
+ * IBEX immediately once ENTSO-E is confirmed incomplete, rather than only
+ * the trailing-day recovery sweep doing so (which only ever looks at the
+ * last 2 Bulgaria-local days, never "tomorrow" itself).
+ *
+ * Never swallows a "both sources failed" outcome into a false success: if
+ * ENTSO-E fails/is unavailable/partial AND IBEX also fails outright
+ * (throws), this throws too, preserving the caller's existing FAILED-run
+ * handling with both reasons combined. If IBEX itself only reports
+ * unavailable/partial without throwing, that result is returned as-is -
+ * still correctly incomplete, never marked done.
+ *
+ * `overrides` exist only for tests - production callers always get the
+ * real `refreshMarketPrices`/`refreshMarketPricesFromIbex`.
+ */
+export async function refreshPrimaryCetDayWithFallback(
+  referenceDate: Date,
+  overrides: {
+    refreshEntsoe?: (referenceInstant: Date) => Promise<MarketPriceRefreshResult>;
+    refreshIbex?: (referenceInstant: Date) => Promise<MarketPriceRefreshResult>;
+  } = {},
+): Promise<PrimaryCetDayResult> {
+  const refreshEntsoe = overrides.refreshEntsoe ?? refreshMarketPrices;
+  const refreshIbex = overrides.refreshIbex ?? refreshMarketPricesFromIbex;
+
+  let entsoeResult: MarketPriceRefreshResult | undefined;
+  let entsoeError: unknown;
+
+  try {
+    entsoeResult = await refreshEntsoe(referenceDate);
+  } catch (error) {
+    entsoeError = error;
+  }
+
+  if (entsoeResult && !entsoeResult.unavailable && !entsoeResult.isPartial) {
+    return { result: entsoeResult, fallbackUsed: false };
+  }
+
+  try {
+    const ibexResult = await refreshIbex(referenceDate);
+    return { result: ibexResult, fallbackUsed: true };
+  } catch (ibexError) {
+    const entsoeMessage =
+      entsoeError instanceof Error
+        ? entsoeError.message
+        : entsoeError
+          ? String(entsoeError)
+          : entsoeResult
+            ? `incomplete/unavailable (${entsoeResult.importedIntervals}/${entsoeResult.expectedIntervals})`
+            : "unknown";
+    const ibexMessage = ibexError instanceof Error ? ibexError.message : String(ibexError);
+
+    throw new Error(`ENTSO-E: ${entsoeMessage}; IBEX: ${ibexMessage}`);
+  }
+}
+
 export type ScheduledTomorrowRefreshResult = {
   result: MarketPriceRefreshResult;
+  primaryFallbackUsed: boolean;
   recovery: RecoverySweepResult | null;
   recoveryError: unknown;
 };
@@ -673,25 +744,36 @@ export type ScheduledTomorrowRefreshResult = {
  * Recovery is now always attempted, even when the primary import throws.
  * The primary error is still rethrown afterward (never swallowed), so the
  * route's existing FAILED `SchedulerRun` / error-response handling for the
- * primary import is unchanged. `refresh`/`recover` overrides exist only for
- * tests — production callers always get the real
- * `refreshMarketPrices`/`recoverRecentIncompleteDays`.
+ * primary import is unchanged.
+ *
+ * Scheduler Operational Resilience milestone: the primary step itself now
+ * goes through `refreshPrimaryCetDayWithFallback` (ENTSO-E then IBEX for
+ * "tomorrow"), not `refreshMarketPrices` alone - see that function's own
+ * doc comment for why this is a separate concern from the trailing
+ * recovery sweep's own, pre-existing fallback.
+ *
+ * `refresh`/`recover` overrides exist only for tests — production callers
+ * always get the real `refreshPrimaryCetDayWithFallback`/
+ * `recoverRecentIncompleteDays`.
  */
 export async function refreshTomorrowWithTrailingRecovery(
   referenceDate: Date = new Date(Date.now() + ONE_DAY_MS),
   overrides: {
-    refresh?: () => Promise<MarketPriceRefreshResult>;
+    refresh?: () => Promise<PrimaryCetDayResult>;
     recover?: () => Promise<RecoverySweepResult>;
   } = {},
 ): Promise<ScheduledTomorrowRefreshResult> {
-  const refresh = overrides.refresh ?? (() => refreshMarketPrices(referenceDate));
+  const refresh = overrides.refresh ?? (() => refreshPrimaryCetDayWithFallback(referenceDate));
   const recover = overrides.recover ?? (() => recoverRecentIncompleteDays());
 
   let result: MarketPriceRefreshResult | undefined;
+  let primaryFallbackUsed = false;
   let primaryError: unknown;
 
   try {
-    result = await refresh();
+    const outcome = await refresh();
+    result = outcome.result;
+    primaryFallbackUsed = outcome.fallbackUsed;
   } catch (error) {
     primaryError = error;
   }
@@ -709,7 +791,7 @@ export async function refreshTomorrowWithTrailingRecovery(
     throw primaryError;
   }
 
-  return { result: result!, recovery, recoveryError };
+  return { result: result!, primaryFallbackUsed, recovery, recoveryError };
 }
 
 /**

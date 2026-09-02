@@ -127,12 +127,14 @@ async function handleRefresh(request: Request) {
     // the existing catch block below exactly as before.
     let recovery: RecoverySweepResult | null = null;
     let recoveryFallbackUsed = false;
+    let primaryUsedIbexFallback = false;
 
     const result = targetsTomorrow
       ? await (async () => {
           const outcome = await refreshTomorrowWithTrailingRecovery();
           recovery = outcome.recovery;
           recoveryFallbackUsed = outcome.recovery?.fallbackUsed ?? false;
+          primaryUsedIbexFallback = outcome.primaryFallbackUsed;
 
           if (outcome.recoveryError) {
             console.error("[Market Price Refresh] Trailing-day recovery sweep failed unexpectedly", {
@@ -188,13 +190,14 @@ async function handleRefresh(request: Request) {
           ? `Incomplete dataset: ${tomorrowResult.importedIntervals}/${tomorrowResult.expectedIntervals} intervals received`
           : null;
 
-      // IBEX Fallback milestone: the trailing recovery sweep (a different
-      // delivery day than this "tomorrow" primary fetch) may have used the
-      // IBEX fallback this same cycle - surfaced here for observability
-      // rather than a separate alert, per "primary source failed / fallback
-      // source succeeded / market data available" not being its own
-      // incident.
-      const recoveryUsedFallback = recoveryFallbackUsed;
+      // Scheduler Operational Resilience milestone: `result` may itself
+      // already be IBEX-sourced (`primaryUsedIbexFallback`) if ENTSO-E
+      // failed/was unavailable/left this exact delivery day partial this
+      // cycle - that is an overall SUCCESS for the day, never reported as
+      // a failure merely because ENTSO-E didn't provide it. The trailing
+      // recovery sweep's own (separate day's) fallback usage is still
+      // surfaced too, for observability, without being its own alert.
+      const fallbackUsedThisCycle = primaryUsedIbexFallback || recoveryFallbackUsed;
 
       await reportSchedulerOutcome(
         SCHEDULER_NAME,
@@ -202,14 +205,14 @@ async function handleRefresh(request: Request) {
           status: runStatus,
           startedAt,
           deliveryDate: formatDateInZone(tomorrowResult.periodStart, ENTSOE_MARKET_TIMEZONE),
-          source: "ENTSOE",
+          source: primaryUsedIbexFallback ? "IBEX" : "ENTSOE",
           expectedIntervals: tomorrowResult.expectedIntervals,
           importedIntervals: tomorrowResult.importedIntervals,
           reason,
           primarySource: "ENTSOE",
-          fallbackAttempted: recoveryUsedFallback,
-          fallbackSource: recoveryUsedFallback ? "IBEX" : null,
-          finalStatus: runStatus === "SUCCESS" ? "primary" : "failed",
+          fallbackAttempted: fallbackUsedThisCycle,
+          fallbackSource: fallbackUsedThisCycle ? "IBEX" : null,
+          finalStatus: runStatus === "SUCCESS" ? (primaryUsedIbexFallback ? "fallback" : "primary") : "failed",
         },
         deadline,
       );

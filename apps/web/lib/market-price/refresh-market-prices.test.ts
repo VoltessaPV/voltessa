@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   computeRecoveryDeadline,
   ensureMarketPricesForBulgariaDays,
+  refreshPrimaryCetDayWithFallback,
   refreshTomorrowWithTrailingRecovery,
   type MarketPriceRefreshResult,
 } from "./refresh-market-prices";
@@ -193,4 +194,74 @@ test("12. a provider that only returns a partial result never counts as recovere
   });
 
   assert.equal(outcome.imported, false);
+});
+
+// --- Scheduler Operational Resilience: refreshPrimaryCetDayWithFallback ---
+// This is the PRIMARY "tomorrow" step the 14:00 timer (and its hourly VM
+// retries) run - distinct from ensureMarketPricesForBulgariaDays's own
+// trailing-recovery fallback tested above, since only this function's
+// wiring makes the scheduled primary attempt itself try IBEX.
+
+test("primary: ENTSO-E success -> IBEX is not called", async () => {
+  let ibexCalled = false;
+
+  const outcome = await refreshPrimaryCetDayWithFallback(PERIOD_START, {
+    refreshEntsoe: async () => fakeResult(),
+    refreshIbex: async () => {
+      ibexCalled = true;
+      return fakeResult();
+    },
+  });
+
+  assert.equal(ibexCalled, false);
+  assert.equal(outcome.fallbackUsed, false);
+  assert.equal(outcome.result.isPartial, false);
+});
+
+test("primary: ENTSO-E failure (throws) + IBEX success -> overall success via fallback", async () => {
+  const outcome = await refreshPrimaryCetDayWithFallback(PERIOD_START, {
+    refreshEntsoe: async () => {
+      throw new Error("ENTSO-E API request failed with status 503");
+    },
+    refreshIbex: async () => fakeResult(),
+  });
+
+  assert.equal(outcome.fallbackUsed, true);
+  assert.equal(outcome.result.isPartial, false);
+  assert.equal(outcome.result.unavailable, false);
+});
+
+test("primary: ENTSO-E unavailable (no throw) + IBEX success -> overall success via fallback", async () => {
+  const outcome = await refreshPrimaryCetDayWithFallback(PERIOD_START, {
+    refreshEntsoe: async () => fakeResult({ unavailable: true, isPartial: true, importedIntervals: 0 }),
+    refreshIbex: async () => fakeResult(),
+  });
+
+  assert.equal(outcome.fallbackUsed, true);
+  assert.equal(outcome.result.unavailable, false);
+});
+
+test("primary: ENTSO-E incomplete (partial) + IBEX complete -> complete day via fallback", async () => {
+  const outcome = await refreshPrimaryCetDayWithFallback(PERIOD_START, {
+    refreshEntsoe: async () => fakeResult({ isPartial: true, importedIntervals: 90, missingIntervals: 6 }),
+    refreshIbex: async () => fakeResult(),
+  });
+
+  assert.equal(outcome.fallbackUsed, true);
+  assert.equal(outcome.result.isPartial, false);
+});
+
+test("primary: ENTSO-E failure + IBEX failure -> rejects (unsuccessful and retryable), never a false success", async () => {
+  await assert.rejects(
+    () =>
+      refreshPrimaryCetDayWithFallback(PERIOD_START, {
+        refreshEntsoe: async () => {
+          throw new Error("ENTSO-E down");
+        },
+        refreshIbex: async () => {
+          throw new Error("IBEX down");
+        },
+      }),
+    /ENTSO-E: ENTSO-E down; IBEX: IBEX down/,
+  );
 });
