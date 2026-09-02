@@ -105,7 +105,7 @@ async function withBulgariaDeliveryDayLock(
 
   await prisma.$transaction(
     async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${RECOVERY_LOCK_NAMESPACE}, ${lockKey})`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${RECOVERY_LOCK_NAMESPACE}::int, ${lockKey}::int)`;
       await fn();
     },
     { timeout: timeoutMs, maxWait: timeoutMs },
