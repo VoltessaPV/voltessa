@@ -104,10 +104,10 @@ export default async function AutomationsPage() {
   const identity = await requireCurrentUser();
 
   if (identity.accountType === "ENERGY_TRADER") {
-    const access = await requireTraderOrganizationAccess();
+    const access = await requireTraderOrganizationAccess(identity);
     return renderAutomations(access.organizationId, true);
   }
 
-  const user = await requirePermission(Permissions.canManagePlants);
+  const user = await requirePermission(Permissions.canManagePlants, identity);
   return renderAutomations(user.organizationId, false);
 }

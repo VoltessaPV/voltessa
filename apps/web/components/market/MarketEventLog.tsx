@@ -3,10 +3,16 @@
 import { History } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import {
-  BULGARIA_TIMEZONE,
-  type MarketEventLogEntry,
-} from "@/app/[locale]/(platform)/market/market-data";
+import type { MarketEventLogEntry } from "@/app/[locale]/(platform)/market/market-data";
+
+// Duplicated locally rather than imported - same convention already used by
+// dashboard-data.ts/production-data.ts (module independence). Load-bearing
+// here specifically: market-data.ts now transitively imports Next.js's
+// server-only `after()` (Production Latency Architecture milestone), and a
+// value import from a client component would pull that into the client
+// bundle - a type-only import (above) is erased at compile time and never
+// hits this problem.
+const BULGARIA_TIMEZONE = "Europe/Sofia";
 
 type MarketEventLogProps = {
   entries: MarketEventLogEntry[];

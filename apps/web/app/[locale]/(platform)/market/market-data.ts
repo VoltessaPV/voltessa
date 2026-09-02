@@ -547,14 +547,19 @@ export async function getMarketPageData(params: {
   // `periodStart`'s Bulgaria-local day is already complete, out of the
   // allowed recovery range, or in the future - only ever does real work
   // (behind its own advisory lock) when this specific browsed/dashboard day
-  // is genuinely missing or incomplete. Awaited BEFORE the reads below so a
-  // freshly-recovered day is what this request actually sees, not stale
-  // "unavailable" data from before recovery ran.
-  await ensureBulgariaDeliveryDayAvailable(periodStart, DASHBOARD_RECOVERY_DEADLINE_MS);
-
-  // These reads don't depend on each other's results (only the subsequent
-  // processing below does) — fetched in parallel instead of four
-  // sequential round trips.
+  // is genuinely missing or incomplete.
+  //
+  // Production Latency Architecture milestone: `mode: "background"` - this
+  // call only ever performs a cheap, indexed completeness check inline (no
+  // different from the other reads below); if the day is incomplete, the
+  // real ENTSO-E/IBEX recovery is deferred via `after()` and this render
+  // NEVER waits for it. That means a genuinely missing/incomplete day
+  // renders as unavailable THIS request (the existing `!dayAheadResult
+  // .available` handling below, unchanged) and is healed in the background
+  // for the next one to see - this page must never block on an external
+  // market-data provider. Folded into the Promise.all below (rather than
+  // awaited first) since its own inline work has no data dependency on, or
+  // from, any of the other reads.
   const [
     dayAheadResult,
     importStatus,
@@ -580,6 +585,9 @@ export async function getMarketPageData(params: {
     getTranslations("market.distribution"),
     getTranslations("market.insights"),
     getTranslations("market.info"),
+    ensureBulgariaDeliveryDayAvailable(periodStart, DASHBOARD_RECOVERY_DEADLINE_MS, {
+      mode: "background",
+    }),
   ]);
 
   if (!dayAheadResult.available) {

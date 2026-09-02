@@ -184,10 +184,12 @@ export async function requireOnboardedUser(identity?: CurrentUser): Promise<Curr
   };
 }
 
+/** `identity` - see `requireOnboardedUser`'s identical parameter doc comment. */
 export async function requirePermission(
   allowedRoles: readonly Role[],
+  identity?: CurrentUser,
 ): Promise<CurrentUserWithOrganization> {
-  const user = await requireOnboardedUser();
+  const user = await requireOnboardedUser(identity);
 
   if (!allowedRoles.includes(user.role)) {
     forbidden();

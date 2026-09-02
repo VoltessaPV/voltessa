@@ -172,3 +172,156 @@ test("7b. a recovery that reports failure without throwing also never fabricates
 
   assert.equal(secondCompleteCheck, false);
 });
+
+// --- Production Latency Architecture: mode: "background" ---
+// Every real production caller (Market/Dashboard via market-data.ts, the
+// Market Price Optimization scheduler) uses this mode. `mode: "blocking"`
+// (tests 1-7b above, the default when `mode` is omitted) is preserved
+// unchanged for backward compatibility.
+
+test("8. background mode returns before the deferred recovery runs at all - the caller never waits on ENTSO-E/IBEX", async () => {
+  let scheduledTask: (() => Promise<void>) | undefined;
+  let recoverCalled = false;
+
+  await ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+    now: () => FIXED_NOW,
+    isComplete: async () => false,
+    recover: async () => {
+      recoverCalled = true;
+      return { imported: true, errors: [] };
+    },
+    withLock: passthroughLock,
+    mode: "background",
+    // Mirrors Next.js `after()`'s fire-and-forget contract without needing
+    // a real request scope: capture the deferred work instead of running
+    // it inline.
+    schedule: (fn) => {
+      scheduledTask = fn;
+    },
+  });
+
+  // The outer call already resolved without the scheduled recovery having
+  // run at all - proof the caller did not wait for ENTSO-E/IBEX.
+  assert.equal(recoverCalled, false);
+  assert.ok(scheduledTask);
+
+  await scheduledTask?.();
+
+  assert.equal(recoverCalled, true);
+});
+
+test("9. background mode still performs full-day recovery once the deferred task runs", async () => {
+  let scheduledTask: (() => Promise<void>) | undefined;
+  let recoveredDay: Date | null = null;
+
+  await ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+    now: () => FIXED_NOW,
+    isComplete: async () => false,
+    recover: async (day) => {
+      recoveredDay = day;
+      return { imported: true, errors: [] };
+    },
+    withLock: passthroughLock,
+    mode: "background",
+    schedule: (fn) => {
+      scheduledTask = fn;
+    },
+  });
+
+  assert.ok(scheduledTask);
+  await scheduledTask?.();
+
+  assert.ok(recoveredDay);
+  assert.equal((recoveredDay as Date).toISOString(), "2026-09-01T00:00:00.000Z");
+});
+
+test("10. background mode: an already-complete day never schedules anything", async () => {
+  let scheduleCalled = false;
+
+  await ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+    now: () => FIXED_NOW,
+    isComplete: async () => true,
+    recover: async () => ({ imported: true, errors: [] }),
+    withLock: passthroughLock,
+    mode: "background",
+    schedule: () => {
+      scheduleCalled = true;
+    },
+  });
+
+  assert.equal(scheduleCalled, false);
+});
+
+test("11. background mode: concurrent callers for the same day still perform only one provider fetch (real lock semantics preserved)", async () => {
+  let recoverCallCount = 0;
+  let dayIsComplete = false;
+
+  // Models the real pg_advisory_xact_lock's mutual exclusion purely
+  // in-process, same technique as test 6.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serializingLock = (_day: Date, fn: () => Promise<void>) => {
+    const run = queue.then(fn);
+    queue = run.catch(() => undefined);
+    return run;
+  };
+
+  const isComplete = async () => dayIsComplete;
+  const recover = async () => {
+    recoverCallCount += 1;
+    dayIsComplete = true;
+    return { imported: true, errors: [] };
+  };
+
+  const scheduledTasks: Array<() => Promise<void>> = [];
+  const schedule = (fn: () => Promise<void>) => {
+    scheduledTasks.push(fn);
+  };
+
+  await Promise.all([
+    ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+      now: () => FIXED_NOW,
+      isComplete,
+      recover,
+      withLock: serializingLock,
+      mode: "background",
+      schedule,
+    }),
+    ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+      now: () => FIXED_NOW,
+      isComplete,
+      recover,
+      withLock: serializingLock,
+      mode: "background",
+      schedule,
+    }),
+  ]);
+
+  // Both callers observed the day as incomplete before either's deferred
+  // task ran, so both scheduled recovery - exactly what the advisory lock
+  // (and the re-check-after-lock inside it) exists to make safe.
+  assert.equal(scheduledTasks.length, 2);
+
+  await Promise.all(scheduledTasks.map((task) => task()));
+
+  assert.equal(recoverCallCount, 1);
+});
+
+test("12. background mode: a deferred recovery failure is caught, never an unhandled rejection", async () => {
+  let scheduledTask: (() => Promise<void>) | undefined;
+
+  await ensureBulgariaDeliveryDayAvailable(new Date("2026-09-01T00:00:00Z"), 1000, {
+    now: () => FIXED_NOW,
+    isComplete: async () => false,
+    recover: async () => {
+      throw new Error("ENTSO-E: down; IBEX: down");
+    },
+    withLock: passthroughLock,
+    mode: "background",
+    schedule: (fn) => {
+      scheduledTask = fn;
+    },
+  });
+
+  assert.ok(scheduledTask);
+  await assert.doesNotReject(() => scheduledTask!());
+});

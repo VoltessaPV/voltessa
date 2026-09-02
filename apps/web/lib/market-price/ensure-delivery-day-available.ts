@@ -20,7 +20,29 @@
  * adds exactly two things on top: a date-range guard, and a Postgres
  * advisory lock so concurrent callers for the same day never both fire a
  * real ENTSO-E request.
+ *
+ * Production Latency Architecture milestone: this safeguard used to be
+ * awaited inline by Dashboard/Market page render and by the automation
+ * scheduler, which meant a genuinely missing/incomplete day made a
+ * user-facing page (or a 15-minute automation cycle) wait synchronously on
+ * ENTSO-E and/or IBEX - up to `DASHBOARD_RECOVERY_DEADLINE_MS`/
+ * `AUTOMATION_RECOVERY_DEADLINE_MS` plus lock overhead. `mode: "background"`
+ * (every real caller today) keeps the cheap completeness check inline -
+ * it's a single indexed read, no different from any other DB query the
+ * caller already does - but hands the expensive part (lock acquisition +
+ * the actual ENTSO-E/IBEX fetch) to `schedule` (Next.js `after()` by
+ * default) instead of awaiting it, exactly like
+ * `ensureTelemetryFresh`'s own "background" mode
+ * (`lib/fusionsolar/telemetry-sync-service.ts`). The caller's own
+ * render/response NEVER waits on an external market-data provider; a day
+ * found incomplete this cycle renders as unavailable this one time, and is
+ * healed in the background for the next request to see. `mode: "blocking"`
+ * (the default, for backward compatibility with this module's existing
+ * tests and any future caller that genuinely needs to know the outcome
+ * before proceeding) preserves the exact original inline-await behavior.
  */
+
+import { after } from "next/server";
 
 import { prisma } from "@/lib/prisma";
 import {
@@ -124,6 +146,19 @@ export type EnsureBulgariaDeliveryDayOverrides = {
   recover?: (dayStart: Date, deadline: number) => Promise<{ imported: boolean; errors: string[] }>;
   withLock?: (dayStart: Date, fn: () => Promise<void>) => Promise<void>;
   now?: () => Date;
+  /**
+   * "blocking" (default): waits for the lock + recovery attempt to finish
+   * (or its deadline to elapse) before this function's own promise
+   * resolves - the original, still-tested behavior.
+   *
+   * "background": returns as soon as the cheap completeness check settles;
+   * if the day is incomplete, the lock+recovery step is handed to
+   * `schedule` instead of being awaited - see this module's top doc
+   * comment. Every real production caller uses this mode.
+   */
+  mode?: "blocking" | "background";
+  /** "background" mode only. Defaults to Next.js `after()`; overridable so tests can invoke the deferred work manually instead of needing a real request scope. */
+  schedule?: (fn: () => Promise<void>) => void;
 };
 
 /**
@@ -161,6 +196,8 @@ export async function ensureBulgariaDeliveryDayAvailable(
   const withLock =
     overrides.withLock ??
     ((day, fn) => withBulgariaDeliveryDayLock(day, fn, deadlineMs + LOCK_TRANSACTION_OVERHEAD_MS));
+  const mode = overrides.mode ?? "blocking";
+  const schedule = overrides.schedule ?? after;
 
   const deliveryDate = formatDateInZone(dayStart, BULGARIA_TIMEZONE);
   const todayDate = formatDateInZone(now(), BULGARIA_TIMEZONE);
@@ -169,12 +206,8 @@ export async function ensureBulgariaDeliveryDayAvailable(
     return;
   }
 
-  try {
-    if (await isComplete(dayStart)) {
-      return;
-    }
-
-    await withLock(dayStart, async () => {
+  const recoverUnderLock = () =>
+    withLock(dayStart, async () => {
       // Re-check AFTER acquiring the lock - another concurrent caller may
       // have already restored this exact day while we were waiting, in
       // which case we must perform no second ENTSO-E request.
@@ -184,6 +217,33 @@ export async function ensureBulgariaDeliveryDayAvailable(
 
       await recover(dayStart, Date.now() + deadlineMs);
     });
+
+  try {
+    if (await isComplete(dayStart)) {
+      return;
+    }
+
+    if (mode === "background") {
+      // Fire-and-forget from THIS function's own caller's perspective -
+      // the lock wait and the real ENTSO-E/IBEX call happen after this
+      // promise has already resolved, via `schedule` (Next.js `after()`
+      // in production), so a user-facing page or automation cycle never
+      // waits on them. Errors here can no longer be caught by the outer
+      // try/catch below (this function has already returned by the time
+      // they'd occur), so they're caught right here instead - this must
+      // never surface as an unhandled rejection.
+      schedule(() =>
+        recoverUnderLock().catch((error) => {
+          console.error("[Market Price On-Demand Recovery] Failed", {
+            deliveryDate,
+            error,
+          });
+        }),
+      );
+      return;
+    }
+
+    await recoverUnderLock();
   } catch (error) {
     console.error("[Market Price On-Demand Recovery] Failed", {
       deliveryDate,

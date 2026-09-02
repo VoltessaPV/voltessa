@@ -78,17 +78,23 @@ export type OrganizationExecutionOutcome =
  * The Market Price Optimization Execution Engine's 15-minute cycle (see
  * app/api/internal/automation/execute-market-price-optimization/route.ts,
  * the systemd timer that calls it every 15 minutes). Before touching any
- * organization, ensures today's Bulgaria delivery day is available exactly
- * ONCE for the whole cycle (On-Demand Delivery Day Recovery milestone) -
- * never inside the per-organization loop below, since the price data is a
- * shared resource, not a per-organization one; recovering it once up front
- * means every organization's own `getCurrentPrice`/`getNextPrice` lookup
- * below sees the same, already-healed (or still genuinely unavailable) data.
- * Bounded by `AUTOMATION_RECOVERY_DEADLINE_MS` so a slow/unavailable
- * ENTSO-E can never risk overlapping the next 15-minute cycle. If recovery
- * fails or the day stays incomplete, nothing here changes: each
- * organization's own existing "no valid price -> skipped_no_price_data"
- * handling below is untouched and still applies.
+ * organization, checks today's Bulgaria delivery day exactly ONCE for the
+ * whole cycle (On-Demand Delivery Day Recovery milestone) - never inside
+ * the per-organization loop below, since the price data is a shared
+ * resource, not a per-organization one.
+ *
+ * Production Latency Architecture milestone: `ensureRecovery` runs in
+ * `mode: "background"` - it performs only a cheap, indexed completeness
+ * check inline; if the day is incomplete, the real ENTSO-E/IBEX recovery is
+ * deferred via `after()` (never awaited here) so this cycle is never
+ * delayed by an external provider. Fail-closed is what actually protects
+ * automation, not this call: if today's delivery day is still incomplete
+ * when the per-organization loop below reads prices, each organization's
+ * own existing "no valid price -> skipped_no_price_data" handling
+ * (`getCurrentPrice`'s exact-interval-only lookup, never a stale/previous
+ * price) applies exactly as before, and the healed day is picked up
+ * automatically by the next 15-minute cycle once background recovery
+ * finishes.
  *
  * For each eligible organization (see findEligibleOrganizations): acquires
  * this organization's execution lock (skips silently, no event, if already
@@ -117,6 +123,7 @@ export async function runMarketPriceOptimizationScheduler(
       ensureBulgariaDeliveryDayAvailable(
         localDayBoundsUtc(new Date(), BULGARIA_TIMEZONE).start,
         AUTOMATION_RECOVERY_DEADLINE_MS,
+        { mode: "background" },
       ));
   const findOrganizations = overrides.findOrganizations ?? findEligibleOrganizations;
 
