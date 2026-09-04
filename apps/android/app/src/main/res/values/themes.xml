@@ -1,0 +1,7 @@
+<resources>
+    <!-- Minimal launch theme - the actual UI is entirely Jetpack Compose
+         (MainActivity.kt); this theme only covers the window background
+         before Compose takes over, and satisfies the manifest's
+         android:theme reference. -->
+    <style name="Theme.Voltessa" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
