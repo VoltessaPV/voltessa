@@ -75,6 +75,8 @@ export type MarketSummaryData = {
     currency: string;
     intervalLabel: string;
     deltaVsPrevious: number;
+    /** Same `isExportRecommended(price, threshold)` decision already computed for this exact interval's `series` point - read, never recomputed, so this can never drift from the series' own `exportEnabled` flag. */
+    exportRecommended: boolean;
   } | null;
   nextInterval: {
     value: number;
@@ -638,6 +640,11 @@ export async function getMarketPageData(params: {
         value: currentResult.price.price,
         currency: currentResult.price.currency,
         intervalLabel: sofiaTimeLabel(currentResult.price.timestamp),
+        // Same point this index already resolves for previousPoint/nextPoint
+        // above - its exportEnabled is buildSeries' own
+        // isExportRecommended(price, threshold) result, read here rather
+        // than recomputed.
+        exportRecommended: knownPoints[currentIndex]?.exportEnabled ?? false,
         deltaVsPrevious: previousPoint
           ? Math.round(
               (currentResult.price.price - (previousPoint.price as number)) *

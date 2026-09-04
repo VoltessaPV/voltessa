@@ -104,3 +104,18 @@ private val VoltessaDarkColorScheme = darkColorScheme(
 fun VoltessaTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = VoltessaDarkColorScheme, content = content)
 }
+
+/**
+ * Mobile Redesign milestone - semantic status colors, additive only (no
+ * existing `darkColorScheme` role above is touched, so nothing already
+ * depending on those roles can regress). Taken directly from Web's own
+ * Tailwind usage for the exact same semantics - not invented for this app:
+ * `text-emerald-400`/`bg-emerald-400` for healthy/production/export-
+ * recommended (EnergyFlowDiagram.tsx, KPICard.tsx, MarketOverviewCard.tsx),
+ * `text-amber-400`/`bg-amber-400` for energy/attention (ForecastCard.tsx,
+ * InvertersCard.tsx), `bg-orange-400` for grid-import/consumption
+ * (EnergyFlowDiagram.tsx).
+ */
+val VoltessaGreen = Color(0xFF34D399) // emerald-400
+val VoltessaAmber = Color(0xFFFBBF24) // amber-400
+val VoltessaOrange = Color(0xFFFB923C) // orange-400

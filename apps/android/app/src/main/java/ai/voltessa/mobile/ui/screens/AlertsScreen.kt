@@ -1,7 +1,10 @@
 package ai.voltessa.mobile.ui.screens
 
+import ai.voltessa.mobile.ui.components.SectionHeader
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -10,20 +13,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * M4 - Alerts has no real backend today: confirmed by direct inspection
- * of apps/web/app/[locale]/(platform)/alerts/page.tsx, which renders
- * exactly one static line of copy - no Alert Prisma model, no list query,
- * no acknowledge/resolve action anywhere in the codebase. This screen
- * mirrors that exact same real, deployed Web copy rather than fabricating
- * an alert list - see the M4 report for the backend gap this represents
- * (an Alert data model + generation logic would be required first).
+ * Mobile Redesign milestone - visual-language-only pass. Still no real
+ * backend (see apps/web/app/[locale]/(platform)/alerts/page.tsx - itself
+ * one static line of copy), so this remains the same honest message, only
+ * re-styled to match the rest of the app.
  */
 @Composable
 fun AlertsScreen() {
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+    Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+        SectionHeader(title = "Alerts")
+        Spacer(modifier = Modifier.height(12.dp))
         Text(
             text = "Review operational alerts and important platform events.",
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

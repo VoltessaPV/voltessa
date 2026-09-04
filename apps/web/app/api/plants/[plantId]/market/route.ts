@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { getMarketPageData } from "@/app/[locale]/(platform)/market/market-data";
+import { getProductionPageData } from "@/app/[locale]/(platform)/market/production-data";
 import { requireApiPermission } from "@/lib/auth/api-session";
 import { getStoredExportMode } from "@/lib/automation/automation-state";
 import { Permissions } from "@/lib/auth/permissions";
+import { computeExportRevenue, type RevenueSummary } from "@/lib/market-price/revenue";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -36,6 +38,14 @@ type RouteParams = { params: Promise<{ plantId: string }> };
  * unchanged, including `series`/`previousPeriodSeries` (already present in
  * this JSON response before this change - the Mobile client simply didn't
  * model them yet).
+ *
+ * Mobile Redesign milestone: also adds `revenue` - the exact same
+ * meter-then-production-fallback composition `page.tsx` already does
+ * (`computeExportRevenue`, fed `getProductionPageData`'s
+ * settlementEnergySeries/productionEnergySeries), reused verbatim rather
+ * than reimplemented. Only computed for `dataAvailable: true` + "today"
+ * (Mobile's Market screen doesn't have a period switcher yet - see
+ * `MarketPageResponse`'s own doc comment).
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const auth = await requireApiPermission(request, Permissions.canViewPlants);
@@ -64,7 +74,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const periodParam = request.nextUrl.searchParams.get("period");
   const period = periodParam === "week" || periodParam === "month" || periodParam === "year" ? periodParam : "today";
 
-  const [data, currentExportMode] = await Promise.all([
+  const [data, currentExportMode, production] = await Promise.all([
     getMarketPageData({
       organizationId: auth.user.organizationId,
       selectedDateParam: dateParam,
@@ -72,7 +82,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       automationSettings,
     }),
     getStoredExportMode(auth.user.organizationId),
+    getProductionPageData(auth.user.organizationId, dateParam, period),
   ]);
 
-  return NextResponse.json({ ...data, currentExportMode });
+  // Same meter-then-production fallback page.tsx already does: a plant
+  // with a real meter always resolves via settlementEnergySeries; one
+  // without falls back to productionEnergySeries, priced the same way -
+  // never a second revenue calculation.
+  let revenue: RevenueSummary = { available: false };
+
+  if (data.dataAvailable) {
+    const meterRevenue = computeExportRevenue(data.series, production.settlementEnergySeries);
+
+    revenue = meterRevenue.available
+      ? meterRevenue
+      : computeExportRevenue(
+          data.series,
+          production.productionEnergySeries.map((point) => ({
+            intervalStart: point.intervalStart,
+            exportedKwh: point.producedKwh,
+            importedKwh: null,
+          })),
+        );
+  }
+
+  return NextResponse.json({ ...data, currentExportMode, revenue });
 }

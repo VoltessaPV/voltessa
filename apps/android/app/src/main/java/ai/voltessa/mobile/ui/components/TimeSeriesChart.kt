@@ -58,6 +58,8 @@ data class ChartLine(
     val label: String,
     val color: Color,
     val values: List<Double?>,
+    /** Mobile Redesign milestone - draws a soft fill (15% alpha) from this line down to the chart's bottom edge, under the stroke. Opt-in per line (e.g. the dashboard's primary Production series) rather than every line, so a multi-line chart doesn't turn into overlapping washes of color. */
+    val filled: Boolean = false,
 )
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -71,6 +73,8 @@ fun TimeSeriesLineChart(
     chartHeight: androidx.compose.ui.unit.Dp = 180.dp,
     /** Optional dashed horizontal line (e.g. Market's export threshold) - drawn under the data lines so a price line crossing it stays fully visible. */
     referenceLine: Double? = null,
+    /** Mobile Redesign milestone - epoch-millisecond "now" marker (e.g. `System.currentTimeMillis()`), drawn as a solid vertical line + dot only when it actually falls within `times`' own range - a chart showing yesterday's data never draws a stray marker at the edge. */
+    nowMillis: Long? = null,
 ) {
     if (times.isEmpty() || lines.all { line -> line.values.all { it == null } }) {
         Text(
@@ -170,6 +174,39 @@ fun TimeSeriesLineChart(
                     )
                 }
 
+                // Area fills first, under every line's own stroke.
+                lines.filter { it.filled }.forEach { line ->
+                    val path = androidx.compose.ui.graphics.Path()
+                    var segmentOpen = false
+                    var lastX = 0f
+                    times.forEachIndexed { index, time ->
+                        val value = line.values.getOrNull(index)
+                        if (value == null) {
+                            if (segmentOpen) {
+                                path.lineTo(lastX, height)
+                                path.close()
+                                segmentOpen = false
+                            }
+                            return@forEachIndexed
+                        }
+                        val x = xFor(time)
+                        val y = yFor(value)
+                        if (!segmentOpen) {
+                            path.moveTo(x, height)
+                            path.lineTo(x, y)
+                            segmentOpen = true
+                        } else {
+                            path.lineTo(x, y)
+                        }
+                        lastX = x
+                    }
+                    if (segmentOpen) {
+                        path.lineTo(lastX, height)
+                        path.close()
+                    }
+                    drawPath(path, color = line.color.copy(alpha = 0.15f))
+                }
+
                 lines.forEach { line ->
                     var previous: Offset? = null
                     times.forEachIndexed { index, time ->
@@ -184,6 +221,17 @@ fun TimeSeriesLineChart(
                         }
                         previous = point
                     }
+                }
+
+                if (nowMillis != null && nowMillis in minTime..maxTime) {
+                    val x = xFor(nowMillis)
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.55f),
+                        start = Offset(x, 0f),
+                        end = Offset(x, height),
+                        strokeWidth = 1.5f,
+                    )
+                    drawCircle(color = Color.White, radius = 4f, center = Offset(x, 0f))
                 }
 
                 selectedIndex?.let { index ->

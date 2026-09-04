@@ -154,6 +154,14 @@ data class MarketPriceDto(
     val currency: String,
     val intervalLabel: String,
     val deltaVsPrevious: Double,
+    // Only ever populated on Market's own `summary.currentPrice` (market-data.ts's
+    // `MarketSummaryData.currentPrice.exportRecommended`, read from the same
+    // `isExportRecommended(price, threshold)` result already computed into that
+    // interval's `series` point - never recomputed here). Dashboard's
+    // `market.currentPrice` doesn't nest this field (its `exportRecommended` is a
+    // sibling of `currentPrice` on `DashboardMarketWidgetDto` instead), so it
+    // decodes as null there - harmless, since this DTO is shared by both.
+    val exportRecommended: Boolean? = null,
 )
 
 @Serializable
@@ -182,6 +190,23 @@ data class MarketPageResponse(
     val series: List<MarketPricePointDto> = emptyList(),
     val insights: List<MarketInsightDto> = emptyList(),
     val currentExportMode: String? = null,
+    val revenue: RevenueSummaryDto? = null,
+)
+
+/**
+ * `RevenueSummary` (lib/market-price/revenue.ts's `computeExportRevenue`) - the
+ * exact same meter-then-production-fallback revenue calculation Web's Market
+ * page already displays, reused verbatim server-side (see that route's own
+ * doc comment). `available: false` means no priced export interval existed
+ * for today (e.g. a brand-new connection); the three value fields are only
+ * ever populated together, when `available` is true.
+ */
+@Serializable
+data class RevenueSummaryDto(
+    val available: Boolean,
+    val revenueEur: Double? = null,
+    val exportedKwh: Double? = null,
+    val averagePriceEurPerMwh: Double? = null,
 )
 
 /** `MarketPageResult.insights` (market-data.ts's `MarketInsight`) - pre-formatted text (e.g. "Hours above threshold: 5 h"), not raw numbers, so Mobile never recomputes the underlying statistic itself. */
