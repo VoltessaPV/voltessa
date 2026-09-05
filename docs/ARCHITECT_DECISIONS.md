@@ -1285,7 +1285,21 @@ Two constraints shaped the scope more than anything else:
 
 ### Status
 
-Proposed
+Accepted — implemented. What was "Proposed" below has since shipped, across several milestones
+(`docs/ROADMAP.md`): M0 (Bearer session exchange, extending `create-session.ts`, exactly as this ADR
+describes), M1–M2 (plants/dashboard read endpoints), M3 (Dashboard chart/weather/market widget),
+M4 (Market screen, Automations settings read/write, BESS/Alerts placeholders matching Web's own
+honest "not built yet" state), M5 (Google Sign-In via Android Credential Manager, reusing the same
+session-mint path a second way), "Mobile/Web Parity" (shared `TimeSeriesLineChart` component,
+Dashboard terminology aligned to Web's copy, Market screen extended with the price chart/insights/
+`currentExportMode`), and "Mobile Redesign" (commit `636937a` — a Compose design system, Dashboard/
+Market/Automations information-hierarchy redesign, and the two small additive backend fields below).
+The client is a native Kotlin/Jetpack Compose Android app (`apps/android/`, package
+`ai.voltessa.mobile`) — the "React Native, TBD" note in "Client boundary" below was the honest state
+*at proposal time*; that choice is now made and is not React Native. See "Mobile App" in `CLAUDE.md`
+for the current structure, and this entry's own "Implementation status" note near the end for what
+changed versus the original proposal (nothing architectural — only two additive Route Handler
+fields).
 
 ### Context
 
@@ -1486,10 +1500,143 @@ cookie; a small `lib/auth/*` addition for Bearer-based resolution (new functions
 untouched); 1–3 initial data/status Route Handlers; and — separately, on its own merits — the
 `resolvePlantContext` fix already identified as inconsistent with ADR-018.
 
+### Implementation status (dated note, added during the Mobile Redesign milestone's documentation sync)
+
+- **Google native sign-in UX** (the first "Open question" below) is resolved: Android Credential
+  Manager, `ui/GoogleSignIn.kt`, exchanging the resulting ID token for the same Bearer `sessionToken`
+  via `POST /api/auth/mobile/google-sign-in` (M5).
+- **Two small, additive Route Handler fields** were added to the existing
+  `GET /api/plants/:plantId/market` response for the Mobile Redesign milestone, matching this ADR's
+  own "Feature parity" rule (reuse an existing plain function, never reimplement): `revenue`
+  (`RevenueSummary`, via the exact same `computeExportRevenue` Web's Market page already calls) and
+  `exportRecommended` on `MarketSummaryData.currentPrice` (read from the same series-level
+  `isExportRecommended(price, threshold)` result already computed for that interval — never
+  re-derived in Kotlin). No new endpoint, no schema change, no vendor-boundary change.
+- **Physical-device testing only** — no Android emulator/AVD is used or expected (see "Mobile App"
+  in `CLAUDE.md`). Verified on a Samsung Galaxy S21 (Android 15) across the M0–M5/Parity/Redesign
+  milestones: real backend data on Dashboard/Market/Automations, no crashes/ANRs in logcat, the
+  Automations day-selector's horizontal-clipping defect found and fixed during the Redesign
+  milestone's on-device pass (replaced a `LazyRow` with a fixed non-scrolling grid, `ui/components/
+  VoltessaComponents.kt`'s `DaySelectorGrid`).
+- **Google Play publishing remains out of scope**, unchanged from this ADR's original framing
+  ("Mobile releases independently via App Store/Play Store") — no signing config, upload key, Play
+  Console listing, or release build has been started; do this only on an explicit future request.
+- Everything else in this ADR (no schema change, no second backend, `Session`-based auth, the
+  Route-Handler/service-function boundary) matches what actually shipped — no correction needed
+  beyond the two points above.
+
 ### Open questions
 
-- Exact native sign-in UX (Google native SDK vs. in-app browser) that ultimately calls the extended
-  `create-session.ts` path — a mobile-engineering decision, not an architecture one.
 - Whether/when a device/channel label is added to `Session` for device-management UX — explicitly
   deferred, not part of this decision.
 - Whether Web ever adopts the same Route Handlers — not needed now, explicitly deferred.
+
+## ADR-021: IBEX as a secondary market-price provider; on-demand recovery moved off the request-render critical path
+
+### Status
+
+Accepted (IBEX Fallback milestone, immediate follow-up: Production Latency Architecture milestone).
+See `docs/research/entsoe-price-scheduler.md` §10 for the full engineering report this ADR
+summarizes.
+
+### Context
+
+ENTSO-E (ADR-009) is Voltessa's sole day-ahead price source, and Voltessa's automation and revenue
+figures depend on a delivery day actually being complete. A sustained ENTSO-E outage leaves a
+Bulgaria delivery day permanently incomplete until ENTSO-E itself recovers — there was no secondary
+source. Separately, the existing on-demand recovery safeguard
+(`ensureBulgariaDeliveryDayAvailable`, "On-Demand Delivery Day Recovery" milestone) was *awaited*
+inline by Dashboard, Market, and the 15-minute automation cycle — confirmed in production logs to
+take 13–20s per provider attempt during a real outage, which meant a single missing/incomplete day
+could add up to ~25s to a Dashboard/Market page render and up to ~90s to an automation cycle (both
+figures before this milestone's fixes).
+
+### Decision
+
+1. **IBEX (Independent Bulgarian Energy Exchange) is a real, working SECONDARY price source**
+   (`lib/market-price/providers/ibex.ts`), used only when ENTSO-E fails, times out, reports no data,
+   or leaves a delivery day partial — never per-interval, always the full CET/CEST calendar day,
+   exactly like ENTSO-E itself. ENTSO-E remains PRIMARY and is always tried first
+   (`refreshPrimaryCetDayWithFallback`, `ensureMarketPricesForBulgariaDays`). A day recovered via
+   IBEX is reported as a genuine success (`isPartial: false`), never as a failure merely because
+   ENTSO-E didn't provide it. Uses the real public mechanism found during a read-only feasibility
+   investigation (bot-check cookie → CSRF token → `get_data`) — no invented API, no browser
+   automation, no credentials.
+2. **Timestamp conversion is position-based, not a re-parse of IBEX's own "HH:MM" label.** IBEX's
+   `date` parameter identifies a CET/CEST calendar day (the same reference zone ENTSO-E's own
+   day-ahead documents use), not Bulgaria's civil clock — confirmed empirically against Voltessa's
+   own already-stored ENTSO-E data for 2026-08-31: **all 96/96 intervals matched exactly**
+   (0.0000 EUR/MWh difference) once IBEX's `main_data` rows are mapped by array position onto the
+   same DST-aware CET-day boundary `fetchEntsoeDayAheadPrices` already computes for that day, rather
+   than by re-parsing each row's own delivery-period text (which is genuinely ambiguous on a 25-hour
+   DST fall-back day). This is not an approximate match — it is documented in `ibex.ts`'s own module
+   comment as the proven, exact conversion this implementation relies on.
+3. **Recovery is best-effort and never fabricates a price.** If both ENTSO-E and IBEX fail for a
+   day, the day is left incomplete and reported via `imported: false`/`errors` — nothing here ever
+   partially substitutes or invents a value.
+4. **On-demand recovery (`ensureBulgariaDeliveryDayAvailable`) is bounded and locked:**
+   - Never attempted for a delivery day before **2026-07-01** (`MIN_RECOVERY_DATE`) or after today's
+     Bulgaria-local date — out of this safeguard's scope (healing a day the application needs *now*,
+     not backfilling history, and not pre-fetching a future day — that is the primary scheduler's
+     job).
+   - Serialized per delivery day by a Postgres **transaction-scoped** advisory lock
+     (`pg_advisory_xact_lock`, auto-released at commit/rollback — not the session-scoped
+     `pg_advisory_lock`/`pg_advisory_unlock` pair, which would be unsafe under Neon's pooled/
+     PgBouncer transaction-mode connection, per this module's own doc comment). Both the namespace
+     and the per-day key are explicitly cast (`::int`) to satisfy Postgres's two-int
+     `pg_advisory_xact_lock(int, int)` overload — the same overload-resolution issue already fixed
+     once for this codebase's advisory-lock usage (see the "cast advisory-lock params to int" fix in
+     git history) is guarded against here from the start, not rediscovered.
+   - Completeness is **re-checked after acquiring the lock** — a concurrent caller may have already
+     healed the day while this caller was waiting, in which case no second ENTSO-E/IBEX request is
+     made.
+   - Never throws to its caller: a recovery failure is logged and swallowed — the caller's existing
+     "unavailable" rendering is what takes over, exactly as before this milestone.
+5. **`mode: "background"` moves the expensive part off the request-render critical path** —
+   mirroring `ensureTelemetryFresh`'s existing `after()`-based pattern (ADR-012/ADR-017). The cheap
+   completeness check (one indexed read) still runs inline; the lock acquisition and the actual
+   ENTSO-E/IBEX fetch are handed to Next.js `after()` instead of being awaited. Dashboard, Market, and
+   the Market Price Optimization scheduler (`market-price-optimization-scheduler.ts`) all use this
+   mode today — a genuinely incomplete day renders/executes as unavailable for that one request/cycle
+   and is healed in the background for the next one to see. `mode: "blocking"` (the default) is kept
+   only for this module's own tests and any future caller that genuinely needs the outcome before
+   proceeding.
+6. **Automation remains fail-closed, unaffected by any of the above.** The Market Price Optimization
+   scheduler still reads only the *exact* settlement interval's price
+   (`dbMarketPriceProvider.getCurrentPrice()`/`getNextPrice()`, ADR-009's "exact-interval, never
+   nearest-older" fix) and records `skipped_no_price_data` — never falling back to a stale/previous
+   price — if that interval is still missing after the background recovery attempt. Background
+   recovery only ever changes *when* a genuinely missing day gets healed, never *what price
+   automation is allowed to act on*.
+7. **`vercel.json`'s default function region is now `fra1`** (previously unset, defaulting to `iad1`)
+   — Dashboard/Market/Automations/the market-price scheduler had no region override and were running
+   in the wrong region relative to Neon's `eu-central-1`; every other region-sensitive route already
+   used `fra1` explicitly. The Market page also gets an explicit `maxDuration: 30` (mirroring the
+   existing `admin/historical-imports` entry), since a worst-case attempt is now an ENTSO-E timeout
+   followed by IBEX's own multi-step handshake for the same day.
+
+### Consequences
+
+- Voltessa now has a real secondary day-ahead price source; a sustained ENTSO-E outage no longer
+  means a Bulgaria delivery day stays incomplete until ENTSO-E alone recovers.
+- No Scaleway/systemd change was needed — the ENTSO-E→IBEX fallback lives entirely inside the
+  existing `refresh-prices` route (`apps/web`, Vercel); `voltessa-market-price-scheduler.timer`'s own
+  script, cadence, and retry loop are unchanged (see `docs/infrastructure/scaleway-production.md`).
+- Dashboard/Market page-load latency and the automation cycle's own timing are no longer coupled to
+  ENTSO-E/IBEX response time — the same latency-decoupling principle ADR-012/017 already established
+  for telemetry, now also applied to market-price recovery.
+- A request that hits a genuinely missing day may still render "unavailable" once (the background fix
+  applies to the *next* request/cycle, not retroactively to the current one) — an accepted trade-off,
+  identical in kind to ADR-012's telemetry trade-off, not a regression.
+- `docs/research/entsoe-price-scheduler.md` §10 is the detailed engineering record (real production
+  log excerpts, the exact IBEX validation methodology); this ADR is the decision summary. Keep both
+  in sync if this area changes again.
+
+### Not verified by this ADR
+
+- Real, unattended exercise of the IBEX fallback path in production (i.e. an actual ENTSO-E outage
+  occurring after this milestone shipped) has not been observed/confirmed as of this writing — the
+  96/96-interval validation above is a direct data-correctness proof of the conversion logic against
+  historical data, not a live-outage fallback trigger. Treat the fallback path itself as
+  implemented-and-tested (unit tests exist, see `refresh-market-prices.test.ts`), not yet
+  production-exercised end-to-end under a real outage.

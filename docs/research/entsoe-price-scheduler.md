@@ -269,3 +269,146 @@ Per the milestone's explicit preference, all polling/retry/stop decisions live i
   triggers of the same deployed unit) was not observed within this session, for the same reason
   noted in §7 — the actual next occurrence is `2026-07-20 11:00:00 UTC` (`14:00` Sofia,
   confirmed via `systemctl list-timers`).
+
+## 10. IBEX secondary provider + non-blocking on-demand recovery (IBEX Fallback / Production Latency Architecture milestones)
+
+Status: **Implemented and unit-tested**; the fallback path's real-world trigger condition (a genuine
+ENTSO-E outage occurring after this shipped) has not yet been observed live in production — see
+§10.6. See ADR-021 in `docs/ARCHITECT_DECISIONS.md` for the decision summary this section backs.
+
+### 10.1 Motivation
+
+§9 closed the "when within the day" gap. This milestone closes a different gap: ENTSO-E was still
+Voltessa's *only* day-ahead price source. A sustained ENTSO-E outage (the kind that motivated the
+"incident alerting" work referenced elsewhere in this codebase's git history) left a delivery day
+permanently incomplete until ENTSO-E itself recovered, with no secondary source to try. Separately, a
+real production investigation of the existing on-demand recovery safeguard
+(`ensureBulgariaDeliveryDayAvailable`, added by an earlier "On-Demand Delivery Day Recovery"
+milestone as a safety net for Dashboard/Market/automation hitting a specific missing day) found it
+was *awaited inline* by all three callers — Dashboard, Market, and the 15-minute automation cycle —
+and that both providers were observed taking 13–20 seconds to fail during a recent real outage. Doing
+the arithmetic: a single incomplete day could add up to ~25s to a Dashboard/Market page render
+(15s ENTSO-E timeout + up to 10s x 3 IBEX handshake steps) and up to ~90s to an automation cycle.
+
+### 10.2 IBEX as a real, working secondary source
+
+`lib/market-price/providers/ibex.ts` implements the exact public mechanism found during a read-only
+feasibility investigation of `https://ibex.bg/sdac-pv-bg/` — no invented API, no browser automation,
+no credentials:
+
+1. `GET` the public page for a short-lived anti-bot cookie (`js_ok_v2`) — W3 Total Cache page-cache
+   bot protection, not an authentication mechanism.
+2. `GET .../api.php?action=get_csrf_token` with that cookie plus `Referer`/`Origin` headers (the API
+   rejects requests missing them) — returns a CSRF token and a `PHPSESSID` cookie the token is bound
+   to.
+3. `GET` the same endpoint with `action=get_data&date=YYYY-MM-DD`, the CSRF token, and both cookies.
+
+All three are plain HTTP requests. `refreshMarketPricesFromIbex` (`refresh-market-prices.ts`) reuses
+the exact same validate/persist/`ImporterRun` pipeline `refreshMarketPrices` (ENTSO-E) already uses,
+via a shared `persistDayAheadSeries` helper extracted byte-for-byte from the existing logic —
+`MarketPrice`'s per-point `upsert` and `(biddingZone, timestamp, source)` uniqueness are unchanged, so
+IBEX-sourced rows are exactly as idempotent as ENTSO-E-sourced ones.
+
+`ensureMarketPricesForBulgariaDays` (the one shared orchestrator already used by the trailing
+recovery sweep, the on-demand Dashboard/Market safeguard, and the automation safeguard) now tries
+IBEX for a CET day only after ENTSO-E fails, is unavailable, or leaves it partial —
+`refreshPrimaryCetDayWithFallback` applies the identical fallback to the primary scheduled "tomorrow"
+fetch itself (previously only the trailing sweep had a fallback; the primary fetch the 14:00 timer
+and its retries actually care about did not). A day recovered via IBEX is reported as a genuine
+success (`isPartial: false`), never as a failure merely because ENTSO-E didn't provide it.
+`isCetDayImportComplete` no longer filters by `source` — a day completed via either provider is
+equally "done," which is what stops every caller from re-attempting a source that keeps failing once
+the other has already filled the gap.
+
+### 10.3 The timestamp-conversion proof — 96/96 intervals, exact match
+
+The single most load-bearing fact in this milestone: IBEX's `date` query parameter identifies a
+**CET/CEST (Europe/Brussels) calendar day** — the same reference zone ENTSO-E's own day-ahead
+documents use — **not** Bulgaria's own civil clock (Europe/Sofia, EET/EEST), despite IBEX being the
+Bulgarian exchange's own site.
+
+Confirmed empirically against Voltessa's own already-stored ENTSO-E data for **2026-08-31**: IBEX's
+93rd interval (`main_data[92]`, its "23:00–23:15" delivery-period label) for `date=2026-08-31` is
+**byte-for-byte identical (0.0000 EUR/MWh difference)** to Voltessa's stored price at real UTC
+instant `2026-08-31T21:00:00Z` — which is exactly `periodStart + 92 * 15 minutes` for that CET day's
+own `periodStart` (`2026-08-30T22:00:00Z`). **All 96 of 96 intervals matched this way for that day.**
+This is not an approximate or "close enough" match — it is an exact, verified equivalence, documented
+directly in `ibex.ts`'s own module comment as the fact the entire conversion strategy depends on.
+
+The conversion implemented in `fetchIbexDayAheadPrices` is therefore **position-based**, not a
+re-parse of each row's own "HH:MM" text as a time-of-day: `main_data` is already ordered QH1..QHn for
+the requested CET day, so row index `N`'s real UTC instant is simply `periodStart + N * 15 minutes`,
+using the exact same DST-aware CET-day boundary `fetchEntsoeDayAheadPrices` is called with for the
+same day. This is deliberate, not a shortcut: on a 25-hour DST fall-back day, positions 97–100 have no
+valid single "HH:MM" text at all (Bulgaria/CET clocks repeat 02:00–03:00 that night), so re-parsing
+the label would be ambiguous or wrong; walking by position through an already-correct boundary has no
+such ambiguity. The `delivery_period` label is still checked for basic shape as a sanity/format
+guard, never used to compute the timestamp.
+
+### 10.4 Non-blocking on-demand recovery
+
+`ensure-delivery-day-available.ts` (`ensureBulgariaDeliveryDayAvailable`) gained:
+
+- **A date-range guard**: never attempted for a delivery day before **`2026-07-01`**
+  (`MIN_RECOVERY_DATE`), or after today's Bulgaria-local date — this safeguard heals a day the
+  application needs *now*, it never backfills history (that's `backfillMarketPrices`/the admin
+  historical-imports tool) and never pre-fetches a future day (that's the primary 14:00 scheduler's
+  job specifically).
+- **A Postgres advisory lock**, transaction-scoped (`pg_advisory_xact_lock`, auto-released at
+  commit/rollback) rather than session-scoped (`pg_advisory_lock`/`pg_advisory_unlock`) — load-bearing,
+  not stylistic: `DATABASE_URL` points at Neon's pooled ("-pooler") endpoint, and under PgBouncer
+  transaction-mode pooling a session-scoped lock's acquire and its later unlock call could silently
+  land on two different underlying Postgres connections and never actually exclude anything. Prisma's
+  interactive `$transaction` reserves one connection for its entire callback, which is what keeps the
+  lock safe here. Both the namespace and the per-day key are explicitly cast (`::int`) to resolve to
+  Postgres's two-int `pg_advisory_xact_lock(int, int)` overload — the same class of overload-resolution
+  bug already fixed once elsewhere in this codebase's advisory-lock usage is guarded against here from
+  the start.
+- **A re-check after acquiring the lock**: a concurrent caller may have already healed the exact same
+  day while this caller was waiting for the lock, in which case no second ENTSO-E/IBEX request is
+  made.
+- **`mode: "background"`** (every real production caller today: Dashboard/Market's `market-data.ts`,
+  and `market-price-optimization-scheduler.ts`): the cheap completeness check (one indexed read) still
+  runs inline — identical cost to any other DB query the caller already does — but the lock
+  acquisition and the actual ENTSO-E/IBEX fetch are handed to Next.js `after()` instead of being
+  awaited, mirroring `ensureTelemetryFresh`'s existing pattern for telemetry (ADR-012/ADR-017). A
+  genuinely incomplete day renders/executes as unavailable for that one request/cycle and is healed in
+  the background for the next one to see. `mode: "blocking"` (the default) is kept only for this
+  module's own existing tests.
+- **Recovery is best-effort and never throws to its caller** — a failure here is logged and swallowed;
+  the caller's pre-existing "no valid price"/"unavailable" handling is unchanged and is what actually
+  takes over.
+
+`DASHBOARD_RECOVERY_DEADLINE_MS` (20s) and `AUTOMATION_RECOVERY_DEADLINE_MS` (90s) were both raised
+from their pre-IBEX values specifically to accommodate a worst case of one ENTSO-E timeout followed by
+IBEX's own multi-step handshake for the same CET day — still comfortably bounded (90s is 10% of the
+automation scheduler's 15-minute cycle even in the worst case).
+
+### 10.5 Automation's fail-closed guarantee is unaffected
+
+None of the above changes what price automation is allowed to act on. The Market Price Optimization
+scheduler (`market-price-optimization-scheduler.ts`) still calls
+`dbMarketPriceProvider.getCurrentPrice()`/`getNextPrice()` — an **exact-interval-only** lookup (ADR-009's
+"never the nearest older price" fix) — and records `skipped_no_price_data` for that organization,
+never substituting a stale/previous price, if the exact interval is still missing once the background
+recovery attempt has (or hasn't) completed. Background recovery only ever changes *when* a genuinely
+missing day gets healed, never *what* automation is allowed to treat as "the current price."
+
+### 10.6 What has and hasn't been observed live
+
+- **Verified**: the 96/96-interval timestamp-conversion proof (§10.3) is a direct data-correctness
+  check against real, already-stored production ENTSO-E data — not a simulation.
+- **Verified**: unit tests exist for the fallback composition (`refresh-market-prices.test.ts`) and the
+  on-demand recovery module's date-guard/lock/re-check/background-mode behavior
+  (`ensure-delivery-day-available.test.ts`).
+- **Not verified**: a real, unattended production trigger of the IBEX fallback path — i.e. an actual
+  ENTSO-E outage occurring after this milestone shipped, observed end-to-end via production logs — has
+  not happened (or has not been confirmed) as of this writing. The fallback logic is implemented and
+  tested, not yet exercised by a genuine live incident.
+- **No Scaleway/systemd changes were required** — the entire ENTSO-E→IBEX fallback lives inside the
+  existing `refresh-prices` Route Handler (`apps/web`, Vercel); `voltessa-market-price-scheduler.timer`
+  and its poll script (`docs/infrastructure/scaleway-production.md`) are unchanged.
+- `vercel.json`'s default function region was set to `fra1` (previously unset, silently defaulting to
+  `iad1`) as part of this same milestone — Dashboard/Market/Automations/the market-price scheduler had
+  no region override and were running in the wrong region relative to Neon's `eu-central-1`. The
+  Market page also gained an explicit `maxDuration: 30`.

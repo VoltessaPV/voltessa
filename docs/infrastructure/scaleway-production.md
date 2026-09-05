@@ -76,6 +76,36 @@ value (per ADR-008, every `app/api/internal/**` route shares one secret).
 
 ---
 
+# Hardware Specification & Cost Investigation
+
+**Status: partially verified — do not treat the cost conclusion as settled.**
+
+A prior session's direct SSH inspection reportedly found this VM (`voltessa-fusionsolar-proxy`,
+`51.15.103.175`) to be a Scaleway **BASIC3-X2C-4G** instance — 2 vCPU, 4 GB RAM, region **`nl-ams-1`**
+(Amsterdam), roughly 8 GB disk — running all eight `systemd` units listed above plus the ONNX
+Inference Service and the standalone Automation Service, at approximately **450 MB steady-state RSS**
+with no obviously over-sized process. This document did not previously record any hardware/region
+specification at all; it is captured here now, sourced from that prior inspection, not
+independently re-verified via a fresh SSH session as part of this documentation sync. Before relying
+on the exact instance type/region for a cost or capacity decision, re-confirm with
+`scw instance server list` / the Scaleway console, or a fresh `ssh root@51.15.103.175` inspection
+(`nproc`, `free -h`, `df -h`) — treat the numbers above as **INFERRED**, not **VERIFIED**, until then.
+
+**The reported >€40/month Scaleway spend is NOT explained by this VM's own resource usage.** A
+~450 MB RSS / 2 vCPU / 4 GB workload on a single BASIC3-X2C-4G instance does not, on its own, obviously
+account for that spend at Scaleway's published list pricing for this instance class — but no billing-
+console analysis has been performed to confirm what actually does. Do not guess at or invent an
+explanation (extra volumes/snapshots, bandwidth egress, a second instance, account-level charges,
+Object Storage, a Kubernetes/managed-database add-on, etc. are all *possible*, none of them
+*confirmed*). **The concrete next step, not yet done, is a direct Scaleway billing-console review**
+(Billing → Invoices/Usage breakdown, or `scw billing consumption list` if the CLI is available) to
+itemize what is actually being charged, before proposing any migration or resizing "to save cost" —
+per the standing instruction that infrastructure changes for cost reasons must be evidence-driven, not
+assumption-driven. If a future session performs that billing review, record the itemized findings
+here (replacing this paragraph), not in chat history alone.
+
+---
+
 # SSH Access
 
 ```
@@ -192,6 +222,16 @@ voltessa-market-price-scheduler.timer  (OnCalendar=*-*-* 14:00:00 Europe/Sofia �
 - The retry/stop policy lives **entirely in the script**, not in `apps/web` — the importer
   (`refreshMarketPrices`) is a plain, single-attempt call; the script owns all polling/backoff
   decisions.
+- **IBEX Fallback milestone (ADR-021)**: the route this script calls
+  (`refresh-prices?target=tomorrow`) now internally falls back to IBEX (the Independent Bulgarian
+  Energy Exchange) for the same delivery day whenever ENTSO-E fails/is unavailable/leaves the day
+  partial — ENTSO-E remains PRIMARY. This is entirely inside `apps/web` (Vercel); **no change to this
+  VM, this script, or this timer was needed**. A day completed via IBEX still reports as a normal
+  success (`ok:true, isPartial:false`) in the script's own `jq`-parsed response — an operator tailing
+  `journalctl` for this service will not see any indication of *which* provider actually supplied a
+  given day from this script's output alone; check `MarketPriceImport.source` in the database, or
+  Vercel's own runtime logs, if that distinction matters for a specific investigation. See
+  `docs/research/entsoe-price-scheduler.md` §10 and ADR-021 in `docs/ARCHITECT_DECISIONS.md`.
 - `TimeoutStartSec=infinity` is set on this unit — required, because the default 90s systemd
   timeout would otherwise kill a script that can legitimately run for hours across retries. If this
   is ever missing after an edit, retries after the first 90 seconds will silently stop working.

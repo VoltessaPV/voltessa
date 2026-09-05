@@ -65,6 +65,14 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
   with its own Postgres database (Prisma), NextAuth v5 (Google OAuth, database sessions) for
   authentication, and a real Huawei FusionSolar OAuth integration implemented directly as Next.js
   route handlers and server actions. This is where day-to-day feature work happens.
+- `apps/android` — the real, shipped Voltessa mobile client: a native Kotlin/Jetpack Compose app
+  (package `ai.voltessa.mobile`, min SDK 26, target SDK 35) implementing ADR-020's Mobile Client
+  Architecture (a Bearer-token presentation channel over the same `Session` model Web already
+  uses, talking to a small set of Route Handlers under `apps/web/app/api/*` — never a second
+  backend). Base URL is hardcoded to production (`https://app.voltessa.ai`, `data/ApiConfig.kt`) —
+  there is no dev/staging environment switcher yet. See "Mobile App" below. Matched by
+  `pnpm-workspace.yaml`'s `apps/*` glob but silently skipped by pnpm (no `package.json` — it's a
+  Gradle project, built with its own `./gradlew`, not `turbo`/`pnpm`).
 - `packages/ui` — shared React component library (`@repo/ui`), consumed via `workspace:*`.
 - `packages/eslint-config`, `packages/typescript-config` — shared lint/tsconfig bases.
 - `automation/` — a standalone Node process, **not** part of the pnpm workspace, that owns Playwright
@@ -238,6 +246,51 @@ the deployed function, regardless of `outputFileTracingIncludes` tuning — whic
 extracting this into the fully independent process described above instead. `git log` on this file and
 the old `apps/web/lib/fusionsolar/browser/*` paths has the full incident record.
 
+### Mobile App (`apps/android/`)
+
+The Voltessa Android client, per ADR-020 (`docs/ARCHITECT_DECISIONS.md`) — implemented and shipped
+across several milestones (M0–M5, "Mobile/Web Parity," and "Mobile Redesign," see
+`docs/ROADMAP.md`), not merely proposed. Jetpack Compose UI, `MaterialTheme` `darkColorScheme`
+matching Web's own dark navy/blue palette (`ui/theme/Theme.kt`), one `AppViewModel`/one `UiState`
+(no navigation library — a `MainSection` enum selects which section's state is shown, inside a
+`ModalNavigationDrawer`). Six sections: Dashboard, Market, BESS, Automations, Alerts, Settings —
+matching Web's own `AppSidebar` structure exactly.
+
+- **Auth**: password sign-in and Google Sign-In (Android Credential Manager), both exchanging for
+  the same Bearer `sessionToken` ADR-020 describes — stored via `data/TokenStore.kt`, presented as
+  `Authorization: Bearer <token>` on every request (`data/ApiClient.kt`). No parallel identity
+  system; revoking the underlying `Session` row (same mechanism Web already uses) revokes the
+  mobile session too.
+- **Data**: every DTO in `data/Models.kt` is a real, currently-existing field of the corresponding
+  `apps/web` Route Handler response (`GET /api/plants/:plantId/dashboard`,
+  `GET /api/plants/:plantId/market`, `GET/POST /api/automation-settings`, ...) — kotlinx.serialization's
+  lenient/ignore-unknown-keys decoding means the app only ever models a subset of a larger response,
+  never invents a field. No business/decision logic (e.g. export-recommendation, threshold
+  comparisons) is re-derived in Kotlin — the app reads whatever the backend already computed
+  (e.g. `MarketSummaryData.currentPrice.exportRecommended`, `RevenueSummary` via
+  `computeExportRevenue`) and presents it, per ADR-018's "one definition per quantity" contract.
+- **Design system** (`ui/components/VoltessaComponents.kt`, Mobile Redesign milestone): `SectionHeader`,
+  `StatusBadge`, `HeroCard`, `Metric`/`MetricGrid`, `DaySelectorGrid` — the shared building blocks
+  every screen composes from, so a "dominant hero stat + compact KPI grid + semantic status color"
+  visual language lives in one place. `ui/components/TimeSeriesChart.kt`'s `TimeSeriesLineChart` (a
+  plain Compose `Canvas`, no charting-library dependency) is the one chart implementation shared by
+  Dashboard's energy-flow chart and Market's price chart (area-fill, current-time indicator,
+  tap-to-inspect, dashed threshold reference line).
+- **Testing**: **physical device only** — no Android emulator/AVD is configured or expected in this
+  environment; validate on a real connected device (`adb devices`, `adb install -r`) rather than
+  introducing an emulator dependency. Automated coverage is `testDebugUnitTest`/`lintDebug`/
+  `assembleDebug`/`assembleRelease` (Gradle) — no on-device UI test framework (Espresso/Compose
+  testing) is wired up yet.
+- **Google Play**: publishing (signing config, upload key, Play Console listing, release) is
+  **explicitly deferred** — do not start any of that unless the user explicitly asks. The release
+  build variant compiles unsigned (`isMinifyEnabled = false`, no `signingConfig`); a locally-signed
+  copy (debug keystore, purely to make it installable) is a testing-only step, never a Play-track
+  artifact.
+- **Toolchain note (Windows/Git Bash)**: `./gradlew` needs `JAVA_HOME` set explicitly (no default in
+  this environment) and the Android SDK path from `local.properties`'s `sdk.dir`; `adb shell`/`adb
+  pull` calls using absolute Unix-style device paths need `MSYS_NO_PATHCONV=1` or Git Bash mangles
+  them into Windows paths.
+
 ### FusionSolar Atlanta debug console (`app/dev/fusionsolar_atlanta/*`)
 
 A temporary, internal, Atlanta-only manual debugging tool — not linked from any navigation, and not
@@ -302,7 +355,18 @@ these two:
   `app/api/internal/market-price/refresh-prices?target=tomorrow` (writes
   `MarketPrice`/`MarketPriceImport`) every 30 minutes until a complete import succeeds or a bounded
   number of attempts is exhausted — all retry/stop logic lives in that script, not in application
-  code. See ADR-009.
+  code. See ADR-009. Since the IBEX Fallback milestone (ADR-021), the route this script calls
+  internally falls back to IBEX (the Independent Bulgarian Energy Exchange) for the same delivery
+  day whenever ENTSO-E fails, times out, or leaves the day partial — ENTSO-E remains PRIMARY; a day
+  completed via IBEX is reported as a normal success, not a failure. Separately, Dashboard, Market,
+  and the automation scheduler each call `ensureBulgariaDeliveryDayAvailable(..., { mode:
+  "background" })` (`lib/market-price/ensure-delivery-day-available.ts`) as an on-demand safeguard
+  for a specific day found missing/incomplete — this NEVER blocks page rendering or the 15-minute
+  automation cycle (the ENTSO-E/IBEX fetch is deferred via Next.js `after()`, mirroring
+  `ensureTelemetryFresh`'s existing pattern, ADR-012/017); automation itself still only ever acts on
+  the exact settlement interval's price (`getCurrentPrice`/`getNextPrice`) and skips the cycle
+  (`skipped_no_price_data`) rather than falling back to a stale price if that interval is still
+  missing.
 
 These two schedulers are deliberately independent (different cadence, different unit files,
 different env files) — operational telemetry and market prices are different kinds of data with

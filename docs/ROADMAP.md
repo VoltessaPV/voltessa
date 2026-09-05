@@ -151,3 +151,80 @@
   (data export, access requests, restriction of processing) — architecture
   (`getConsent()`/`hasConsentFor()`, the registry/dictionary pattern) is
   structured so those can be added later without refactoring.
+
+---
+
+# Mobile Client — M0–M5, Mobile/Web Parity, Mobile Redesign
+
+See ADR-020 in `docs/ARCHITECT_DECISIONS.md` for the full architecture record and its
+"Implementation status" note; this entry is the sprint-tracking summary. `docs/BACKLOG.md` predates
+all of this work and does not yet list it — see that file's own note.
+
+## Completed
+
+- **M0–M2**: Bearer-token session exchange extending the existing `create-session.ts`
+  (ADR-020) — no new auth mechanism, the same `Session` table/lifecycle Web already uses. Real
+  password sign-in, plants list, plant connection status, plant dashboard read endpoints.
+- **M3**: Dashboard chart (`chartSeries`), weather widget, and market-price widget added to the
+  existing dashboard Route Handler response — still a deliberate subset of the full
+  `DashboardPageData`, not the complete contract.
+- **M4**: Market screen (price chart, pre-computed insights, `currentExportMode`),
+  `GET`/`POST /api/automation-settings` (reusing `updateMarketPriceAutomationForOrganization`
+  verbatim, not duplicated), and honest BESS/Alerts placeholders matching Web's own real,
+  not-yet-built state for those two areas (no fabricated data/functionality).
+- **M5**: Google Sign-In via Android Credential Manager, exchanging the resulting ID token for the
+  same Bearer session mint path password login already uses.
+- **Mobile/Web Parity milestone**: a single shared `TimeSeriesLineChart` Compose component (no
+  charting-library dependency) replacing an earlier bespoke chart, used by both Dashboard's
+  energy-flow chart and Market's price chart; Dashboard terminology aligned to Web's own copy.
+- **Mobile Redesign milestone** (commit `636937a`): a shared Compose design system
+  (`ui/components/VoltessaComponents.kt` — `SectionHeader`/`StatusBadge`/`HeroCard`/`Metric`+
+  `MetricGrid`/`DaySelectorGrid`) replacing ad hoc per-screen layout; Dashboard/Market/Automations
+  redone around a "glanceable" information hierarchy (a dominant live-status/price hero, a compact
+  KPI grid, area-filled/current-time-aware charts) instead of a plain vertical label/value list;
+  fixed the Automations day-selector's real horizontal-clipping defect (a `LazyRow` that silently
+  overflowed past the screen edge on a narrow device) with a fixed, always-fully-visible 4+3 grid;
+  added two small, additive backend fields to the existing Market Route Handler (`revenue`,
+  `exportRecommended`) rather than inventing/recomputing either client-side. Verified on a physical
+  Samsung Galaxy S21 (Android 15) — no emulator used or planned; see ADR-020's implementation note
+  for the full verification/regression summary.
+- Backend deployment for the two new Market fields: commit `636937a` pushed to `origin/main`,
+  Vercel production deployment confirmed `READY` and aliased to `app.voltessa.ai` as of
+  2026-09-05 (verified via the Vercel deployments API against this exact commit SHA).
+
+## Explicitly deferred (do not start without an explicit request)
+
+- Google Play publishing — signing config, upload key, Play Console listing, store metadata,
+  release track. The release Gradle variant compiles unsigned by design.
+- An Android emulator/AVD testing path — physical-device testing is the current, deliberate
+  priority; do not introduce an emulator requirement unless asked.
+- A device/channel label on `Session` for a future "manage your signed-in devices" screen (ADR-020's
+  own open question).
+
+---
+
+# Market Price Reliability — IBEX Fallback + Non-Blocking Recovery
+
+See ADR-021 in `docs/ARCHITECT_DECISIONS.md` and `docs/research/entsoe-price-scheduler.md` §10 for
+the full decision record and engineering report.
+
+## Completed
+
+- IBEX (Independent Bulgarian Energy Exchange) added as a real secondary/fallback day-ahead price
+  source, used only when ENTSO-E fails/is unavailable/leaves a delivery day partial — ENTSO-E
+  remains primary. Timestamp conversion (IBEX's CET-day rows mapped by position onto the same
+  DST-aware boundary ENTSO-E already uses) verified exact — 96/96 intervals matched Voltessa's own
+  stored ENTSO-E data for 2026-08-31 with zero difference.
+- On-demand delivery-day recovery (`ensureBulgariaDeliveryDayAvailable`) moved off the
+  Dashboard/Market/automation request-render critical path via `mode: "background"` (Next.js
+  `after()`, mirroring the existing telemetry background-recovery pattern) — a genuinely
+  missing/incomplete day no longer adds ENTSO-E/IBEX response time to a page load or an automation
+  cycle.
+- Automation's fail-closed guarantee (never acting on a stale/previous price if the exact settlement
+  interval is missing) is unaffected and re-verified as part of this milestone.
+
+## Not yet done
+
+- A real, unattended production trigger of the IBEX fallback path (an actual ENTSO-E outage
+  occurring after this shipped) has not been observed/confirmed live — implemented and unit-tested,
+  not yet exercised by a genuine incident.
