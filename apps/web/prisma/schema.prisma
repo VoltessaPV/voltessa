@@ -754,8 +754,31 @@ model AutomationState {
   /// either mode.
   currentExportMode String?
 
+  /// The 15-minute Market Price Optimization execution lock. `isRunning` is
+  /// the mutual-exclusion flag; `lockedAt` is when it was last acquired (or
+  /// stale-reclaimed). Since the Atlanta Automation incident (05-06 Sep
+  /// 2026) this lock is failure-safe: a lock older than
+  /// `EXECUTION_LOCK_TTL_MS` (lib/automation/automation-state.ts) is treated
+  /// as abandoned and can be atomically reclaimed, because `finally`-based
+  /// release is bypassed when the serverless function is killed by Vercel's
+  /// `maxDuration` ceiling or an OOM/eviction (which is exactly how
+  /// `isRunning` was left `true` for 48h+ during that incident). `lockedAt`
+  /// is no longer write-only — the reclaim path reads and compares it.
   isRunning Boolean   @default(false)
   lockedAt  DateTime?
+
+  /// The daily reconciliation lock — DELIBERATELY SEPARATE from the
+  /// execution lock (`isRunning`/`lockedAt`) above. Reconciliation only
+  /// READS the real FusionSolar state (via the Automation Service's Read
+  /// Status operation) and corrects Voltessa's own stored
+  /// `currentExportMode`; it never issues a plant command. It must be able
+  /// to run even while an execution lock is held (or stuck), because its
+  /// whole purpose is to detect exactly that kind of drift — so it has its
+  /// own flag/timestamp and never acquires the execution lock. Also
+  /// failure-safe via a TTL (`RECONCILIATION_LOCK_TTL_MS`). Added by the
+  /// Atlanta Automation incident remediation, PR1.
+  reconciliationRunning  Boolean   @default(false)
+  reconciliationLockedAt DateTime?
 
   /// Notification Provider milestone's anti-spam state for daily
   /// reconciliation failures (see lib/automation/daily-reconciliation.ts):

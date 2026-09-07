@@ -12,6 +12,7 @@ import {
   getStoredExportMode,
   releaseAutomationLock,
   setStoredExportMode,
+  type LockAcquisition,
 } from "./automation-state";
 import { createAutomationEvent } from "./automation-events";
 import { decideExportAction, type ExportMode } from "./export-decision";
@@ -72,7 +73,62 @@ export type OrganizationExecutionOutcome =
   | { organizationId: string; outcome: "no_action"; reason: string }
   | { organizationId: string; outcome: "switched"; newMode: ExportMode; reason: string }
   | { organizationId: string; outcome: "automation_service_failed"; error: string }
-  | { organizationId: string; outcome: "unexpected_error"; error: string };
+  | { organizationId: string; outcome: "unexpected_error"; error: string }
+  // A marker, not a terminal state: a previous cycle's process died before
+  // releasing its execution lock and this cycle atomically reclaimed the
+  // abandoned lock, then proceeded normally (a real per-organization
+  // outcome is pushed after it). See recordStaleExecutionLockReclaim.
+  | {
+      organizationId: string;
+      outcome: "stale_lock_reclaimed";
+      staleLockAgeMs: number;
+      heldSince: string;
+    };
+
+/**
+ * Makes a stale-execution-lock reclaim observable after the fact (Atlanta
+ * Automation incident remediation, PR1). Writes an `execution_lock_reclaimed`
+ * AutomationEvent carrying how long the abandoned lock had been held and
+ * since when — enough to diagnose the killed run later. It surfaces in the
+ * admin Platform Logs view (`getPlatformLogs` reads every AutomationEvent
+ * regardless of type); it is intentionally NOT user-facing and NOT wired to
+ * a notification here (operator alerting for this is the next remediation
+ * phase). `deps` is a test-only seam — production passes nothing.
+ */
+export async function recordStaleExecutionLockReclaim(
+  organizationId: string,
+  reclaim: Extract<LockAcquisition, { reclaimedStaleLock: true }>,
+  deps: {
+    createEvent?: typeof createAutomationEvent;
+    getStoredMode?: typeof getStoredExportMode;
+  } = {},
+): Promise<void> {
+  const createEvent = deps.createEvent ?? createAutomationEvent;
+  const getStoredMode = deps.getStoredMode ?? getStoredExportMode;
+
+  const previousMode = await getStoredMode(organizationId);
+  const ageSeconds = Math.round(reclaim.staleLockAgeMs / 1000);
+  const heldSinceIso = reclaim.heldSince.toISOString();
+
+  console.warn("[Market Price Optimization] Reclaimed stale execution lock", {
+    organizationId,
+    heldSince: heldSinceIso,
+    staleLockAgeMs: reclaim.staleLockAgeMs,
+  });
+
+  await createEvent({
+    organizationId,
+    type: "execution_lock_reclaimed",
+    summary: "Stale execution lock reclaimed",
+    reason:
+      `The previous Market Price Optimization run for this organization did not release its execution ` +
+      `lock (most likely a serverless function timeout or crash before cleanup). The lock had been held ` +
+      `since ${heldSinceIso} (${ageSeconds}s) and was automatically reclaimed so automation could resume.`,
+    errorMessage: `stale execution lock held since ${heldSinceIso} (${ageSeconds}s) — previous run did not release it`,
+    previousMode,
+    newMode: null,
+  });
+}
 
 /**
  * The Market Price Optimization Execution Engine's 15-minute cycle (see
@@ -97,11 +153,19 @@ export type OrganizationExecutionOutcome =
  * finishes.
  *
  * For each eligible organization (see findEligibleOrganizations): acquires
- * this organization's execution lock (skips silently, no event, if already
- * running - "never run two executions concurrently"), reads the current
- * and next market interval price plus the stored export mode, runs the
- * pure decision function, and — only if a mode switch is actually required
- * — calls the existing Automation Service and records the outcome.
+ * this organization's execution lock (skips silently, no event, if a real
+ * run is already in progress - "never run two executions concurrently"),
+ * reads the current and next market interval price plus the stored export
+ * mode, runs the pure decision function, and — only if a mode switch is
+ * actually required — calls the existing Automation Service and records the
+ * outcome.
+ *
+ * Failure-safe lock (Atlanta Automation incident, 05-06 Sep 2026): if the
+ * lock is held but older than EXECUTION_LOCK_TTL_MS, the previous run's
+ * process died before releasing it (a function timeout/crash bypasses the
+ * `finally` below). This cycle atomically reclaims the abandoned lock,
+ * records an `execution_lock_reclaimed` AutomationEvent so the reclaim is
+ * never invisible, and proceeds normally.
  *
  * Never queries FusionSolar directly: `getStoredExportMode` reads
  * Voltessa's own stored state, never the plant itself (see
@@ -109,12 +173,17 @@ export type OrganizationExecutionOutcome =
  * FusionSolar, once a day).
  *
  * `overrides` exist only for tests - production callers always get the
- * real recovery safeguard and the real `findEligibleOrganizations`.
+ * real recovery safeguard, the real `findEligibleOrganizations`, the real
+ * lock, and the real per-organization execution.
  */
 export async function runMarketPriceOptimizationScheduler(
   overrides: {
     ensureRecovery?: () => Promise<void>;
     findOrganizations?: () => Promise<Awaited<ReturnType<typeof findEligibleOrganizations>>>;
+    acquireLock?: (organizationId: string) => Promise<LockAcquisition>;
+    releaseLock?: (organizationId: string) => Promise<void>;
+    executeForOrganization?: typeof executeForOrganization;
+    recordStaleLockReclaim?: typeof recordStaleExecutionLockReclaim;
   } = {},
 ): Promise<OrganizationExecutionOutcome[]> {
   const ensureRecovery =
@@ -126,6 +195,10 @@ export async function runMarketPriceOptimizationScheduler(
         { mode: "background" },
       ));
   const findOrganizations = overrides.findOrganizations ?? findEligibleOrganizations;
+  const acquireLock = overrides.acquireLock ?? acquireAutomationLock;
+  const releaseLock = overrides.releaseLock ?? releaseAutomationLock;
+  const runForOrganization = overrides.executeForOrganization ?? executeForOrganization;
+  const recordReclaim = overrides.recordStaleLockReclaim ?? recordStaleExecutionLockReclaim;
 
   await ensureRecovery();
 
@@ -133,15 +206,30 @@ export async function runMarketPriceOptimizationScheduler(
   const outcomes: OrganizationExecutionOutcome[] = [];
 
   for (const organization of organizations) {
-    const acquired = await acquireAutomationLock(organization.organizationId);
+    const lock = await acquireLock(organization.organizationId);
 
-    if (!acquired) {
+    if (!lock.acquired) {
       outcomes.push({ organizationId: organization.organizationId, outcome: "skipped_locked" });
       continue;
     }
 
     try {
-      outcomes.push(await executeForOrganization(organization));
+      if (lock.reclaimedStaleLock) {
+        // The previous run's process died before releasing this lock (a
+        // function timeout/crash - the exact 05 Sep Atlanta failure). Make
+        // it observable, then carry on: reclaiming the abandoned lock is
+        // what lets automation resume at all. Kept inside the try so an
+        // event-write failure here can never abort the cycle.
+        await recordReclaim(organization.organizationId, lock);
+        outcomes.push({
+          organizationId: organization.organizationId,
+          outcome: "stale_lock_reclaimed",
+          staleLockAgeMs: lock.staleLockAgeMs,
+          heldSince: lock.heldSince.toISOString(),
+        });
+      }
+
+      outcomes.push(await runForOrganization(organization));
     } catch (error) {
       // An unexpected error (not a known Automation Service failure, which
       // executeForOrganization already handles without throwing) for one
@@ -155,7 +243,7 @@ export async function runMarketPriceOptimizationScheduler(
 
       outcomes.push({ organizationId: organization.organizationId, outcome: "unexpected_error", error: reason });
     } finally {
-      await releaseAutomationLock(organization.organizationId);
+      await releaseLock(organization.organizationId);
     }
   }
 

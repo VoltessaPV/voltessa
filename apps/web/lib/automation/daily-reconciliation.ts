@@ -1,13 +1,16 @@
+import type { RunStatus } from "@prisma/client";
+
 import { callAutomationService } from "@/lib/automation-client";
 
 import type { DongleStatus, ReadStatusResult } from "@/app/dev/fusionsolar_atlanta/actions";
 import {
-  acquireAutomationLock,
+  acquireReconciliationLock,
   getStoredExportMode,
   isReconciliationFailing,
-  releaseAutomationLock,
+  releaseReconciliationLock,
   setReconciliationFailing,
   setStoredExportMode,
+  type LockAcquisition,
 } from "./automation-state";
 import { createAutomationEvent } from "./automation-events";
 import type { ExportMode } from "./export-decision";
@@ -19,7 +22,61 @@ export type OrganizationReconciliationOutcome =
   | { organizationId: string; outcome: "already_matched"; mode: ExportMode | null }
   | { organizationId: string; outcome: "inconsistent_dongles" }
   | { organizationId: string; outcome: "synchronized"; previousMode: ExportMode | null; newMode: ExportMode }
-  | { organizationId: string; outcome: "unexpected_error"; error: string };
+  | { organizationId: string; outcome: "unexpected_error"; error: string }
+  // A marker, not a verification result: a previous reconciliation run's
+  // process died before releasing the reconciliation lock and this run
+  // reclaimed the abandoned lock, then proceeded normally (a real
+  // per-organization outcome is pushed after it).
+  | {
+      organizationId: string;
+      outcome: "stale_lock_reclaimed";
+      staleLockAgeMs: number;
+      heldSince: string;
+    };
+
+/**
+ * The reconciliation-run outcomes that mean "we established the real
+ * FusionSolar state AND completed the comparison" — the ONLY ones that make
+ * a reconciliation run a genuine SUCCESS. Everything else means the actual
+ * state could not be verified.
+ */
+const VERIFIED_OUTCOMES: ReadonlySet<OrganizationReconciliationOutcome["outcome"]> = new Set([
+  "already_matched",
+  "synchronized",
+]);
+
+/**
+ * Fail-closed reconciliation run status (Atlanta Automation incident
+ * remediation, PR1). A run is SUCCESS only when every eligible organization
+ * had its real FusionSolar state retrieved, evaluated, and compared. If any
+ * organization could not be verified — Automation Service / Playwright /
+ * login / timeout / network failure, inconsistent dongles (no single actual
+ * mode), or an unexpected error — the run is FAILED, so
+ * `SchedulerRun`/`getSchedulerHealth` carry that evidence after the fact
+ * instead of a misleading green. A run held off ONLY by a concurrent
+ * reconciliation (its own lock) is SKIPPED, not FAILED — nothing went
+ * wrong, it simply did not run this time. `stale_lock_reclaimed` markers do
+ * not count either way.
+ */
+export function classifyReconciliationRun(
+  outcomes: OrganizationReconciliationOutcome[],
+): { status: RunStatus; unverifiedOrganizationIds: string[] } {
+  const results = outcomes.filter((outcome) => outcome.outcome !== "stale_lock_reclaimed");
+  const unverified = results.filter((outcome) => !VERIFIED_OUTCOMES.has(outcome.outcome));
+
+  if (unverified.length === 0) {
+    // Every organization verified (or there were no Atlanta organizations
+    // to reconcile at all — nothing to do is not a failure).
+    return { status: "SUCCESS", unverifiedOrganizationIds: [] };
+  }
+
+  const onlyConcurrencySkips = unverified.every((outcome) => outcome.outcome === "skipped_locked");
+
+  return {
+    status: onlyConcurrencySkips ? "SKIPPED" : "FAILED",
+    unverifiedOrganizationIds: unverified.map((outcome) => outcome.organizationId),
+  };
+}
 
 /**
  * Every dongle is always switched together, to the same target mode, by
@@ -62,23 +119,65 @@ function deriveFusionSolarMode(dongles: DongleStatus[]): ExportMode | null {
  * automation is currently enabled. This is what keeps AutomationState
  * accurate the moment automation is turned back on, instead of acting on
  * stale state from whenever it was last enabled.
+ *
+ * Atlanta Automation incident remediation (PR1): this uses its OWN lock
+ * (acquireReconciliationLock), never the 15-minute execution lock. A held
+ * or stuck execution lock must not be able to suppress reconciliation —
+ * detecting exactly that situation (stored state drifted from the real
+ * plant while an execution run died mid-flight) is reconciliation's whole
+ * purpose. The reconciliation lock only stops two reconciliation runs for
+ * the same organization from overlapping, and is itself failure-safe via a
+ * TTL. Reconciliation still issues no state-changing FusionSolar command.
+ *
+ * `overrides` exist only for tests - production always uses the real
+ * organization lookup, the real reconciliation lock, and the real
+ * per-organization reconcile.
  */
-export async function runDailyReconciliation(): Promise<
-  OrganizationReconciliationOutcome[]
-> {
-  const organizationIds = await findAtlantaOrganizationIds();
+export async function runDailyReconciliation(
+  overrides: {
+    findOrganizations?: () => Promise<string[]>;
+    acquireLock?: (organizationId: string) => Promise<LockAcquisition>;
+    releaseLock?: (organizationId: string) => Promise<void>;
+    reconcileOrganization?: (organizationId: string) => Promise<OrganizationReconciliationOutcome>;
+  } = {},
+): Promise<OrganizationReconciliationOutcome[]> {
+  const findOrganizations = overrides.findOrganizations ?? findAtlantaOrganizationIds;
+  const acquireLock = overrides.acquireLock ?? acquireReconciliationLock;
+  const releaseLock = overrides.releaseLock ?? releaseReconciliationLock;
+  const reconcile = overrides.reconcileOrganization ?? reconcileOrganization;
+
+  const organizationIds = await findOrganizations();
   const outcomes: OrganizationReconciliationOutcome[] = [];
 
   for (const organizationId of organizationIds) {
-    const acquired = await acquireAutomationLock(organizationId);
+    const lock = await acquireLock(organizationId);
 
-    if (!acquired) {
+    if (!lock.acquired) {
       outcomes.push({ organizationId, outcome: "skipped_locked" });
       continue;
     }
 
     try {
-      outcomes.push(await reconcileOrganization(organizationId));
+      if (lock.reclaimedStaleLock) {
+        // A previous reconciliation run's process died before releasing
+        // this lock. Surface it in the outcomes for visibility; unlike the
+        // execution-lock reclaim it gets no AutomationEvent — a stuck
+        // reconciliation lock has no plant-safety impact (reconciliation
+        // issues no command) and this stays within PR scope.
+        console.warn("[Automation Daily Reconciliation] Reclaimed stale reconciliation lock", {
+          organizationId,
+          heldSince: lock.heldSince.toISOString(),
+          staleLockAgeMs: lock.staleLockAgeMs,
+        });
+        outcomes.push({
+          organizationId,
+          outcome: "stale_lock_reclaimed",
+          staleLockAgeMs: lock.staleLockAgeMs,
+          heldSince: lock.heldSince.toISOString(),
+        });
+      }
+
+      outcomes.push(await reconcile(organizationId));
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
 
@@ -89,7 +188,7 @@ export async function runDailyReconciliation(): Promise<
 
       outcomes.push({ organizationId, outcome: "unexpected_error", error: reason });
     } finally {
-      await releaseAutomationLock(organizationId);
+      await releaseLock(organizationId);
     }
   }
 

@@ -21,7 +21,16 @@ export type AutomationEventType =
   | "reconciliation_mismatch"
   | "reconciliation_synced"
   | "reconciliation_failed"
-  | "reconciliation_restored";
+  | "reconciliation_restored"
+  // Atlanta Automation incident remediation (PR1): the 15-minute execution
+  // engine found a stale execution lock (a previous run's process died
+  // before releasing it) and atomically reclaimed it. Recorded so the
+  // reclaim is never invisible after the fact — it surfaces in the admin
+  // Platform Logs view (getPlatformLogs reads every AutomationEvent
+  // regardless of type). Deliberately NOT in USER_FACING_EVENT_TYPES and
+  // deliberately not wired to a notification here — operator-facing
+  // alerting for this is the next remediation phase.
+  | "execution_lock_reclaimed";
 
 export type CreateAutomationEventInput = {
   organizationId: string;

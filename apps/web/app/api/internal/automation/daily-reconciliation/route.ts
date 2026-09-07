@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 
 import { NextResponse } from "next/server";
 
-import { runDailyReconciliation } from "@/lib/automation/daily-reconciliation";
+import {
+  classifyReconciliationRun,
+  runDailyReconciliation,
+} from "@/lib/automation/daily-reconciliation";
 import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
 
 const SCHEDULER_NAME = "automation_reconciliation";
@@ -77,20 +80,37 @@ async function handleReconciliation(request: Request) {
   try {
     const outcomes = await runDailyReconciliation();
 
+    // Fail-closed (Atlanta Automation incident remediation, PR1): the run
+    // only counts as SUCCESS if every eligible organization's real
+    // FusionSolar state was actually retrieved, evaluated and compared.
+    // "The reconciliation function executed without throwing" is NOT
+    // success - a run that could not verify actual state (Automation
+    // Service/Playwright/login/timeout/network failure, inconsistent
+    // dongles) is recorded as FAILED so production evidence exists after
+    // the fact; a run held off only by a concurrent reconciliation is
+    // SKIPPED.
+    const { status, unverifiedOrganizationIds } = classifyReconciliationRun(outcomes);
+
     console.log("[Automation Daily Reconciliation] Completed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
+      status,
+      unverifiedOrganizationIds,
       outcomes,
     });
 
     await recordSchedulerRun({
       schedulerName: SCHEDULER_NAME,
       startedAt,
-      status: "SUCCESS",
-      summary: { outcomes },
+      status,
+      errorMessage:
+        status === "SUCCESS"
+          ? undefined
+          : `reconciliation did not verify actual FusionSolar state for ${unverifiedOrganizationIds.length} organization(s): ${unverifiedOrganizationIds.join(", ")}`,
+      summary: { status, unverifiedOrganizationIds, outcomes },
     });
 
-    return NextResponse.json({ ok: true, outcomes });
+    return NextResponse.json({ ok: true, status, outcomes });
   } catch (error) {
     console.error("[Automation Daily Reconciliation] Failed", {
       startedAt: startedAt.toISOString(),

@@ -18,7 +18,11 @@ type MarketEventLogProps = {
   entries: MarketEventLogEntry[];
 };
 
-const EVENT_DOT_CLASS: Record<MarketEventLogEntry["type"], string> = {
+// The event log only ever contains USER_FACING_EVENT_TYPES
+// (getRecentAutomationEvents), so this is a partial map over
+// AutomationEventType with a neutral fallback at the call site rather than
+// an exhaustive record that must list every internal/diagnostic type.
+const EVENT_DOT_CLASS: Partial<Record<MarketEventLogEntry["type"], string>> = {
   mode_changed: "bg-emerald-400",
   automation_service_failed: "bg-red-400",
   reconciliation_mismatch: "bg-amber-400",
@@ -93,7 +97,7 @@ export function MarketEventLog({ entries }: MarketEventLogProps) {
             <li key={`${entry.timestamp.toISOString()}-${index}`} className="flex gap-3">
               <div className="flex flex-col items-center">
                 <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${EVENT_DOT_CLASS[entry.type]}`}
+                  className={`h-2 w-2 shrink-0 rounded-full ${EVENT_DOT_CLASS[entry.type] ?? "bg-slate-400"}`}
                 />
                 {index < entries.length - 1 && (
                   <span className="mt-1 w-px flex-1 bg-white/10" />
