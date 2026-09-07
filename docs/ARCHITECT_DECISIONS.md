@@ -1711,7 +1711,21 @@ notification. We want automatic retries every 15 minutes through 07:00, and exac
 - The VM `OnCalendar` edit and the `apps/web` change are order-independent: before the timer edit,
   the route runs once at 06:00 as before, carrying retry bookkeeping that simply is not exercised.
 
+### Status of rollout
+
+- `apps/web` shipped in commit `c917728`; production migration
+  `20260907130000_add_automation_reconciliation_attempt` applied 2026-09-07 (additive: one new
+  table). The VM `voltessa-automation-reconciliation.timer` `OnCalendar` was updated to the five
+  Europe/Sofia slots the same day (see `docs/infrastructure/scaleway-production.md` for the exact
+  unit contents, the pre-change backup filename, and the `Persistent=true` catch-up note). The
+  `daemon-reload`/`restart` triggered one immediate catch-up run (17:18 Europe/Sofia, outside the
+  window) which behaved exactly as designed: `SchedulerRun` SUCCESS, `results: [{action: "skip",
+  reason: "after_window"}]`, the day's `AutomationReconciliationAttempt` row created with defaults,
+  no verification attempt, no FusionSolar call, no notification, `AutomationState` untouched.
+
 ### Not verified by this ADR
 
-- No production morning has yet exercised the retry path end to end (implemented and unit-tested:
-  `reconciliation-retry-schedule.test.ts`, `reconciliation-retry.test.ts`).
+- No real *failing* production morning has yet exercised the full retry-then-alert path end to end
+  (implemented and unit-tested — `reconciliation-retry-schedule.test.ts`,
+  `reconciliation-retry.test.ts`, `reconciliation-retry-safety.test.ts` — and the outside-window
+  no-op path confirmed live by the 2026-09-07 catch-up run above).

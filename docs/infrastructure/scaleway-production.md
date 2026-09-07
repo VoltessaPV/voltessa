@@ -337,22 +337,36 @@ voltessa-automation-reconciliation.timer  (OnCalendar fires 5×/morning — see 
 - **EnvironmentFile**: `/etc/voltessa-automation-reconciliation.env` (root-only, `chmod 600`).
 - Exists to catch drift between Voltessa's stored state and reality — e.g. a manual mode change via
   `/dev/huawei-api` that the 15-minute engine was never told about.
-- **`OnCalendar` (operator change, applied on the VM per the inspect → backup → modify → restart →
-  verify procedure above).** Was `OnCalendar=*-*-* 06:00:00 Europe/Sofia` (once). Now, for the
-  five morning slots:
+- **`OnCalendar` — APPLIED on the VM 2026-09-07** (Atlanta Automation incident remediation, PR2),
+  per the inspect → backup → modify → daemon-reload → restart → verify SOP below. Was
+  `OnCalendar=*-*-* 06:00:00 Europe/Sofia` (once); the `[Timer]` section is now:
 
   ```ini
-  # in /etc/systemd/system/voltessa-automation-reconciliation.timer, [Timer] section:
+  # /etc/systemd/system/voltessa-automation-reconciliation.timer, [Timer] section
   OnCalendar=*-*-* 06:00/15:00 Europe/Sofia
   OnCalendar=*-*-* 07:00:00 Europe/Sofia
+  Persistent=true
+  Unit=voltessa-automation-reconciliation.service
   ```
 
-  `06:00/15:00` resolves to 06:00, 06:15, 06:30, 06:45; the second line adds 07:00. Verify with
-  `systemd-analyze calendar '*-*-* 06:00/15:00 Europe/Sofia'`. Extra or missed firings are harmless —
-  the route no-ops outside the 06:00–07:15 window and is idempotent per slot — so this cadence is
-  the only VM-side change the retry mechanism needs. The route/DB half ships in `apps/web`; this
-  timer edit is applied separately, and the two are order-independent (before the timer edit, the
-  route simply runs once at 06:00 as before, now with retry bookkeeping that will not be exercised).
+  `06:00/15:00` resolves to 06:00, 06:15, 06:30, 06:45 (the hour stays `06` — it never rolls into
+  07); the second line adds 07:00. Verified live with
+  `systemd-analyze calendar '*-*-* 06:00/15:00 Europe/Sofia' '*-*-* 07:00:00 Europe/Sofia'` →
+  03:00 / 03:15 / 03:30 / 03:45 / 04:00 UTC (= 06:00–07:00 Europe/Sofia in summer EEST). Backup of
+  the previous unit: `voltessa-automation-reconciliation.timer.bak.20260907-141812` in
+  `/etc/systemd/system/`. The `.service` unit was **not** changed (still the single
+  `curl --max-time 280` POST). No other timer was touched.
+  - `Persistent=true` is unchanged from the original unit. On a `daemon-reload`/`restart`/reboot
+    where an earlier slot for the current day is now in the past, systemd fires the service **once**
+    to catch up — harmless: the route computes its decision from `now`, so a catch-up outside
+    06:00–07:15 Europe/Sofia is a `skip: after_window`/`before_window` no-op that only creates the
+    day's `AutomationReconciliationAttempt` row (defaults, no dispatch, no FusionSolar call, no
+    notification), and a catch-up inside the window dispatches at most the one current slot. The
+    2026-09-07 restart did exactly this: one `SchedulerRun` = SUCCESS, `results: [{action: "skip",
+    reason: "after_window"}]`, `AutomationState` untouched.
+  - Extra or missed firings are harmless generally — the route no-ops outside the window and is
+    idempotent per slot (one row per Europe/Sofia date, atomic per-slot claim). This cadence is the
+    only VM-side change the retry mechanism needs.
 
 ## `voltessa-forecast-refresh.timer`
 

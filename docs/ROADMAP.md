@@ -118,12 +118,26 @@
 - New `AutomationEvent` model is the traceability record — created only when
   something actually happened (a switch, a failure, a reconciliation
   mismatch/sync), never for a normal no-action tick.
-- A second, independent daily job (`voltessa-automation-reconciliation.timer`,
-  06:00 Europe/Sofia) is the one place that reads FusionSolar's real state and
+- A second, independent daily job (`voltessa-automation-reconciliation.timer`)
+  is the one place that reads FusionSolar's real state and
   corrects Voltessa's stored record if it has drifted (e.g. a manual change
   via `/dev/huawei-api`) — mirrors the existing telemetry/market-price
   scheduler split (ADR-009) of keeping different-cadence jobs in separate
   systemd units.
+- Atlanta Automation incident (05–06 Sep 2026) remediation. **PR1**: the
+  execution lock is now failure-safe (a serverless kill can no longer leave
+  `AutomationState.isRunning` stuck — a lock older than
+  `EXECUTION_LOCK_TTL_MS` is atomically reclaimed), reconciliation has its
+  own lock (a stuck execution lock can no longer suppress drift detection),
+  and a reconciliation that cannot verify real FusionSolar state is recorded
+  FAILED, never a misleading SUCCESS. **PR2 (ADR-022)**: the morning
+  reconciliation now retries at 06:00 / 06:15 / 06:30 / 06:45 / 07:00
+  Europe/Sofia (the timer's `OnCalendar`), stops the moment one attempt
+  verifies, and sends exactly one Atlanta failure notification
+  (`reconciliation_retry_exhausted`, deduped per org + Europe/Sofia date via
+  `AutomationReconciliationAttempt`) if the 07:00 attempt still fails. Retries
+  are read-only — they never issue a FusionSolar command. Not yet exercised
+  by a real failing morning in production.
 
 ---
 
