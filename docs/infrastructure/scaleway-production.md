@@ -51,9 +51,10 @@ Eight independent `systemd` units run on it (plus the undocumented one above):
    ENTSO-E day-ahead prices. See "Systemd Timers" below.
 4. **`voltessa-automation-execution.timer`** — fires every 15 minutes, calls back into Vercel to run
    one Market Price Optimization Execution Engine cycle. See "Systemd Timers" below.
-5. **`voltessa-automation-reconciliation.timer`** — fires once daily at 06:00 Europe/Sofia, calls
-   back into Vercel to reconcile Voltessa's stored automation state against FusionSolar's real
-   state. See "Systemd Timers" below.
+5. **`voltessa-automation-reconciliation.timer`** — fires five times each morning (06:00, 06:15,
+   06:30, 06:45, 07:00 Europe/Sofia), calls back into Vercel to reconcile Voltessa's stored
+   automation state against FusionSolar's real state, retrying at each slot until one attempt
+   verifies. See "Systemd Timers" below.
 6. **`voltessa-forecast-refresh.timer`** — fires twice daily, 00:10 and 12:10 Europe/Sofia, calls
    back into Vercel to reconcile+regenerate the persisted PV forecast (`PvForecastRecord`). See
    "Systemd Timers" below.
@@ -281,20 +282,46 @@ voltessa-automation-execution.timer  (OnCalendar=*:0/15 — every 15 minutes)
 
 ## `voltessa-automation-reconciliation.timer`
 
-Market Price Optimization Execution Engine milestone. See `apps/web/lib/automation/daily-reconciliation.ts`.
+Market Price Optimization Execution Engine milestone; retry mechanism added by the Atlanta
+Automation incident remediation. See `apps/web/lib/automation/daily-reconciliation.ts` and
+`apps/web/lib/automation/reconciliation-retry.ts`.
+
+**Retry schedule — the timer fires the route FIVE times each morning**, 06:00 / 06:15 / 06:30 /
+06:45 / 07:00 Europe/Sofia. Each call is idempotent: the route runs at most one read-only
+verification attempt per 15-minute slot, stops retrying the moment one attempt verifies the real
+FusionSolar state, and — only if the 07:00 attempt still fails — emits exactly one
+`reconciliation_retry_exhausted` event + Atlanta ntfy notification. Per-morning state lives in the
+`AutomationReconciliationAttempt` table (one row per Europe/Sofia date), not in memory. A failed
+reconciliation NEVER changes `AutomationState.currentExportMode` and NEVER sends a FusionSolar
+command.
 
 ```
-voltessa-automation-reconciliation.timer  (OnCalendar=*-*-* 06:00:00 Europe/Sofia — once daily)
+voltessa-automation-reconciliation.timer  (OnCalendar fires 5×/morning — see below)
   -> voltessa-automation-reconciliation.service  (curl, Bearer CRON_SECRET)
   -> POST https://app.voltessa.ai/api/internal/automation/daily-reconciliation
   -> route.ts: crypto.timingSafeEqual auth check
-  -> runDailyReconciliation():
+  -> runAtlantaMorningReconciliation():
+       derive today's Europe/Sofia date + the 5 slot instants (DST-exact)
+       load/create the AutomationReconciliationAttempt row for that date
+       decideReconciliationRetry(now, slots, state):
+         already verified this morning / outside 06:00-07:15 / this slot already
+           dispatched  -> skip (no-op)
+         otherwise -> atomically claim this slot, then run ONE attempt via
+           runDailyReconciliation() (the read-only Read Status path below)
+       SUCCESS  -> mark the morning verified; stop; NO notification (the stored
+                   state was already synchronized FROM the verified real state)
+       FAILED/SKIPPED on slots 06:00-06:45 -> record it; a later slot retries; no alert
+       FAILED/SKIPPED on the 07:00 slot -> send the ONE final-failure notification
+  -> the underlying single attempt (runDailyReconciliation) still does:
        for every organization owning a Plant named "Atlanta" (findAtlantaOrganizationIds) -
        deliberately NOT gated on AutomationSettings.automationEnabled, unlike the execution
        engine above: this job is read-only and only ever updates Voltessa's own stored
        AutomationState, so it stays safe to run even while automation is disabled - keeps
        AutomationState accurate for the moment it's turned back on:
-         acquire the same per-org lock - already running? skip silently, no event
+         acquire the per-org RECONCILIATION lock (AutomationState.reconciliationRunning /
+           reconciliationLockedAt - its OWN lock since PR1, NOT the 15-minute execution
+           lock; a stuck execution lock can no longer suppress reconciliation) - already
+           running? skip silently, no event
          call the Automation Service's Read Status operation (the one place in this whole
            engine that ever queries FusionSolar directly)
          all dongles agree on one mode, and it matches AutomationState.currentExportMode
@@ -310,6 +337,22 @@ voltessa-automation-reconciliation.timer  (OnCalendar=*-*-* 06:00:00 Europe/Sofi
 - **EnvironmentFile**: `/etc/voltessa-automation-reconciliation.env` (root-only, `chmod 600`).
 - Exists to catch drift between Voltessa's stored state and reality — e.g. a manual mode change via
   `/dev/huawei-api` that the 15-minute engine was never told about.
+- **`OnCalendar` (operator change, applied on the VM per the inspect → backup → modify → restart →
+  verify procedure above).** Was `OnCalendar=*-*-* 06:00:00 Europe/Sofia` (once). Now, for the
+  five morning slots:
+
+  ```ini
+  # in /etc/systemd/system/voltessa-automation-reconciliation.timer, [Timer] section:
+  OnCalendar=*-*-* 06:00/15:00 Europe/Sofia
+  OnCalendar=*-*-* 07:00:00 Europe/Sofia
+  ```
+
+  `06:00/15:00` resolves to 06:00, 06:15, 06:30, 06:45; the second line adds 07:00. Verify with
+  `systemd-analyze calendar '*-*-* 06:00/15:00 Europe/Sofia'`. Extra or missed firings are harmless —
+  the route no-ops outside the 06:00–07:15 window and is idempotent per slot — so this cadence is
+  the only VM-side change the retry mechanism needs. The route/DB half ships in `apps/web`; this
+  timer edit is applied separately, and the two are order-independent (before the timer edit, the
+  route simply runs once at 06:00 as before, now with retry bookkeeping that will not be exercised).
 
 ## `voltessa-forecast-refresh.timer`
 

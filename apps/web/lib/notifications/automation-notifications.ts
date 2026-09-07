@@ -45,7 +45,8 @@ export type AutomationNotificationEventType =
   | "mode_changed"
   | "automation_service_failed"
   | "reconciliation_failed"
-  | "reconciliation_restored";
+  | "reconciliation_restored"
+  | "reconciliation_retry_exhausted";
 
 export type AutomationNotificationInput = {
   type: string;
@@ -178,6 +179,33 @@ function buildNotification(input: AutomationNotificationInput): Notification | n
           "",
           "Time",
           time,
+        ].join("\n"),
+      };
+
+    case "reconciliation_retry_exhausted":
+      return {
+        title: "Voltessa",
+        priority: "high",
+        tags: ["warning", "lock"],
+        body: [
+          `🔴 ${ATLANTA_PLANT_NAME}`,
+          "",
+          "Morning FusionSolar reconciliation could NOT be completed",
+          "",
+          "Voltessa could not verify the plant's real export mode after all",
+          "scheduled attempts (06:00–07:00 Europe/Sofia).",
+          "",
+          "The stored export mode was NOT changed and is unverified.",
+          "No FusionSolar command was sent.",
+          "",
+          "Last error",
+          input.errorMessage ?? "unknown",
+          "",
+          "Time",
+          time,
+          "",
+          "Action recommended",
+          "Check the Automation Service / FusionSolar connectivity, then re-run reconciliation.",
         ].join("\n"),
       };
 

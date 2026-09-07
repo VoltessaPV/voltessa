@@ -9,12 +9,44 @@ import {
 } from "./automation-state";
 import {
   classifyReconciliationRun,
+  deriveFusionSolarMode,
   runDailyReconciliation,
   type OrganizationReconciliationOutcome,
 } from "./daily-reconciliation";
 
 const ORG = "atlanta-org";
 const T0 = new Date("2026-09-06T03:00:00.000Z");
+
+// --- deriveFusionSolarMode: the Read Status -> single verified mode rule -----
+
+const dongle = (mode: string) => ({ name: `d-${mode}`, online: true, mode });
+
+test("all three Atlanta dongles reporting 'No Limit' -> the single verified mode is 'No Limit'", () => {
+  assert.equal(
+    deriveFusionSolarMode([dongle("No Limit"), dongle("No Limit"), dongle("No Limit")]),
+    "No Limit",
+  );
+});
+
+test("all three dongles reporting 'Zero Export' -> 'Zero Export'", () => {
+  assert.equal(
+    deriveFusionSolarMode([dongle("Zero Export"), dongle("Zero Export"), dongle("Zero Export")]),
+    "Zero Export",
+  );
+});
+
+test("dongles that disagree -> null (no single verified mode; reconciliation fails closed, never guesses)", () => {
+  assert.equal(deriveFusionSolarMode([dongle("No Limit"), dongle("No Limit"), dongle("Zero Export")]), null);
+});
+
+test("a non-canonical / unknown dongle mode -> null (never mapped onto a canonical value)", () => {
+  assert.equal(deriveFusionSolarMode([dongle("Unknown"), dongle("Unknown"), dongle("Unknown")]), null);
+  assert.equal(deriveFusionSolarMode([dongle("Fixed 50 kW"), dongle("Fixed 50 kW"), dongle("Fixed 50 kW")]), null);
+});
+
+test("no dongles at all -> null", () => {
+  assert.equal(deriveFusionSolarMode([]), null);
+});
 
 // --- classifyReconciliationRun (fail-closed status) ---------------------------
 

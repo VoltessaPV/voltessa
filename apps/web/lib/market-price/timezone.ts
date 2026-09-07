@@ -48,7 +48,15 @@ function offsetMillisAt(utcMillis: number, timeZone: string): number {
   return asIfUtc - utcMillis;
 }
 
-function zonedTimeToUtc(
+/**
+ * The UTC instant at which local wall-clock `year-month-day hour:minute`
+ * (month 1-based) occurs in `timeZone`. DST-exact (`offsetMillisAt` resolves
+ * the real offset for that instant). Exported for callers that need a
+ * specific local time-of-day on a specific local date as an absolute
+ * instant — e.g. the Atlanta morning-reconciliation retry slots
+ * (`lib/automation/reconciliation-retry-schedule.ts`).
+ */
+export function zonedTimeToUtc(
   year: number,
   month: number,
   day: number,

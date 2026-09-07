@@ -30,7 +30,17 @@ export type AutomationEventType =
   // regardless of type). Deliberately NOT in USER_FACING_EVENT_TYPES and
   // deliberately not wired to a notification here — operator-facing
   // alerting for this is the next remediation phase.
-  | "execution_lock_reclaimed";
+  | "execution_lock_reclaimed"
+  // Atlanta Automation incident remediation ("reconciliation retry"
+  // change): the morning FusionSolar reconciliation failed on every
+  // scheduled attempt (06:00–07:00 Europe/Sofia). Emitted exactly once per
+  // morning (dedup via AutomationReconciliationAttempt.finalFailureNotifiedAt)
+  // and DOES notify (see lib/notifications/automation-notifications.ts) —
+  // an unverified plant state after all retries is operator-actionable.
+  // Visible in the admin Platform Logs view like every other event type;
+  // not added to USER_FACING_EVENT_TYPES here (the Market/Dashboard Event
+  // Log's reconciliation-event visibility is a separate, later change).
+  | "reconciliation_retry_exhausted";
 
 export type CreateAutomationEventInput = {
   organizationId: string;

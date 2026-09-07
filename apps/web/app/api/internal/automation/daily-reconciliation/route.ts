@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import { NextResponse } from "next/server";
 
 import {
-  classifyReconciliationRun,
-  runDailyReconciliation,
-} from "@/lib/automation/daily-reconciliation";
+  aggregateMorningReconciliationStatus,
+  runAtlantaMorningReconciliation,
+} from "@/lib/automation/reconciliation-retry";
 import { recordSchedulerRun } from "@/lib/admin/scheduler-run";
 
 const SCHEDULER_NAME = "automation_reconciliation";
@@ -13,14 +13,20 @@ const SCHEDULER_NAME = "automation_reconciliation";
 /**
  * The Scaleway systemd timer's HTTP entry point for the Market Price
  * Optimization Execution Engine's daily reconciliation
- * (`voltessa-automation-reconciliation.timer`,
- * `OnCalendar=06:00:00 Europe/Sofia`). Bearer-token gated (`CRON_SECRET`),
- * same convention as every other `app/api/internal/**` route.
+ * (`voltessa-automation-reconciliation.timer`). Bearer-token gated
+ * (`CRON_SECRET`), same convention as every other `app/api/internal/**`
+ * route.
  *
- * This is the one job in the whole execution engine that reads
- * FusionSolar's real state (via the existing Automation Service's Read
- * Status operation) and compares it against Voltessa's own stored state -
- * see lib/automation/daily-reconciliation.ts.
+ * "Reconciliation retry" change: the timer now fires this route five times
+ * every morning — 06:00, 06:15, 06:30, 06:45, 07:00 Europe/Sofia (see
+ * `docs/infrastructure/scaleway-production.md`). Each invocation is
+ * idempotent: `runAtlantaMorningReconciliation` uses the persisted
+ * `AutomationReconciliationAttempt` row to run one read-only verification
+ * attempt per slot, stop once an attempt has verified the real FusionSolar
+ * state, and send exactly one Atlanta failure notification if the 07:00
+ * attempt still failed. It never issues a FusionSolar command and never
+ * writes `AutomationState.currentExportMode` except via the PR1
+ * verified-sync path (`lib/automation/daily-reconciliation.ts`).
  */
 
 export const runtime = "nodejs";
@@ -78,39 +84,33 @@ async function handleReconciliation(request: Request) {
   });
 
   try {
-    const outcomes = await runDailyReconciliation();
-
-    // Fail-closed (Atlanta Automation incident remediation, PR1): the run
-    // only counts as SUCCESS if every eligible organization's real
-    // FusionSolar state was actually retrieved, evaluated and compared.
-    // "The reconciliation function executed without throwing" is NOT
-    // success - a run that could not verify actual state (Automation
-    // Service/Playwright/login/timeout/network failure, inconsistent
-    // dongles) is recorded as FAILED so production evidence exists after
-    // the fact; a run held off only by a concurrent reconciliation is
-    // SKIPPED.
-    const { status, unverifiedOrganizationIds } = classifyReconciliationRun(outcomes);
+    // One morning "slot" per invocation. Idempotent, persisted-state
+    // driven, fail-closed: an attempt that could not VERIFY the real
+    // FusionSolar state (Automation Service / Playwright / login / timeout /
+    // network failure, inconsistent dongles) is FAILED, never SUCCESS; a
+    // slot held off only by a still-running prior attempt is SKIPPED; a
+    // verifying or no-op (outside-window / already-verified) tick is
+    // SUCCESS. The single "could not be completed after all attempts"
+    // notification fires only when the 07:00 slot itself fails.
+    const results = await runAtlantaMorningReconciliation();
+    const { status, errorMessage } = aggregateMorningReconciliationStatus(results);
 
     console.log("[Automation Daily Reconciliation] Completed", {
       startedAt: startedAt.toISOString(),
       durationMs: Date.now() - startedAt.getTime(),
       status,
-      unverifiedOrganizationIds,
-      outcomes,
+      results,
     });
 
     await recordSchedulerRun({
       schedulerName: SCHEDULER_NAME,
       startedAt,
       status,
-      errorMessage:
-        status === "SUCCESS"
-          ? undefined
-          : `reconciliation did not verify actual FusionSolar state for ${unverifiedOrganizationIds.length} organization(s): ${unverifiedOrganizationIds.join(", ")}`,
-      summary: { status, unverifiedOrganizationIds, outcomes },
+      errorMessage,
+      summary: { status, results },
     });
 
-    return NextResponse.json({ ok: true, status, outcomes });
+    return NextResponse.json({ ok: true, status, results });
   } catch (error) {
     console.error("[Automation Daily Reconciliation] Failed", {
       startedAt: startedAt.toISOString(),

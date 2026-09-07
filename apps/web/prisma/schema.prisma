@@ -333,13 +333,14 @@ model Organization {
   sungrowConnection      SungrowConnection?
   traderAssignment       TraderAssignment?
 
-  automationSettings AutomationSettings?
-  automationState    AutomationState?
-  automationEvents   AutomationEvent[]
-  deviceTelemetry    DeviceTelemetry[]
-  plantDailyKpis     PlantDailyKpi[]
-  pvForecastRecords  PvForecastRecord[]
-  mlForecastRecords  MlForecastRecord[]
+  automationSettings               AutomationSettings?
+  automationState                  AutomationState?
+  automationEvents                 AutomationEvent[]
+  automationReconciliationAttempts AutomationReconciliationAttempt[]
+  deviceTelemetry                  DeviceTelemetry[]
+  plantDailyKpis                   PlantDailyKpi[]
+  pvForecastRecords                PvForecastRecord[]
+  mlForecastRecords                MlForecastRecord[]
 
   billingInformation   BillingInformation?
   energyMarketSettings EnergyMarketSettings?
@@ -794,6 +795,65 @@ model AutomationState {
   updatedAt DateTime @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+/// Atlanta morning-reconciliation retry state — one row per Europe/Sofia
+/// calendar date (Atlanta Automation incident remediation, "reconciliation
+/// retry" change). The daily-reconciliation route is invoked several times
+/// each morning (06:00, 06:15, 06:30, 06:45, 07:00 Europe/Sofia — the
+/// systemd timer's `OnCalendar`, see
+/// `docs/infrastructure/scaleway-production.md`); this row makes those
+/// invocations idempotent and carries just enough state to (a) not re-run a
+/// slot, (b) stop retrying once an attempt has VERIFIED the real FusionSolar
+/// state, and (c) send exactly ONE "morning reconciliation could not be
+/// completed" notification if the final (07:00) attempt still failed.
+/// Deliberately its own model, not overloaded onto `AutomationState`, and
+/// deliberately not a redesign of the automation state model. A failed
+/// reconciliation never changes `AutomationState.currentExportMode` and
+/// never sends a FusionSolar command — see
+/// `lib/automation/reconciliation-retry.ts`.
+model AutomationReconciliationAttempt {
+  id String @id @default(cuid())
+
+  organizationId String
+
+  /// The Europe/Sofia calendar date this morning's retries belong to,
+  /// stored as that local day's own UTC-midnight instant (same convention
+  /// as `PlantDailyKpi.localDate`).
+  reconciliationDate DateTime
+
+  /// Count of COMPLETED verification attempts — a dispatched run that
+  /// actually reached the Automation Service and got a success/failure
+  /// answer. A run that could not acquire the reconciliation lock because a
+  /// prior attempt was still in flight is NOT counted here.
+  completedAttempts Int @default(0)
+
+  /// Highest 0-based schedule slot index a run has been dispatched for this
+  /// morning — the per-slot idempotency guard (two invocations landing in
+  /// the same 15-minute slot: only the first dispatches).
+  lastDispatchedSlot Int @default(-1)
+
+  lastAttemptAt DateTime?
+
+  /// Last classified failure summary, surfaced in the final-failure event/
+  /// notification.
+  lastFailureReason String?
+
+  succeeded   Boolean   @default(false)
+  succeededAt DateTime?
+
+  /// Set once, atomically, when the single "morning reconciliation could
+  /// not be completed after all attempts" notification has been sent — the
+  /// dedup guard behind "exactly ONE final notification".
+  finalFailureNotifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, reconciliationDate])
+  @@index([organizationId, reconciliationDate])
 }
 
 /// The automation event log (Market Price Optimization Execution Engine

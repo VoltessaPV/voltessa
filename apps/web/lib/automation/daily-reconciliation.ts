@@ -85,7 +85,7 @@ export function classifyReconciliationRun(
  * mode) if they don't, which the caller treats as its own distinct case
  * rather than guessing which dongle is "right".
  */
-function deriveFusionSolarMode(dongles: DongleStatus[]): ExportMode | null {
+export function deriveFusionSolarMode(dongles: DongleStatus[]): ExportMode | null {
   const firstMode = dongles[0]?.mode;
 
   if (!firstMode) {

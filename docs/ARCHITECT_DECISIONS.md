@@ -1640,3 +1640,78 @@ figures before this milestone's fixes).
   historical data, not a live-outage fallback trigger. Treat the fallback path itself as
   implemented-and-tested (unit tests exist, see `refresh-market-prices.test.ts`), not yet
   production-exercised end-to-end under a real outage.
+
+---
+
+## ADR-022: Atlanta morning reconciliation retries — persisted per-day retry state, 5 fixed Europe/Sofia slots, one final alert
+
+### Status
+
+Accepted (Atlanta Automation incident remediation, follow-up to PR1's failure-safe lock /
+independent reconciliation lock / fail-closed status). This is a targeted addition to the existing
+reconciliation flow, **not** the DESIRED/ACTUAL/LAST_VERIFIED state-model redesign (that is still
+future work).
+
+### Context
+
+After PR1, the Atlanta daily reconciliation (`voltessa-automation-reconciliation.timer`, once at
+06:00 Europe/Sofia) fails closed: a run that cannot reach the Automation Service / read the real
+FusionSolar state records `SchedulerRun` FAILED rather than a misleading SUCCESS. But a single
+06:00 attempt is fragile — the browser-based Read Status path has historically thrown ~monthly on
+transient FusionSolar slowness (30 s Playwright step timeouts on `expandPlant` /
+`discoverChildNodeNames`, see `AutomationEvent` history), and one bad morning then leaves Voltessa's
+stored `AutomationState.currentExportMode` unverified for a full day with only a first-occurrence
+notification. We want automatic retries every 15 minutes through 07:00, and exactly one clear
+"could not be completed" alert if the last attempt still fails.
+
+### Decision
+
+1. **Cadence is a systemd `OnCalendar` change, not new code.** `voltessa-automation-reconciliation.timer`
+   fires the *existing* reconciliation route five times each morning — 06:00, 06:15, 06:30, 06:45,
+   07:00 Europe/Sofia (`06:00/15:00` + `07:00:00`, see
+   `docs/infrastructure/scaleway-production.md`). No new scheduler, no new cadence class, no change
+   to the 15-minute execution timer or PR1's execution-lock TTL. This matches how every scheduler
+   cadence in this system is expressed (VM systemd, outside the repo).
+
+2. **Retry policy, per-slot idempotency and alert dedup live in tested app code**, invoked by the
+   route on every morning tick: `lib/automation/reconciliation-retry-schedule.ts` (pure —
+   DST-exact slot instants + `decideReconciliationRetry`) and
+   `lib/automation/reconciliation-retry.ts` (`runAtlantaMorningReconciliation`). Each tick runs at
+   most **one** read-only verification attempt, via the unchanged PR1 primitive
+   (`runDailyReconciliation` → `classifyReconciliationRun`). The Atlanta browser/Automation Service
+   path is reused, never replaced.
+
+3. **A dedicated persisted model, `AutomationReconciliationAttempt`** (one row per Europe/Sofia
+   date: `lastDispatchedSlot`, `completedAttempts`, `succeeded`, `finalFailureNotifiedAt`,
+   `lastFailureReason`, `lastAttemptAt`). Its own model, not overloaded onto `AutomationState`.
+   Survives serverless execution — no `setTimeout`/`setInterval` anywhere; each attempt's
+   eligibility is derived from this row plus the wall clock. All mutations are single atomic
+   conditional `updateMany`s (same compare-and-set discipline as PR1's lock): the per-slot claim
+   (`lastDispatchedSlot < slotIndex`) and the final-notification claim
+   (`finalFailureNotifiedAt IS NULL AND succeeded = false`) each have exactly one winner under
+   concurrent invocations.
+
+4. **Safety semantics preserved.** A failed/unverified attempt never sets
+   `AutomationState.currentExportMode` (only the PR1 verified-sync path does, and only from the real
+   read value) and never sends a Zero Export / No Limit command. The first verifying attempt stops
+   further retries. Exactly one `reconciliation_retry_exhausted` event + Atlanta ntfy notification
+   is emitted, and only when the 07:00 slot itself fails.
+
+### Consequences
+
+- The `reconciliation_retry_exhausted` event is visible in the admin Platform Logs view
+  (`getPlatformLogs` reads every event type) and drives the notification. It is deliberately **not**
+  added to `USER_FACING_EVENT_TYPES` — surfacing reconciliation events in the Market/Dashboard Event
+  Log is a separate, later change.
+- Each morning tick records its own `SchedulerRun`: a tick whose attempt FAILED is `FAILED`
+  (visible in `getSchedulerHealth`) even while later slots may still retry; a tick lock-skipped by a
+  still-running prior attempt is `SKIPPED`; a verifying or no-op tick is `SUCCESS`. Up to ~4
+  consecutive FAILED morning ticks are possible on a fully-failing morning before the next day
+  resets the streak.
+- The VM `OnCalendar` edit and the `apps/web` change are order-independent: before the timer edit,
+  the route runs once at 06:00 as before, carrying retry bookkeeping that simply is not exercised.
+
+### Not verified by this ADR
+
+- No production morning has yet exercised the retry path end to end (implemented and unit-tested:
+  `reconciliation-retry-schedule.test.ts`, `reconciliation-retry.test.ts`).
