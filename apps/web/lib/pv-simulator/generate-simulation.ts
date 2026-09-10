@@ -26,6 +26,7 @@
  */
 
 import { floorToInterval } from "@/lib/market-price/provider";
+import { localMonthBoundsUtc } from "@/lib/market-price/timezone";
 import { getPlantProductionEnergySeries } from "@/lib/telemetry/energy-metrics";
 import { formatWallClockTimestamp } from "@/lib/reporting/export-shared";
 
@@ -38,6 +39,31 @@ import {
 } from "./simulate";
 
 const STEP_MS = 15 * 60 * 1000;
+
+/**
+ * Splits `[startUtc, endUtc)` into calendar-month sub-windows in `timeZone`
+ * (each clamped to the outer bounds). Month boundaries are local-midnight
+ * instants, which on a whole-hour-offset zone are 15-minute aligned — so
+ * the concatenated per-chunk 15-minute grids reproduce the single-window
+ * grid exactly.
+ */
+function monthlyChunks(
+  startUtc: Date,
+  endUtc: Date,
+  timeZone: string,
+): Array<{ start: Date; end: Date }> {
+  const chunks: Array<{ start: Date; end: Date }> = [];
+  let cursor = startUtc;
+  let guard = 0;
+  while (cursor.getTime() < endUtc.getTime() && guard < 600) {
+    guard += 1;
+    const { end: monthEnd } = localMonthBoundsUtc(cursor, timeZone);
+    const chunkEnd = monthEnd.getTime() < endUtc.getTime() ? monthEnd : endUtc;
+    chunks.push({ start: cursor, end: chunkEnd });
+    cursor = chunkEnd;
+  }
+  return chunks;
+}
 
 export type GenerateSimulationParams = {
   referencePlant: ReferencePlant;
@@ -89,19 +115,23 @@ export async function generateSimulation(
     floorToInterval(intervals[intervals.length - 1]!.intervalStartUtc, 15).getTime() + STEP_MS,
   );
 
-  // One range read of the reference plant's canonical per-interval production.
-  const production = await getPlantProductionEnergySeries(
-    referencePlant.id,
-    windowStartUtc,
-    windowEndUtc,
-  );
-
+  // The canonical `getPlantProductionEnergySeries` is O(buckets × samples)
+  // internally, so it is called over bounded ~monthly sub-windows (exactly
+  // how Dashboard/Market call it per day/period) rather than one 11-month
+  // window — each chunk is cheap, the union is the same series.
   const producedByMs = new Map<number, number | null>();
   const coveredDays = new Set<string>();
-  for (const point of production) {
-    producedByMs.set(point.intervalStart.getTime(), point.producedKwh);
-    if (point.producedKwh !== null) {
-      coveredDays.add(formatWallClockTimestamp(point.intervalStart, timeZone).slice(0, 10));
+  for (const chunk of monthlyChunks(windowStartUtc, windowEndUtc, timeZone)) {
+    const production = await getPlantProductionEnergySeries(
+      referencePlant.id,
+      chunk.start,
+      chunk.end,
+    );
+    for (const point of production) {
+      producedByMs.set(point.intervalStart.getTime(), point.producedKwh);
+      if (point.producedKwh !== null) {
+        coveredDays.add(formatWallClockTimestamp(point.intervalStart, timeZone).slice(0, 10));
+      }
     }
   }
 
