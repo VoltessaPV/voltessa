@@ -17,6 +17,7 @@
     "react-calendly": "^4.4.0",
     "react-dom": "^19.2.0",
     "react-email": "^6.9.1",
+    "read-excel-file": "9.3.10",
     "recharts": "^3.9.2",
     "resend": "^6.18.0",
     "tailwind-merge": "^3.6.0",
@@ -49,7 +50,7 @@
     "i18n:check-missing": "node scripts/i18n/check-missing.mjs",
     "i18n:check-terminology": "node scripts/i18n/check-terminology.mjs",
     "i18n:check-unused": "node scripts/i18n/check-unused.mjs",
-    "test": "tsx --test lib/market-price/providers/entsoe.test.ts lib/market-price/providers/ibex.test.ts lib/market-price/refresh-market-prices.test.ts lib/market-price/market-price-notifications.test.ts lib/market-price/provider.test.ts lib/market-price/ensure-delivery-day-available.test.ts lib/automation/automation-state.test.ts lib/automation/daily-reconciliation.test.ts lib/automation/reconciliation-retry-schedule.test.ts lib/automation/reconciliation-retry.test.ts lib/automation/reconciliation-retry-safety.test.ts lib/automation/market-price-optimization-scheduler.test.ts lib/auth/verify-google-id-token.test.ts lib/reporting/report-request.test.ts lib/reporting/build-report.test.ts lib/reporting/csv.test.ts lib/reporting/xlsx.test.ts",
+    "test": "tsx --test lib/market-price/providers/entsoe.test.ts lib/market-price/providers/ibex.test.ts lib/market-price/refresh-market-prices.test.ts lib/market-price/market-price-notifications.test.ts lib/market-price/provider.test.ts lib/market-price/ensure-delivery-day-available.test.ts lib/automation/automation-state.test.ts lib/automation/daily-reconciliation.test.ts lib/automation/reconciliation-retry-schedule.test.ts lib/automation/reconciliation-retry.test.ts lib/automation/reconciliation-retry-safety.test.ts lib/automation/market-price-optimization-scheduler.test.ts lib/auth/verify-google-id-token.test.ts lib/reporting/report-request.test.ts lib/reporting/build-report.test.ts lib/reporting/csv.test.ts lib/reporting/xlsx.test.ts lib/pv-simulator/simulate.test.ts lib/pv-simulator/load-profile.test.ts lib/pv-simulator/csv.test.ts lib/pv-simulator/xlsx.test.ts",
     "test:e2e": "playwright test"
   },
   "type": "module",

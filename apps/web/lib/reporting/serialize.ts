@@ -5,31 +5,19 @@
  * Pure; unit-tested in `csv.test.ts`.
  */
 
+import { formatWallClockTimestamp, slugifySegment } from "./export-shared";
 import { metricDecimals, type MetricKey } from "./metrics";
 
 /**
  * `YYYY-MM-DD HH:mm` for the interval-start instant, in the plant's
- * timezone. Uses `Intl.DateTimeFormat` (IANA tz database, DST-correct) —
- * never manual offset arithmetic. This is the interval **start**; a period
- * crossing a DST transition produces the right number of rows because the
- * underlying grid steps in fixed 15-minute UTC increments (see
- * `generate-report.ts`), and this only ever relabels those instants.
+ * timezone (thin wrapper over the shared `formatWallClockTimestamp`). This
+ * is the interval **start**; a period crossing a DST transition produces
+ * the right number of rows because the underlying grid steps in fixed
+ * 15-minute UTC increments (see `generate-report.ts`), and this only ever
+ * relabels those instants.
  */
 export function formatIntervalTimestamp(instant: Date, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(instant);
-
-  const get = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((part) => part.type === type)?.value ?? "";
-
-  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+  return formatWallClockTimestamp(instant, timeZone);
 }
 
 /**
@@ -86,14 +74,7 @@ export function toMetricNumber(value: number | null, metric: MetricKey): number 
  * filename after this.
  */
 export function slugifyPlantName(name: string): string {
-  const slug = name
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60)
-    .replace(/^-+|-+$/g, "");
-  return slug || "plant";
+  return slugifySegment(name, "plant");
 }
 
 /**

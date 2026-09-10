@@ -311,3 +311,88 @@ the full decision record and engineering report.
   `lib/market-price/revenue.ts`.
 - Export endpoints are Server Actions (not `app/api/*` route handlers) to match the established
   admin pattern (Automation Lab, Digital Twin, Historical Imports).
+
+---
+
+# PV Impact Simulator — external load-profile self-consumption / export simulation
+
+See ADR-023 (`docs/ARCHITECT_DECISIONS.md`) for the full decision record.
+
+## Completed
+
+- New Platform-Admin page **`/admin/pv-simulator`** (`app/admin/pv-simulator/*`,
+  `lib/pv-simulator/*`, new pinned dependency `read-excel-file`). Upload an external customer's
+  15-minute annual consumption profile (Excel, utility pivot layout — a row per day, 96
+  interval-end time columns), pick a real Voltessa PV plant as the production reference, enter a
+  hypothetical PV capacity (kWp) and a mode (self-consumption only / self-consumption + export),
+  optionally restrict the date range, and get per-interval / hourly / monthly / whole-period
+  results plus a **CSV** (15-minute detail) or a 4-sheet **XLSX** (Summary / Monthly Overview /
+  Hourly Profile / 15-Minute Detail).
+- **Methodology (physical energy only)**: `simulated_pv = reference_pv × (target_kWp / reference_kWp)`
+  applied independently to every 15-minute interval. `reference_pv` per interval =
+  `getPlantProductionEnergySeries()` (canonical Energy Engine, produced kWh — the same function the
+  Reporting feature uses); `reference_kWp` = the reference plant's canonical `Plant.capacityKw`
+  (Chomakovtsi = `"Чомаковци 100KW"`, 100 kWp). No irradiance model, no synthetic generation, no
+  hard-coded factor. Per interval: `pv_used = min(load, sim_pv)`, `import_with_pv = load − pv_used`,
+  `surplus = max(sim_pv − load, 0)`; export mode → `export = surplus`, self-consumption mode →
+  `curtailed = surplus`. Invariants (no negative import/export, `pv_used ≤ load`, no export when
+  export is disabled) are asserted.
+- **Input / unit interpretation**: the load profile is **interval energy, kWh per 15-minute
+  interval**, in the reference plant timezone (`Europe/Sofia`). Verified against the supplied file —
+  its cell at (2026-05-01, interval-end 09:15) is `60`, matching the spec example
+  "01.05.2026 09:15 → 60 kWh". A `unitMode` toggle (`kwh_interval` default / `kw_average` → ×0.25)
+  handles a future average-power file, with a heuristic warning if a `kwh_interval` file looks
+  power-shaped.
+- **Totals & percentages**: monthly and whole-period `TOTAL` rows SUM the interval quantities;
+  every rate (self-consumption rate, solar coverage, import-reduction %) is computed from the
+  period/month totals, never by averaging per-interval or per-month rates. `TOTAL` is always the
+  last row of both exports.
+- **Missing data (never invent, always disclose)**: a blank consumption cell → excluded from every
+  total, blank in the detail, counted. An interval whose reference plant has no telemetry
+  (Chomakovtsi's `DeviceTelemetry` starts 2026-01; a profile beginning earlier has months with no
+  reference production) → consumption and grid import are kept (grid import with PV = load, since
+  there is no PV), production is left null and excluded from PV totals and rate denominators, and
+  the summary reports the reference-PV day coverage plus **both** a whole-period and a
+  covered-days-only solar-coverage / import-reduction figure. Within a covered day a null bucket
+  (night / brief gap) → `0`.
+- **Timezone / DST / leap year**: each interval's instant is `zonedTimeToUtc(date, startHH:startMM,
+  Europe/Sofia)` (DST-exact); the profile is 96 civil slots per calendar day regardless of DST.
+  Spring-forward's non-existent local hour → `dst_ambiguous` (first kept, rest excluded, counted &
+  warned); the source's trailing blanks on that 23-hour day → `missing_load`. Feb 29 is a normal
+  row.
+- **Authorization**: `/admin/pv-simulator` page and both Server Actions
+  (`runSimulationPreview`, `exportSimulation`) independently call `requirePlatformAdmin()`
+  (ADR-006 / ADR-014); the reference plant, its timezone and its capacity are re-resolved from the
+  database by id — never trusted from the browser. The uploaded file is parsed in memory per run
+  and **never persisted** (no customer data in the repo, no DB write, no Prisma migration).
+  `e2e/admin-routing.spec.ts` extended for the new route.
+- **Financial / ROI**: explicitly **out of scope** for this phase. The simulator emits only
+  physical kWh quantities (consumption, grid import with & without PV, PV generation / used /
+  surplus / curtailed / exported, per interval / hour / month / period), structured so a later
+  phase can layer avoided-cost (× retail tariff) and export revenue (`MarketPrice` +
+  `computeExportRevenue`) → monthly savings, payback, ROI, IRR. No € value or price is computed or
+  invented here. Physical and financial layers stay in separate modules.
+- **Exports reuse the Reporting primitives**: CSV framing (`csvDocument` — UTF-8 BOM, CRLF, RFC
+  4180), the safe filename slugifier and the multi-sheet XLSX builder were extracted into
+  `lib/reporting/export-shared.ts` and are shared by Reporting and the Simulator — no parallel
+  export architecture.
+- **Tests**: `lib/pv-simulator/{simulate,load-profile,csv,xlsx}.test.ts` (~60 cases) covering the
+  exact spec example, PV < / = / > load, zero/negative capacity, missing & duplicate intervals,
+  DST spring-forward, leap year, monthly aggregation, full-period TOTAL == sum of months,
+  rates-from-totals (not averaged), export-disabled / export-enabled behaviour, kW→kWh conversion,
+  CSV escaping / filename safety, and XLSX round-trip to four named sheets. Verified end-to-end
+  against the real supplied load profile + real Chomakovtsi production data before deployment
+  (full 11-month period and a restricted covered window).
+
+## Limitations
+
+- Linear capacity scaling assumes the hypothetical array has the same orientation / shading /
+  soiling / temperature / inverter-clipping behaviour as the reference plant, scaled 1:1
+  (documented in the UI and report). Chomakovtsi's per-interval production comes from inverter
+  power integration, which runs slightly below its manufacturer daily counter — so
+  Chomakovtsi-referenced simulations are conservative.
+- The supplied profile (Jul 2025 – May 2026) is only ~45 % covered by Chomakovtsi's 15-minute
+  telemetry (Jan 2026 onward); the whole-period figures are a lower bound and the covered-days
+  figures + coverage % are the interpretable result. Restricting to Jan–May 2026 gives a fully
+  covered simulation.
+- One reference plant and one real load profile exercised so far.

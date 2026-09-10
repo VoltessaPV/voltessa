@@ -1729,3 +1729,104 @@ notification. We want automatic retries every 15 minutes through 07:00, and exac
   (implemented and unit-tested — `reconciliation-retry-schedule.test.ts`,
   `reconciliation-retry.test.ts`, `reconciliation-retry-safety.test.ts` — and the outside-window
   no-op path confirmed live by the 2026-09-07 catch-up run above).
+
+---
+
+## ADR-023: PV Impact Simulator — external load profiles scaled against a canonical reference plant; physical energy only
+
+### Status
+
+Accepted. First delivered as the admin-only PV Self-Consumption / PV Impact Simulator
+(`/admin/pv-simulator`, `lib/pv-simulator/*`).
+
+### Context
+
+We need to answer, for a prospective external customer who is **not** on Voltessa: "if this
+customer added a PV installation of X kWp, how would their grid electricity change?". The customer
+supplies a full 15-minute annual consumption profile as an Excel export; Voltessa has real
+15-minute production for its own plants. There is no customer entity, no telemetry, no tariff and
+no ROI model in Voltessa for this third party, and the customer data must not be persisted.
+
+### Decision
+
+1. **A reference-plant scaling model, not a PV yield model.** Simulated PV for an interval is
+   `reference_pv × (target_kWp / reference_kWp)` — the real per-interval produced energy of a
+   Voltessa plant, linearly scaled. No irradiance model, no synthetic generation curve, no
+   hard-coded factor. `reference_pv` is `getPlantProductionEnergySeries()` — the canonical Energy
+   Engine (`lib/telemetry/energy-metrics.ts`), the same per-15-minute production function the admin
+   Reporting feature and the Market Producer-revenue fallback use. `reference_kWp` is the reference
+   plant's canonical `Plant.capacityKw` (`docs/CANONICAL_ENTITY_CONTRACT.md` topology field) —
+   reused, not a new column. The first reference plant is `"Чомаковци 100KW"` (`capacityKw = 100`);
+   `listReferencePlants()` enumerates every plant with a configured capacity so more need no code
+   change.
+
+2. **Physical energy only; a financial/ROI layer is explicitly deferred and kept separate.** The
+   simulator computes and exports only kWh quantities per interval / hour / month / period
+   (consumption, grid import with & without PV, PV generation / used on-site / surplus / curtailed /
+   exported) plus the two rates derived from those totals (self-consumption rate, solar coverage).
+   It computes **no** € value and invents **no** price. A later phase can multiply the exported
+   physical quantities by a retail tariff (avoided cost) and by `MarketPrice` via
+   `computeExportRevenue` (export revenue) to produce monthly savings, payback, ROI and IRR — the
+   physical output already carries every quantity that layer needs. The two layers stay in separate
+   modules.
+
+3. **The customer load profile is interval energy (kWh per 15-minute interval), in the reference
+   plant's timezone.** Verified against the supplied file: its cell at (2026-05-01, interval-end
+   09:15) is `60`, matching the specification's worked example "01.05.2026 09:15 → 60 kWh". A
+   `unitMode` toggle (`kwh_interval` default / `kw_average` → ×0.25) handles a future average-power
+   file; a heuristic warns when a `kwh_interval` file looks power-shaped. The file's own layout is a
+   pivot (a row per calendar day, 96 interval-**end** time-of-day columns); `parseLoadProfile`
+   normalises it and rejects malformed input (wrong column count, non-date row key, non-numeric or
+   negative value, all-blank), while reporting non-fatal issues (blank cells, duplicate dates,
+   day gaps, DST anomalies, suspected wrong unit).
+
+4. **Missing-data handling — never invent, always disclose.**
+   - A blank consumption cell → `missing_load`: every output null, excluded from every total,
+     listed blank in the detail report, counted in the summary.
+   - An interval whose reference plant has **no** production data (the reference plant's telemetry
+     does not span the profile's period) → `no_reference_pv`: consumption and grid import are still
+     recorded (grid import with PV = load, since there is no PV), but production is left null (not
+     fabricated) and every PV-derived quantity is excluded from the PV totals and from the
+     covered-period rate denominators. The summary reports the reference-PV day coverage
+     prominently, and both a **whole-period** and a **covered-days-only** solar-coverage / import-
+     reduction figure, so a period the reference plant does not cover cannot silently deflate the
+     result.
+   - Within a covered day, a null production bucket (night, or a brief inverter gap) → `0` (a real
+     "no production", which the Producer telemetry layer already treats this way).
+
+5. **Timezone / DST / leap years.** Each interval's real instant is
+   `zonedTimeToUtc(date, startHH, startMM, referenceTimeZone)` (DST-exact, `Intl`-based —
+   `lib/market-price/timezone.ts`); the reference production series is joined by that instant. The
+   profile is 96 civil slots per calendar day regardless of DST (the utility convention). On the
+   spring-forward day the non-existent local hour's cells map onto an existing instant — detected
+   as `dst_ambiguous`, the first kept, the rest excluded, all counted and warned; the source's own
+   trailing blanks for that short day become `missing_load`. Feb 29 is simply a row or not.
+
+6. **Admin-only, no persistence, exports reuse the Reporting primitives.** `/admin/pv-simulator`
+   and both Server Actions call `requirePlatformAdmin()` (ADR-006 / ADR-014); the reference plant
+   (and its timezone / organization / capacity) is re-resolved from the DB by id, never trusted
+   from the browser. The uploaded file is parsed in memory per run and never written anywhere. CSV
+   framing (`csvDocument` — UTF-8 BOM, CRLF, RFC 4180), the filename slugifier and the multi-sheet
+   XLSX builder are the shared `lib/reporting/export-shared.ts` primitives (extracted from
+   Reporting's `csv.ts` / `serialize.ts` — no behaviour change, no parallel export architecture).
+   New dependency: `read-excel-file` (pinned), the read companion to the existing `write-excel-file`.
+
+### Consequences
+
+- No Prisma migration and no schema change. The simulator is a pure, read-only consumer of
+  `getPlantProductionEnergySeries` plus an in-memory parse of the uploaded file.
+- For a reference plant whose telemetry only partly overlaps the load profile, the whole-period
+  figures are conservative (a lower bound) by construction; the covered-days figures and the
+  coverage percentage are what make the result interpretable. This is a data-coverage limitation of
+  the reference plant, surfaced, not a modelling choice.
+- Linear capacity scaling assumes the hypothetical array has the same orientation, shading,
+  soiling, temperature behaviour and inverter clipping profile as the reference plant, scaled 1:1.
+  This is a deliberate first-version simplification; it is documented in the UI and the report.
+- Power integration for a Producer plant is known to run a little below the manufacturer's own
+  settled daily counter (see `lib/telemetry/energy-metrics.ts`), so Chomakovtsi-referenced
+  simulations are conservative on the PV side as well.
+
+### Not verified by this ADR
+
+- A second reference plant, and a load profile whose period is fully covered by the reference
+  plant's telemetry, have not been exercised beyond unit tests and the one real file supplied.

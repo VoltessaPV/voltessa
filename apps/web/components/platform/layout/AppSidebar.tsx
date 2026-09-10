@@ -20,6 +20,7 @@ import {
   Router,
   Settings,
   ShieldCheck,
+  SunMedium,
   Users,
   X,
 } from "lucide-react";
@@ -136,6 +137,11 @@ const adminNavigation = [
     label: "Reporting",
     href: "/admin/reporting",
     icon: FileSpreadsheet,
+  },
+  {
+    label: "PV Impact Simulator",
+    href: "/admin/pv-simulator",
+    icon: SunMedium,
   },
   {
     label: "Automation Lab",

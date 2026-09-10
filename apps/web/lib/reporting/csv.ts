@@ -14,45 +14,26 @@
 
 import { metricHeader, type MetricKey } from "./metrics";
 import type { ReportResult } from "./build-report";
+import { csvDocument, csvField } from "./export-shared";
 import { formatIntervalTimestamp, formatMetricValue } from "./serialize";
 
-const BOM = String.fromCharCode(0xfeff);
-const EOL = "\r\n";
-
-/** RFC 4180 field quoting. */
-export function csvField(value: string): string {
-  if (/[",\r\n]/.test(value)) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-function csvLine(fields: string[]): string {
-  return fields.map(csvField).join(",");
-}
+// Re-exported: `csvField` originally lived here and `csv.test.ts` imports it from this module.
+export { csvField };
 
 export function toCsv(report: ReportResult): string {
   const metrics: MetricKey[] = report.metrics;
 
-  const header = ["Timestamp", ...metrics.map((metric) => metricHeader(metric, report.currency))];
-
-  const lines: string[] = [csvLine(header)];
-
-  for (const row of report.rows) {
-    lines.push(
-      csvLine([
-        formatIntervalTimestamp(row.intervalStart, report.timeZone),
-        ...metrics.map((metric) => formatMetricValue(row.values[metric] ?? null, metric)),
-      ]),
-    );
-  }
-
-  lines.push(
-    csvLine([
+  const rows: string[][] = [
+    ["Timestamp", ...metrics.map((metric) => metricHeader(metric, report.currency))],
+    ...report.rows.map((row) => [
+      formatIntervalTimestamp(row.intervalStart, report.timeZone),
+      ...metrics.map((metric) => formatMetricValue(row.values[metric] ?? null, metric)),
+    ]),
+    [
       report.totals.label,
       ...metrics.map((metric) => formatMetricValue(report.totals.values[metric] ?? null, metric)),
-    ]),
-  );
+    ],
+  ];
 
-  return BOM + lines.join(EOL) + EOL;
+  return csvDocument(rows);
 }

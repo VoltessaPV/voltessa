@@ -106,8 +106,9 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
   deliberate set of `"use client"` components exist for genuine interactivity (state, effects, event
   handlers): `components/automations/HuaweiControlCard.tsx` (manual control dispatch),
   `components/dashboard/RefreshButton.tsx` (the manual "synchronize now" action, Database-First
-  Telemetry Architecture milestone, ADR-011), and `app/admin/reporting/ReportingForm.tsx` (the
-  admin Reporting builder) — all follow the same `useTransition`/pending-state/
+  Telemetry Architecture milestone, ADR-011), `app/admin/reporting/ReportingForm.tsx` (the
+  admin Reporting builder) and `app/admin/pv-simulator/PvSimulatorForm.tsx` (the PV Impact
+  Simulator, ADR-023) — all follow the same `useTransition`/pending-state/
   toast pattern; follow it too rather than introducing a new client-component convention.
 
 ## Commands
@@ -350,6 +351,47 @@ calculation**:
   filename via a safe slugifier).
 - `ReportingForm.tsx` is a `"use client"` component following the same
   `useTransition`/pending-state pattern as `HuaweiControlCard` / `RefreshButton`.
+- The generic CSV/slug/XLSX primitives now live in `lib/reporting/export-shared.ts`
+  (`csvField`, `csvDocument`, `slugifySegment`, `formatWallClockTimestamp`, `writeXlsxWorkbook`,
+  `XlsxCell`); Reporting's `csv.ts`/`serialize.ts`/`xlsx.ts` and the PV Simulator both use them
+  rather than each carrying a copy.
+
+### Admin PV Impact Simulator (`app/admin/pv-simulator/*`, `lib/pv-simulator/*`)
+
+Platform-admin-only "what if this external customer added PV?" tool — see **ADR-023**.
+`/admin/pv-simulator` (own `heading.ts` + `page-headings.ts` entry + `AppSidebar.tsx` nav item).
+The admin uploads an **external** customer's 15-minute annual consumption profile (an `.xlsx` in
+the utility's pivot layout — a row per day, 96 interval-**end** time columns; parsed with the new
+pinned `read-excel-file` dependency, held in memory, **never persisted**), picks a real Voltessa PV
+plant as the production reference, enters a hypothetical PV capacity (kWp) and a mode
+(self-consumption only / self-consumption + export), optionally restricts the date range, and gets
+per-interval / hourly / monthly / whole-period results plus a CSV (15-minute detail) or a 4-sheet
+XLSX (Summary / Monthly Overview / Hourly Profile / 15-Minute Detail).
+
+- **Physical energy only.** `simulated_pv = reference_pv × (target_kWp / reference_kWp)`;
+  `reference_pv` = `getPlantProductionEnergySeries()` (canonical Energy Engine, per-15-min produced
+  kWh — same function Reporting uses); `reference_kWp` = the reference plant's canonical
+  `Plant.capacityKw` (Chomakovtsi = `"Чомаковци 100KW"`, `capacityKw = 100`). No irradiance model,
+  no synthetic curve, no hard-coded factor, **no € values or prices** — the financial/ROI layer is
+  deliberately deferred and separate (the physical output carries every quantity it will need;
+  `MarketPrice` + `computeExportRevenue` are its natural export-revenue input).
+- **Per interval**: `pv_used = min(load, sim_pv)`; `import_with_pv = load − pv_used`;
+  `surplus = max(sim_pv − load, 0)`; export mode → `export = surplus`, else `curtailed = surplus`.
+  Pure core in `lib/pv-simulator/simulate.ts`. Totals SUM interval quantities; rates come from
+  totals (never an average of per-interval/per-month rates).
+- **Missing data (never invent, always disclose)**: a blank consumption cell → excluded + flagged;
+  an interval whose reference plant has no telemetry → consumption/grid-import kept, PV left null
+  and excluded from PV totals + rate denominators, with a prominent day-coverage figure and both a
+  whole-period and a covered-days-only solar-coverage / import-reduction figure. Chomakovtsi's
+  `DeviceTelemetry` starts 2026-01; a profile beginning earlier is simulated with those months
+  flagged, not fabricated.
+- **Timezone/DST**: `zonedTimeToUtc(date, startHH:startMM, referenceTimeZone)` per interval
+  (DST-exact); spring-forward's non-existent local hour → `dst_ambiguous` (first kept, rest
+  excluded, counted); Feb 29 is just a row.
+- **Auth**: `page.tsx` + both Server Actions (`runSimulationPreview`, `exportSimulation`)
+  independently call `requirePlatformAdmin()`; the reference plant / timezone / capacity are
+  re-resolved from the DB by id, never trusted from the client. `PvSimulatorForm.tsx` is a
+  `"use client"` component on the same `useTransition` pattern.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 

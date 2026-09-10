@@ -4,10 +4,10 @@
 
 - **`apps/web` has two test surfaces.** (1) A Node-based unit runner: `pnpm --filter web test`
   runs `tsx --test` over an explicit list of `*.test.ts` files in `apps/web/package.json`'s `test`
-  script — currently the market-price, automation-scheduler, mobile-auth, and admin **Reporting**
-  (`lib/reporting/*.test.ts`) pure-function suites. New pure-function tests are added by writing a
-  co-located `*.test.ts` (`node:test` + `node:assert/strict`) **and** appending it to that `test`
-  script. (2) `apps/web/e2e/admin-routing.spec.ts` (Playwright), a regression test for the
+  script — currently the market-price, automation-scheduler, mobile-auth, admin **Reporting**
+  (`lib/reporting/*.test.ts`) and **PV Impact Simulator** (`lib/pv-simulator/*.test.ts`)
+  pure-function suites. New pure-function tests are added by writing a co-located `*.test.ts`
+  (`node:test` + `node:assert/strict`) **and** appending it to that `test` script. (2) `apps/web/e2e/admin-routing.spec.ts` (Playwright), a regression test for the
   admin-locale-prefix bug — see "Adding tests to `apps/web`" below. Commit messages like `test
   FusionSolar access token refresh helper` in the history refer to manual testing via diagnostic
   routes (`app/api/diag/fusionsolar-*`), not automated tests — those diagnostic endpoints are the

@@ -15,21 +15,10 @@
  *   metrics, currency, timezone.
  */
 
-import writeXlsxFile from "write-excel-file/node";
-
 import { getMetricDefinition, metricHeader, type MetricKey } from "./metrics";
 import type { ReportResult } from "./build-report";
+import { writeXlsxWorkbook, type XlsxCell } from "./export-shared";
 import { formatIntervalTimestamp, toMetricNumber } from "./serialize";
-
-type XlsxCell =
-  | null
-  | {
-      value?: string | number;
-      type?: StringConstructor | NumberConstructor;
-      format?: string;
-      fontWeight?: "bold";
-      backgroundColor?: string;
-    };
 
 const TOTAL_FILL = "#EEF2F7";
 
@@ -119,10 +108,5 @@ export async function toXlsxBuffer(report: ReportResult, meta: ReportXlsxMeta): 
     ]),
   };
 
-  // `write-excel-file`'s multi-sheet parameter type is derived here rather
-  // than reconstructed: the cell shapes above follow its documented cell
-  // object contract (`value`/`type`/`format`/`fontWeight`/`backgroundColor`).
-  const sheets = [reportSheet, infoSheet] as unknown as Parameters<typeof writeXlsxFile>[0];
-  const buffer = await writeXlsxFile(sheets).toBuffer();
-  return buffer as Buffer;
+  return writeXlsxWorkbook([reportSheet, infoSheet]);
 }
