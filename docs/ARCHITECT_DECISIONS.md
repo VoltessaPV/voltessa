@@ -1736,8 +1736,16 @@ notification. We want automatic retries every 15 minutes through 07:00, and exac
 
 ### Status
 
-Accepted. First delivered as the admin-only PV Self-Consumption / PV Impact Simulator
-(`/admin/pv-simulator`, `lib/pv-simulator/*`).
+Accepted, in production. Delivered as the admin-only PV Self-Consumption / PV Impact Simulator at
+**`/admin/pv-simulator`** (`app/admin/pv-simulator/*`, `lib/pv-simulator/*`) — feature commit
+`a6a9d0c`, monthly-chunk performance follow-up `67284f2`. Vercel production deployment
+`dpl_HRuY5Hvuc643tege6fMxp8vaSSce` confirmed `READY` and aliased to `app.voltessa.ai` on
+2026-09-11; `/admin/pv-simulator` verified reachable and admin-gated in production (`307 → /login`
+unauthenticated, `308 → /admin/pv-simulator` from a locale prefix, `404` for a near-miss path). No
+Prisma migration (no schema change). This ADR and the `app/admin/pv-simulator` / `lib/pv-simulator`
+doc comments are the authoritative description of the feature — the numbered sections below
+(per-interval calculation, metric definitions, outputs, validation, worked example) describe the
+code that is actually deployed.
 
 ### Context
 
@@ -1811,6 +1819,152 @@ no ROI model in Voltessa for this third party, and the customer data must not be
    Reporting's `csv.ts` / `serialize.ts` — no behaviour change, no parallel export architecture).
    New dependency: `read-excel-file` (pinned), the read companion to the existing `write-excel-file`.
 
+### Per-interval calculation (as implemented in `lib/pv-simulator/simulate.ts`)
+
+`simulateInterval(load, referencePv, targetKwp, referenceKwp, mode)`, all quantities kWh for one
+15-minute interval, results rounded to 4 decimals:
+
+```
+factor              = targetKwp / referenceKwp            (both must be > 0, else a validation error)
+simulated_pv         = max(referencePv × factor, 0)
+grid_import_without_pv = load
+pv_used_on_site       = min(load, simulated_pv)
+grid_import_with_pv    = max(load − pv_used_on_site, 0)
+pv_surplus            = max(simulated_pv − load, 0)
+
+mode = self_consumption_plus_export → grid_export   = pv_surplus ; pv_curtailed = 0
+mode = self_consumption_only        → grid_export   = 0          ; pv_curtailed = pv_surplus
+```
+
+Enforced invariants (asserted by `simulate.test.ts`): `grid_import_with_pv ≥ 0`,
+`grid_export ≥ 0`, `pv_used_on_site ≤ load`, and `grid_export = 0` whenever the mode is
+`self_consumption_only`.
+
+### Metric definitions
+
+The **15-Minute Detail** export / preview columns (fixed order, `lib/pv-simulator/format.ts`):
+
+| Column | Meaning |
+| --- | --- |
+| `Timestamp` | Interval **start**, plant-local wall clock `YYYY-MM-DD HH:mm` (reference plant timezone). |
+| `Data quality` | `ok` \| `missing_load` \| `no_reference_pv` \| `dst_ambiguous`. |
+| `Customer consumption (kWh)` | `load` — the uploaded profile value for this interval (blank if the source cell was blank). |
+| `Reference PV production (kWh)` | `referencePv` — `getPlantProductionEnergySeries()` produced energy for the reference plant, this interval. Blank when that day has no reference telemetry; `0` for a night/gap bucket within a covered day. |
+| `Simulated PV production (kWh)` | `simulated_pv` = `referencePv × factor`. Blank when `Reference PV production` is blank. |
+| `PV used on-site (kWh)` | `min(load, simulated_pv)`. |
+| `Grid import without PV (kWh)` | `= load`. |
+| `Grid import with PV (kWh)` | `max(load − pv_used_on_site, 0)`; for a `no_reference_pv` interval this equals `load` (no PV → no change). |
+| `PV surplus (kWh)` | `max(simulated_pv − load, 0)`. |
+| `PV curtailed (kWh)` | `PV surplus` in `self_consumption_only` mode, else `0`. |
+| `Grid export (kWh)` | `PV surplus` in `self_consumption_plus_export` mode, else `0`. |
+| `Simulation mode` | Human label of the selected mode. |
+| `PV capacity (kWp)` | The simulated (target) capacity. |
+
+Period / month / hour aggregates are **sums** of the interval quantities (`accumulate` →
+`finalizeTotals`, 3 decimals) — never an average of something that should be summed. Rates
+(`deriveRates`, 4 decimals) are computed **from the totals**, never by averaging per-interval or
+per-month rates:
+
+| Rate | Formula (from period or month totals) |
+| --- | --- |
+| `Self-consumption rate` | `Σ pv_used_on_site ÷ Σ pv_generation` — `null` when there is no PV generation. Unaffected by reference-PV coverage. |
+| `Solar coverage` (whole period) | `Σ pv_used_on_site ÷ Σ consumption` — diluted by any part of the period with no reference PV. |
+| `Solar coverage — covered days only` | `Σ pv_used_on_site ÷ Σ consumption over reference-PV-covered intervals`. |
+| `Grid import reduction (kWh)` | `Σ grid_import_without_pv − Σ grid_import_with_pv` (whole period) — equal to `Σ pv_used_on_site`. |
+| `Grid import reduction (%)` (whole period) | `reduction ÷ Σ grid_import_without_pv`. |
+| `Grid import reduction — covered days only (%)` | reduction over covered intervals ÷ covered `grid_import_without_pv`. |
+
+There are **no price or revenue fields** anywhere in the simulator — no €, no tariff, no
+`MarketPrice` read. See "Financial / ROI" below.
+
+### Outputs
+
+- **CSV** (`toDetailCsv`) — the 15-Minute Detail columns above, one row per original interval in
+  exact input order, then a final `TOTAL` row: first cell literally `TOTAL`, the energy columns
+  carry the whole-period sums, and `Data quality` / `Reference PV production` / `Simulation mode` /
+  `PV capacity` are blank. Missing values are blank fields, never `0`. UTF-8 + BOM, CRLF, RFC 4180.
+- **XLSX** (`toSimulationXlsxBuffer`) — a four-sheet workbook:
+  1. **Summary** — a key/value column: simulation period, reference plant + reference capacity +
+     simulated capacity + scaling factor, mode, timezone; total consumption; grid import
+     without/with PV and the reduction (kWh + %) — whole period; PV generation / self-consumed /
+     exported / curtailed; solar coverage (whole period and covered-days-only), self-consumption
+     rate; interval counts (total, missing-consumption, no-reference-PV), days with no reference
+     PV, reference-PV day coverage, DST-ambiguous count; generated-at (UTC); and any load-profile
+     parse warnings.
+  2. **Monthly Overview** — one row per calendar month (`Month`, `Total consumption without PV`,
+     `Grid import without PV`, `Grid import with PV`, `PV generation`, `PV used on-site`,
+     `PV curtailed`, `Grid export`, `Self-consumption rate`, `Solar coverage`) then a `TOTAL` row:
+     the energy cells are the whole-period sums, the two rate cells are `deriveRates` over the
+     whole-period totals (not an average of the monthly rates).
+  3. **Hourly Profile** — one row per hour (`Hour`, `Consumption`, `PV generation`,
+     `PV used on-site`, `Grid import without PV`, `Grid import with PV`, `Grid export`,
+     `PV curtailed`), aggregated from the 15-minute rows, never recomputed from rounded hourly data.
+  4. **15-Minute Detail** — the same columns as the CSV, one row per interval, then the `TOTAL`
+     row; header row frozen.
+  Energy cells are real numeric cells (`#,##0.000`); rates are numeric with a `0.0%` format.
+- **Filename** — `voltessa-pv-sim-{reference-plant-slug}-{capacity}kwp-{selfcons|export}-{start}-{end}.{csv|xlsx}`
+  via the shared safe slugifier (path separators, `..`, non-ASCII and control characters stripped).
+
+### Validation and edge cases (as implemented)
+
+`parseLoadProfile` — **fatal** (returns `{ ok: false, errors }`, no result): no data rows; a data
+row's first cell is not a valid date; a row without 96 value columns; a non-numeric, non-blank
+value cell; any **negative** value; every value cell blank. **Non-fatal** (result still returned
+with `warnings`): blank cells (`missing_intervals` — those intervals become `missing_load`,
+excluded from all totals, never `0`); a **duplicate** calendar date (`duplicate_date` — the later
+row wins, both reported); day gaps (`date_gap`); a suspected wrong unit when the file is declared
+`kwh_interval` but looks power-shaped (`possible_kw_input`); an interval-end header grid that
+doesn't span 15…1440 minutes (`header_grid`, falls back to a fixed 15-minute grid).
+
+- **DST** — each interval's instant is `zonedTimeToUtc(date, startHH:startMM, referenceTimeZone)`.
+  Spring-forward: the non-existent local hour's cells collide onto an existing UTC instant →
+  `dst_ambiguous`, the first kept, the rest excluded from the interval list (never duplicated),
+  every one counted and warned; the source's own trailing blank cells for that 23-hour day become
+  `missing_load`. Fall-back: the repeated hour is represented once (a source-data limitation for a
+  25-hour day).
+- **Leap year** — Feb 29 is a normal row; nothing special is assumed.
+- **Mismatched timestamps / reference-plant coverage** — an interval whose reference-plant day has
+  no telemetry is `no_reference_pv` (see the missing-data rule in the Decision).
+- **PV capacity ≤ 0** (or non-finite), and a reference plant with no configured `capacityKw`,
+  throw a `SimulationValidationError`; the Server Action rejects capacity `≤ 0` and `> 1,000,000`
+  before running.
+- **Request limits** (`app/admin/pv-simulator/actions.ts`): upload `≤ 12 MiB`, `.xlsx` only,
+  first sheet, at most `~150,000` intervals (`MAX_INTERVALS`), preview shows the first `300`
+  detail rows (the full set is only built for a download).
+
+### Worked example (matches the implemented calculation exactly)
+
+Asserted by `simulate.test.ts` "scenario 1". `load = 60`, `referencePv = 13.63`,
+`referenceKwp = 100`, `targetKwp = 500` → `factor = 5`, `simulated_pv = 13.63 × 5 = 68.15`,
+`pv_used_on_site = min(60, 68.15) = 60`, `grid_import_with_pv = 60 − 60 = 0`,
+`pv_surplus = 68.15 − 60 = 8.15`.
+
+| Quantity | Self-consumption only | Self-consumption + export |
+| --- | --- | --- |
+| Load (kWh) | 60 | 60 |
+| Simulated PV (kWh) | 68.15 | 68.15 |
+| Grid import with PV (kWh) | 0 | 0 |
+| PV used on-site (kWh) | 60 | 60 |
+| PV curtailed (kWh) | 8.15 | 0 |
+| Grid export (kWh) | 0 | 8.15 |
+
+### Financial / ROI (deferred — not implemented)
+
+This phase is the **physical energy model only**. The simulator does not compute, and does not
+have any input for, any of: electricity cost savings, export revenue, CAPEX, OPEX, payback period,
+ROI, IRR, or an electricity price. Nothing in `lib/pv-simulator/*` reads `MarketPrice` or applies
+a tariff. A future investment-return calculator would consume this feature's physical outputs —
+annual/monthly grid-import reduction, exported energy, self-consumed PV — and layer:
+
+- avoided electricity cost = grid-import reduction × the customer's retail tariff (not held in
+  Voltessa today);
+- export revenue = exported energy × day-ahead price (`MarketPrice` + `computeExportRevenue`,
+  already canonical for Voltessa plants);
+- CAPEX / OPEX / discount-rate assumptions (a financial-model input, not an energy quantity);
+- → monthly savings, total annual benefit, payback, ROI, IRR.
+
+That layer must stay a separate module; the energy simulation stays exactly as documented here.
+
 ### Consequences
 
 - No Prisma migration and no schema change. The simulator is a pure, read-only consumer of
@@ -1825,6 +1979,16 @@ no ROI model in Voltessa for this third party, and the customer data must not be
 - Power integration for a Producer plant is known to run a little below the manufacturer's own
   settled daily counter (see `lib/telemetry/energy-metrics.ts`), so Chomakovtsi-referenced
   simulations are conservative on the PV side as well.
+- **The real customer load-profile Excel used for validation is not committed to the repository —
+  it contains customer data.** It lives only on the operator's machine; the simulator reads it at
+  runtime and never persists it. The test suite (`lib/pv-simulator/*.test.ts`) builds its own
+  synthetic sheet fixtures in-memory; no customer-sensitive data appears in the tests or in this
+  document beyond the generic worked example above.
+- **What must not change without a corresponding update here:** the per-interval formula and the
+  scaling formula; the reference-production source (`getPlantProductionEnergySeries`) and the
+  reference-capacity source (`Plant.capacityKw`); the missing-data / `no_reference_pv` /
+  `dst_ambiguous` handling; the timezone/DST interval-instant derivation; the "physical energy
+  only, no prices" boundary. These are the load-bearing decisions of this ADR.
 
 ### Not verified by this ADR
 

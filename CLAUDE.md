@@ -392,6 +392,14 @@ XLSX (Summary / Monthly Overview / Hourly Profile / 15-Minute Detail).
   independently call `requirePlatformAdmin()`; the reference plant / timezone / capacity are
   re-resolved from the DB by id, never trusted from the client. `PvSimulatorForm.tsx` is a
   `"use client"` component on the same `useTransition` pattern.
+- **Authoritative docs**: **ADR-023** (`docs/ARCHITECT_DECISIONS.md`) is the full record — it
+  contains the exact per-interval formulas, the metric-definition table, the CSV/XLSX output
+  structure and TOTAL-row semantics, the validation rules, and the worked example. Do **not**
+  change the per-interval formula, the scaling formula, the reference-production source
+  (`getPlantProductionEnergySeries`) or reference-capacity source (`Plant.capacityKw`), the
+  missing-data / `no_reference_pv` handling, the timezone/DST derivation, or the "physical energy
+  only — no prices" boundary without updating ADR-023 in the same change. The real customer Excel
+  file is **not** in the repo (customer data); tests use synthetic in-memory fixtures.
 
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 

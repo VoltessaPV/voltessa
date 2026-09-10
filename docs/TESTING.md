@@ -26,6 +26,33 @@ This doc describes how to run what exists and how to add tests going forward, pr
 what's actually risky in this codebase (see `docs/AI_PLAYBOOK.md` — automation/decision logic and
 the FusionSolar integration carry real financial/operational risk).
 
+### Admin analytical features — automated coverage
+
+The admin **Reporting** (`/admin/reporting`) and **PV Impact Simulator** (`/admin/pv-simulator`)
+features are covered by co-located `tsx --test` pure-function suites:
+
+- `lib/reporting/*.test.ts` — request validation, the metric → canonical-source mapping,
+  missing-value preservation, TOTAL-row semantics (energy SUM, revenue SUM, price weighted
+  average, "never SUM price"), CSV escaping / BOM / CRLF, XLSX structure, safe filenames.
+- `lib/pv-simulator/*.test.ts` — **41 cases** (`simulate` 19, `load-profile` 13, `csv` 5,
+  `xlsx` 4): the exact ADR-023 worked example (`60` / `13.63` / `100` → `500` → `68.15`,
+  curtailed/export `8.15`), PV smaller / equal / larger than load, zero & negative capacity, a
+  reference plant with no capacity, missing & duplicate intervals (later row wins), the DST
+  spring-forward collision, leap-year Feb 29, monthly aggregation, full-period `TOTAL` == sum of
+  months, rates computed from totals (a case where averaging would give a materially different
+  number), export-disabled vs export-enabled behaviour, kW → kWh unit conversion, CSV
+  escaping / filename safety, and an XLSX round-trip that reads the workbook back and asserts the
+  four named sheets and the `TOTAL` rows.
+
+CI (`.github/workflows/ci.yml`) runs `pnpm lint` / `turbo check-types` / `turbo build` / the
+Playwright `admin-routing` spec (extended with `/admin/pv-simulator` and `/admin/reporting`), not
+the `tsx --test` unit runner — run `pnpm --filter web test` locally. Both features were verified
+end-to-end before deployment: an HTTP smoke of the production route (`307 → /login`
+unauthenticated, `308` locale-prefix redirect, `404` near-miss) and, for the PV Simulator, a full
+run of the parse → simulate → CSV/XLSX pipeline against the real uploaded load profile and the
+real Chomakovtsi production data in the production database (full 11-month period and a restricted
+covered window, both simulation modes).
+
 ## Running tests today
 
 `apps/api` (Jest, configured in `apps/api/package.json`'s `jest` block: `rootDir: src`, test regex

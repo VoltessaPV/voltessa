@@ -376,13 +376,24 @@ See ADR-023 (`docs/ARCHITECT_DECISIONS.md`) for the full decision record.
   4180), the safe filename slugifier and the multi-sheet XLSX builder were extracted into
   `lib/reporting/export-shared.ts` and are shared by Reporting and the Simulator — no parallel
   export architecture.
-- **Tests**: `lib/pv-simulator/{simulate,load-profile,csv,xlsx}.test.ts` (~60 cases) covering the
-  exact spec example, PV < / = / > load, zero/negative capacity, missing & duplicate intervals,
+- **Tests**: `lib/pv-simulator/{simulate,load-profile,csv,xlsx}.test.ts` — **41 cases**
+  (simulate 19, load-profile 13, csv 5, xlsx 4) covering the exact spec example, PV < / = / >
+  load, zero/negative capacity, a reference plant with no capacity, missing & duplicate intervals,
   DST spring-forward, leap year, monthly aggregation, full-period TOTAL == sum of months,
   rates-from-totals (not averaged), export-disabled / export-enabled behaviour, kW→kWh conversion,
   CSV escaping / filename safety, and XLSX round-trip to four named sheets. Verified end-to-end
   against the real supplied load profile + real Chomakovtsi production data before deployment
   (full 11-month period and a restricted covered window).
+
+## Production status
+
+- **Live in production.** Feature commit `a6a9d0c`, monthly-chunk performance follow-up `67284f2`.
+  Vercel production deployment `dpl_HRuY5Hvuc643tege6fMxp8vaSSce` confirmed `READY` and aliased to
+  `app.voltessa.ai` on 2026-09-11. `/admin/pv-simulator` verified reachable and admin-gated in
+  production (`307 → /login` unauthenticated; `308 → /admin/pv-simulator` from a locale prefix;
+  `404` for a near-miss path). No Prisma migration — no schema change. CI (`Lint, type-check,
+  build`) green on `67284f2`; `pnpm --filter web test` 202/202; `e2e/admin-routing.spec.ts` 27/27.
+  ADR-023 (`docs/ARCHITECT_DECISIONS.md`) is the authoritative record.
 
 ## Limitations
 
