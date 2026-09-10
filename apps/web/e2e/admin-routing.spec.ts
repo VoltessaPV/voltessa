@@ -29,7 +29,7 @@ import { expect, test } from "@playwright/test";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 test.describe("unauthenticated admin routes never 404", () => {
-  for (const adminPath of ["/admin", "/admin/users", "/admin/traders", "/admin/operations", "/admin/historical-imports"]) {
+  for (const adminPath of ["/admin", "/admin/users", "/admin/traders", "/admin/operations", "/admin/historical-imports", "/admin/reporting"]) {
     test(`GET ${adminPath} redirects to /login instead of 404ing`, async ({ request }) => {
       const response = await request.get(adminPath, { maxRedirects: 0 });
 
@@ -41,7 +41,7 @@ test.describe("unauthenticated admin routes never 404", () => {
     });
   }
 
-  for (const adminPath of ["/admin", "/admin/users", "/admin/traders", "/admin/operations", "/admin/historical-imports"]) {
+  for (const adminPath of ["/admin", "/admin/users", "/admin/traders", "/admin/operations", "/admin/historical-imports", "/admin/reporting"]) {
     test(`${adminPath} ultimately reaches the login page when followed`, async ({ page }) => {
       const response = await page.goto(adminPath);
 
@@ -59,6 +59,8 @@ test.describe("locale-prefixed admin URLs redirect to their unprefixed equivalen
     ["/bg/admin/users", "/admin/users"],
     ["/en/admin/traders", "/admin/traders"],
     ["/bg/admin/traders", "/admin/traders"],
+    ["/en/admin/reporting", "/admin/reporting"],
+    ["/bg/admin/reporting", "/admin/reporting"],
   ];
 
   for (const [from, to] of cases) {

@@ -104,9 +104,10 @@ This is a pnpm + Turborepo monorepo rooted at `platform/`.
   `proxy.ts` (NextAuth middleware) for `/dashboard/:path*`.
 - Almost every component under `app/` and `components/` is a React Server Component. A small,
   deliberate set of `"use client"` components exist for genuine interactivity (state, effects, event
-  handlers): `components/automations/HuaweiControlCard.tsx` (manual control dispatch) and
+  handlers): `components/automations/HuaweiControlCard.tsx` (manual control dispatch),
   `components/dashboard/RefreshButton.tsx` (the manual "synchronize now" action, Database-First
-  Telemetry Architecture milestone, ADR-011) — both follow the same `useTransition`/pending-state/
+  Telemetry Architecture milestone, ADR-011), and `app/admin/reporting/ReportingForm.tsx` (the
+  admin Reporting builder) — all follow the same `useTransition`/pending-state/
   toast pattern; follow it too rather than introducing a new client-component convention.
 
 ## Commands
@@ -310,6 +311,46 @@ safety guard, not the security boundary (that's the server-side organization che
 displays the Automation Service's `log: string[]` directly (an expandable "Execution log" panel) in
 addition to status/final-result, per the Automation Service's own response contract.
 
+### Admin Reporting (`app/admin/reporting/*`, `lib/reporting/*`)
+
+Platform-admin-only interval-data export tool. `/admin/reporting` (its own `heading.ts` +
+`page-headings.ts` entry + `AppSidebar.tsx` nav item, same wiring every other admin page uses).
+Lets an admin pick a plant, a start/end datetime, and any subset of seven metrics — **PV
+Production, Total Consumption, Grid Consumption, PV Consumption, Grid Export** (energy, kWh) and
+**Price** (EUR/MWh), **Revenue** (EUR) — then preview and download a **15-minute interval** report
+as **CSV or XLSX**, with a mandatory final `TOTAL` row (energy + revenue summed; Price is an
+export-energy-weighted average, never summed).
+
+It is a pure read-only client of the canonical layers — **no new model, no new API route, no new
+calculation**:
+
+- Energy per interval: `lib/telemetry/energy-metrics.ts` — `getPlantProductionEnergySeries`
+  (PV Production) and `getPlantSettlementEnergySeries` (Grid Export / Grid Consumption from the
+  meter's `activeEnergy` / `reverseActiveEnergy` counter deltas). PV Consumption =
+  `computeConsumedFromPv` (production − export); Total Consumption = `production + import − export`
+  (the `deriveEnergyFlow` identity). Missing intervals stay blank, never `0`.
+- Price: `dbMarketPriceProvider.getPricesInRange` (persisted `MarketPrice` rows, EUR/MWh,
+  `DEFAULT_BIDDING_ZONE` — never a live ENTSO-E/IBEX call).
+- Revenue: `lib/market-price/revenue.ts` — the whole-period `TOTAL` comes straight from
+  `computeExportRevenue` (`revenueEur`, and `averagePriceEurPerMwh` for the weighted-average Price
+  total); each interval's Revenue cell uses the extracted `computeIntervalExportRevenueEur`
+  (`exported kWh × price ÷ 1000`) that `computeExportRevenue` itself now also calls, so there is one
+  formula. A meterless plant falls back to pricing produced energy, exactly like the Market page.
+- Timezone: `Plant.timezone` (`Europe/Sofia`) via `lib/market-price/timezone.ts` `zonedTimeToUtc`;
+  the range is snapped to the 15-minute UTC grid (`floorToInterval`). DST-safe — the grid steps in
+  fixed 15-minute UTC increments and rows are only relabelled in the plant zone.
+- Auth: `page.tsx` and **both** Server Actions in `actions.ts` (`generateReportPreview`,
+  `exportReport`) independently call `requirePlatformAdmin()`; the plant (and its `organizationId`
+  / `timezone`) is re-resolved from the DB by id (`lib/admin/reporting-queries.ts`), never trusted
+  from the client. Cross-organization by design, like Automation Lab / Digital Twin.
+- Limit: `MAX_REPORT_RANGE_DAYS = 93`, enforced in every action and shown in the UI.
+- XLSX: `write-excel-file` (`apps/web` dependency, pinned) — a real two-sheet workbook (data +
+  "Report Info"), frozen header, numeric cells, styled `TOTAL` row. CSV needs no dependency
+  (UTF-8 + BOM, CRLF, RFC-4180 quoting, `voltessa-{plant-slug}-report-{start}-{end}.{ext}`
+  filename via a safe slugifier).
+- `ReportingForm.tsx` is a `"use client"` component following the same
+  `useTransition`/pending-state pattern as `HuaweiControlCard` / `RefreshButton`.
+
 ## Architecture (automation domain, per `docs/ARCHITECTURE.md` / ADR-001)
 
 ```
@@ -382,10 +423,12 @@ route still exists but is no longer invoked by anything scheduled (superseded by
 - `apps/api/src/market.controller.ts` is an orphaned duplicate of
   `apps/api/src/market/market.controller.ts`; it is not registered in `app.module.ts` and is dead
   code.
-- `apps/web` has exactly one automated test suite, a Playwright regression suite for admin routing
-  (`apps/web/e2e/admin-routing.spec.ts`) — everything else (pure functions, Server Actions, route
-  handlers) still has zero coverage (see `docs/TESTING.md`).
-- CI (`.github/workflows/ci.yml`) runs lint, type-check, build, and the one Playwright suite above
+- `apps/web` test coverage is partial: a `tsx --test` unit runner (`pnpm --filter web test`, explicit
+  file list in `package.json`) covers the market-price, automation-scheduler, mobile-auth and admin
+  Reporting pure-function suites, plus one Playwright regression suite for admin routing
+  (`apps/web/e2e/admin-routing.spec.ts`). Server Actions, route handlers and most UI still have no
+  coverage (see `docs/TESTING.md`).
+- CI (`.github/workflows/ci.yml`) runs lint, type-check, build, and the Playwright suite above
   on push/PR, but does not deploy; deployment stays on Vercel's Git integration
   (`docs/DEVELOPMENT_WORKFLOW.md`).
 - `lib/result.ts` (`Result<T>`) and `lib/errors.ts` (`AppError`) exist but are not consistently

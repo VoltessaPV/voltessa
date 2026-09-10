@@ -242,3 +242,72 @@ the full decision record and engineering report.
 - A real, unattended production trigger of the IBEX fallback path (an actual ENTSO-E outage
   occurring after this shipped) has not been observed/confirmed live — implemented and unit-tested,
   not yet exercised by a genuine incident.
+---
+
+# Admin Reporting — 15-minute Interval CSV/XLSX Export
+
+## Completed
+
+- New Platform-Admin-only page `/admin/reporting` (`app/admin/reporting/*`, `lib/reporting/*`,
+  `lib/admin/reporting-queries.ts`): pick a plant, a start/end datetime, and any subset of seven
+  metrics — **PV Production, Total Consumption, Grid Consumption, PV Consumption, Grid Export**
+  (kWh) and **Price** (EUR/MWh), **Revenue** (EUR) — then preview and download a **15-minute
+  interval** report as **CSV or XLSX**. Every export ends with a mandatory `TOTAL` row.
+- **Authorization**: `page.tsx` and both Server Actions (`generateReportPreview`, `exportReport` in
+  `app/admin/reporting/actions.ts`) independently call `requirePlatformAdmin()` (ADR-006 /
+  ADR-014 — `User.isPlatformAdmin`, `forbidden()` for non-admins, `/login` redirect for the
+  unauthenticated). The plant, its `organizationId` and its `timezone` are always re-resolved from
+  the database by id — never trusted from the browser. Cross-organization by design, the same
+  pattern Automation Lab / Digital Twin use. `e2e/admin-routing.spec.ts` extended to cover the new
+  route (unauthenticated → `/login`, never 404; locale-prefix → 308 to the unprefixed path).
+- **No new data model, no new API route, no new calculation.** A pure read-only consumer of the
+  canonical layers (ADR-018 lists Reporting as an intended consumer of exactly these):
+  - Energy: `lib/telemetry/energy-metrics.ts` — `getPlantProductionEnergySeries` (PV Production)
+    and `getPlantSettlementEnergySeries` (Grid Export / Grid Consumption from the meter's
+    `activeEnergy` / `reverseActiveEnergy` counter deltas). PV Consumption = `computeConsumedFromPv`
+    (production − export); Total Consumption = `production + import − export` (the `deriveEnergyFlow`
+    identity). A missing interval stays blank — never coerced to `0`.
+  - Price: `dbMarketPriceProvider.getPricesInRange` — persisted `MarketPrice` rows only (EUR/MWh,
+    `DEFAULT_BIDDING_ZONE`), never a live ENTSO-E/IBEX call.
+  - Revenue: `lib/market-price/revenue.ts`. The whole-period `TOTAL` comes straight from
+    `computeExportRevenue` (`revenueEur`, plus `averagePriceEurPerMwh` for the weighted-average
+    Price total). Each interval's Revenue cell uses `computeIntervalExportRevenueEur`
+    (`exported kWh × price ÷ 1000`), a helper extracted from `computeExportRevenue` and now also
+    called by it — one formula, two call sites. A meterless plant falls back to pricing produced
+    energy, exactly like the Market page.
+- **TOTAL row semantics** (documented and unit-tested in `lib/reporting/build-report.ts` /
+  `build-report.test.ts`): first cell is the literal `TOTAL`, never a timestamp; PV Production /
+  Grid Export / Grid Consumption / Revenue are **summed** over intervals that have a value; PV
+  Consumption and Total Consumption apply their canonical identity to the period sums; **Price is an
+  export-energy-weighted average** (`Σ(export·price) / Σ export`, = `RevenueSummary.averagePriceEurPerMwh`)
+  and is **never summed**; a metric with no data in the period stays blank, never `0`.
+- **Timezone**: `Plant.timezone` (`Europe/Sofia`) via `lib/market-price/timezone.ts`
+  `zonedTimeToUtc`; the requested range is snapped to the 15-minute UTC grid (`floorToInterval`).
+  DST-safe — the interval grid steps in fixed 15-minute UTC increments and rows are only relabelled
+  in the plant zone, so a period crossing a DST transition has the right number of rows (92 on the
+  23-hour spring-forward day, 100 on the 25-hour fall-back day — unit-tested).
+- **Range limit**: `MAX_REPORT_RANGE_DAYS = 93`, enforced in every Server Action and shown in the
+  UI.
+- **CSV**: UTF-8 with BOM, CRLF, RFC-4180 quoting, deterministic column order (`Timestamp` + only
+  the selected metrics), final `TOTAL` row, safe filename
+  `voltessa-{plant-slug}-report-{start}-{end}.csv` (slugifier strips path separators, `..`,
+  non-ASCII, control chars).
+- **XLSX**: new pinned dependency `write-excel-file` (`apps/web`). A real two-sheet workbook —
+  a **Report** sheet (frozen header, real numeric cells with energy/price/revenue number formats,
+  styled `TOTAL` row) and a **Report Info** sheet (plant, period, generated-at, interval, metrics,
+  currency, timezone). Not a CSV string in an `.xlsx` wrapper.
+- **Tests**: `lib/reporting/{report-request,build-report,csv,xlsx}.test.ts` (added to
+  `apps/web`'s `pnpm test` `tsx --test` list) — 40 cases covering request validation, invalid
+  ranges/metrics/format, the metric → canonical-source mapping, missing-value preservation,
+  15-minute assembly, DST boundary interval counts, all TOTAL-row semantics (energy SUM, revenue
+  SUM, price weighted-average, "never SUM price", unselected metrics absent, blank-not-zero), CSV
+  escaping / BOM / CRLF / TOTAL line, XLSX structure and determinism, and safe filenames. Verified
+  end-to-end against the real production database's Atlanta plant before deployment.
+
+## Notes
+
+- No ADR — a normal read-only feature that reuses every existing canonical source; the only touch
+  to shared business logic is the pure extraction of `computeIntervalExportRevenueEur` in
+  `lib/market-price/revenue.ts`.
+- Export endpoints are Server Actions (not `app/api/*` route handlers) to match the established
+  admin pattern (Automation Lab, Digital Twin, Historical Imports).

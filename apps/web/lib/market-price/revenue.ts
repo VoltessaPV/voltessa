@@ -11,6 +11,28 @@ export type RevenueSummary =
   | { available: false };
 
 /**
+ * The one per-interval revenue formula: real exported energy (kWh) for a
+ * 15-minute settlement interval times the real day-ahead price (EUR/MWh)
+ * for that same interval, in EUR. `price` is EUR per MWh, `exportedKwh` is
+ * kWh, hence `÷ 1000`. Extracted so `computeExportRevenue` below and the
+ * admin Reporting feature's per-row Revenue column
+ * (`lib/reporting/build-report.ts`) share a single implementation instead
+ * of each writing `(kwh * price) / 1000` inline. Never fabricates: a
+ * missing price or missing exported energy yields no revenue for that
+ * interval, never a zero.
+ */
+export function computeIntervalExportRevenueEur(
+  exportedKwh: number | null,
+  priceEurPerMwh: number | null,
+): number | null {
+  if (exportedKwh === null || priceEurPerMwh === null) {
+    return null;
+  }
+
+  return (exportedKwh * priceEurPerMwh) / 1000;
+}
+
+/**
  * Real revenue: sum, over every 15-minute settlement interval, of that
  * interval's real exported energy (from the meter's cumulative counter —
  * see energy-metrics.ts) times the real day-ahead price for that *same*
@@ -50,7 +72,13 @@ export function computeExportRevenue(
       continue;
     }
 
-    revenueEur += (point.exportedKwh * price) / 1000;
+    const intervalRevenue = computeIntervalExportRevenueEur(point.exportedKwh, price);
+
+    if (intervalRevenue === null) {
+      continue;
+    }
+
+    revenueEur += intervalRevenue;
     exportedKwh += point.exportedKwh;
     intervalsWithData += 1;
   }

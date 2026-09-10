@@ -7,6 +7,7 @@ import { pageHeading as adminGateways } from "@/app/admin/gateways/heading";
 import { pageHeading as adminMlForecast } from "@/app/admin/ml-forecast/heading";
 import { pageHeading as adminOperations } from "@/app/admin/operations/heading";
 import { pageHeading as adminHistoricalImports } from "@/app/admin/historical-imports/heading";
+import { pageHeading as adminReporting } from "@/app/admin/reporting/heading";
 import { pageHeading as adminPlantOwners } from "@/app/admin/plant-owners/heading";
 import { pageHeading as adminPlantOwnerDetails } from "@/app/admin/plant-owners/[id]/heading";
 import { pageHeading as adminTraders } from "@/app/admin/traders/heading";
@@ -37,6 +38,7 @@ const ADMIN_STATIC_ROUTES: Record<string, PageHeadingContent> = {
   "/admin/audit-log": adminAuditLog,
   "/admin/operations": adminOperations,
   "/admin/historical-imports": adminHistoricalImports,
+  "/admin/reporting": adminReporting,
   "/admin/automation-lab": adminAutomationLab,
   "/admin/digital-twin": adminDigitalTwin,
   "/admin/ml-forecast": adminMlForecast,
